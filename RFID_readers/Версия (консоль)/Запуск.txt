@@ -1,0 +1,13 @@
+Установить python 3.10.8 32 бита (только этот)
+
+Создать виртуальное окружение с этим питоном
+"C:\Users\perestoroninAM\AppData\Local\Programs\Python\Python310-32\python.exe"  -m venv venv310
+
+Запустить окружение
+venv310\Scripts\activate
+
+Установить библиотеку 
+pip install pythonnet
+
+Запустить 
+python main.py

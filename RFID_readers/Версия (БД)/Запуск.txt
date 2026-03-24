@@ -1,0 +1,20 @@
+Установить python 3.10.8 32 бита (только этот)
+
+Создать виртуальное окружение с этим питоном
+"C:\Users\perestoroninAM\AppData\Local\Programs\Python\Python310-32\python.exe"  -m venv venv310
+
+Запустить окружение
+venv310\Scripts\activate
+
+Установить библиотеку 
+pip install pythonnet
+pip install python-dotenv pyodbc
+
+Переменные окружения
+set RFID_DLL_PATH=C:\Users\perestoroninAM\Desktop\RFID\RFID_readers\Версия (БД)\UHFAPI.dll
+set RFID_READER_IP=172.31.128.170
+set RFID_READER_PORT=8888
+set RFID_DB_CONNECTION=Driver={ODBC Driver 18 for SQL Server};Server=SRV-SQL4.MKM.LAN;Database=1CTgSend;Uid=TgSendUser;Pwd=Shu_uc3i;Encrypt=yes;TrustServerCertificate=yes;
+
+Запуск программы
+python rfid_to_sql.py
