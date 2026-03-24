@@ -1,0 +1,30 @@
+Установить python 3.10.8 64 бита
+
+Создать виртуальное окружение с этим питоном
+python -m venv venv
+
+Запустить окружение
+venv\Scripts\activate
+
+Установить библиотеку 
+pip install pyodbc
+
+Альтернатива 
+pip install pyodbc -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ
+set SRC_SERVER=srv-rg.mkm.lan
+set SRC_DATABASE=RusGuardDB
+set SRC_USERNAME=rgreader
+set SRC_PASSWORD=user-1234
+set SRC_DRIVER={ODBC Driver 17 for SQL Server}
+
+set DST_SERVER=SRV-SQL4.MKM.LAN
+set DST_DATABASE=1CTgSend
+set DST_USERNAME=TgSendUser
+set DST_PASSWORD=Shu_uc3i
+set DST_DRIVER={ODBC Driver 17 for SQL Server}
+set DST_TRUST_CERT=yes
+
+Запуск
+db_sync.py
