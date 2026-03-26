@@ -1,0 +1,12 @@
+Установить python 3.10.8 64 бита
+
+Создать виртуальное окружение с этим питоном
+python -m venv venv
+
+Запустить окружение
+venv\Scripts\activate
+
+Установить библиотеку
+pip install opencv-python
+pip install opencv-python -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install ultralytics
