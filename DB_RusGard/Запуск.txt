@@ -17,13 +17,14 @@ set SRC_SERVER=srv-rg.mkm.lan
 set SRC_DATABASE=RusGuardDB
 set SRC_USERNAME=rgreader
 set SRC_PASSWORD=user-1234
-set SRC_DRIVER={ODBC Driver 17 for SQL Server}
+set SRC_DRIVER=ODBC Driver 18 for SQL Server
+set SRC_TRUST_CERT=yes
 
 set DST_SERVER=SRV-SQL4.MKM.LAN
 set DST_DATABASE=1CTgSend
 set DST_USERNAME=TgSendUser
 set DST_PASSWORD=Shu_uc3i
-set DST_DRIVER={ODBC Driver 17 for SQL Server}
+set DST_DRIVER=ODBC Driver 18 for SQL Server
 set DST_TRUST_CERT=yes
 
 Запуск

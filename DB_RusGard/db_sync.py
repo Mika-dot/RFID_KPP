@@ -1,4 +1,4 @@
-import pyodbc
+﻿import pyodbc
 import logging
 import os
 import sys
@@ -35,7 +35,8 @@ SRC_CONFIG = {
     'database': get_env_var('SRC_DATABASE'),
     'username': get_env_var('SRC_USERNAME'),
     'password': get_env_var('SRC_PASSWORD'),
-    'driver': get_env_var('SRC_DRIVER', required=False) or '{ODBC Driver 17 for SQL Server}'
+    'driver': get_env_var('SRC_DRIVER', required=False) or '{ODBC Driver 17 for SQL Server}',
+    'trust_cert': get_env_var('SRC_TRUST_CERT', required=False) or 'yes'  # ← Добавить эту строку
 }
 
 # Приемник (1CTgSend)
@@ -127,6 +128,7 @@ def get_connection(config):
         f"DATABASE={config['database']};"
         f"UID={config['username']};"
         f"PWD={config['password']};"
+        f"Encrypt=no;"
     )
     if config.get('trust_cert'):
         conn_str += "TrustServerCertificate=yes;"
