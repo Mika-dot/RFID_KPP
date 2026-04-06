@@ -10,3 +10,60 @@ venv\Scripts\activate
 pip install opencv-python
 pip install opencv-python -i https://pypi.tuna.tsinghua.edu.cn/simple
 pip install ultralytics
+pip install ultralytics opencv-python pyodbc python-dotenv numpy
+pip install ultralytics opencv-python numpy pyodbc
+
+Переменные окружения
+:: === БД ===
+set RFID_DB_CONNECTION=Driver={ODBC Driver 18 for SQL Server};Server=SRV-SQL4.MKM.LAN;Database=1CTgSend;Uid=TgSendUser;Pwd=Shu_uc3i;Encrypt=yes;TrustServerCertificate=yes;
+set RFID_DB_LOG_TABLE=ReelTransitions
+set RFID_SAVE_IMAGE_ON_TRANSITION=True
+set RFID_IMAGE_QUALITY=85
+set RFID_IMAGE_MAX_WIDTH=640
+set RFID_IMAGE_MAX_HEIGHT=480
+
+:: === Маски ===
+set RFID_MASK_ENABLED=True
+set RFID_MASK_0=C:\Users\perestoroninAM\Desktop\RFID\RTSP\Mask_0.jpg
+set RFID_MASK_1=C:\Users\perestoroninAM\Desktop\RFID\RTSP\Mask_1.jpg
+set RFID_SHOW_MASK_OVERLAY=False
+
+:: === Модель ===
+set RFID_MODEL_PATH=runs/detect/rfid_forklift_reel2/weights/best.pt
+set RFID_CONFIDENCE_THRESHOLD=0.25
+set RFID_IOU_THRESHOLD=0.45
+set RFID_ENABLE_DETECTION=True
+set RFID_LOG_DETECTIONS=True
+set RFID_LOG_THROTTLE_MS=500
+set RFID_CSV_LOG_PATH=recordings/detections_log.csv
+
+:: === Камеры — ВНИМАНИЕ: логин/пароль ВНУТРИ URL ===
+set RFID_RTSP_0=rtsp://Akim:MylenE12@10.192.2.11:554/Streaming/Channels/101
+set RFID_RTSP_1=rtsp://Akim:MylenE12@10.192.2.12:554/Streaming/Channels/101
+
+:: === Эти переменные теперь не нужны для URL, но можно оставить для других целей ===
+set RFID_CAMERA_USER=Akim
+set RFID_CAMERA_PASS=MylenE12
+set RFID_CAMERA_0_ID=0
+set RFID_CAMERA_1_ID=1
+
+:: === Трекинг ===
+set RFID_REEL_TRACKING_ENABLED=True
+set RFID_REEL_CLASS_NAME=cable_reel
+set RFID_TRANSITION_WINDOW_SEC=30.0
+set RFID_REEL_DISAPPEAR_SEC=5.0
+set RFID_REEL_NEARBY_THRESHOLD_PX=400
+set RFID_REEL_TRANSITION_LOG_PATH=recordings/reel_transitions.csv
+
+:: === Интерфейс ===
+set RFID_WINDOW_WIDTH=640
+set RFID_WINDOW_HEIGHT=480
+
+Запуск
+RTSP_yolo_DB_v2.py
+
+
+
+
+
+
