@@ -17,4 +17,4 @@ set RFID_READER_PORT=8888
 set RFID_DB_CONNECTION=Driver={ODBC Driver 18 for SQL Server};Server=SRV-SQL4.MKM.LAN;Database=1CTgSend;Uid=TgSendUser;Pwd=Shu_uc3i;Encrypt=yes;TrustServerCertificate=yes;
 
 Запуск программы
-python rfid_to_sql.py
+python rfid_to_sql_v3_2.py
