@@ -1,12 +1,5 @@
 # RFID КПП — запуск консолей
 
-Патч содержит итоговые версии:
-
-```text
-KPP/kpp_1_reliable_v2.4_full_rebuild.py
-web/kpp_reel_dashboard_v2.7_ru.py
-```
-
 Рабочая папка на сервере/ПК:
 
 ```bat
@@ -21,10 +14,6 @@ D:\Desktop\RFID_KPP-main
 3. RTSP YOLO
 4. KPP Aggregator
 5. Web Dashboard
-```
-
-> В Git не коммитить реальные пароли. Ниже оставлены места `<...>` для боевых значений.
-
 ---
 
 ## 1. RFID Reader
