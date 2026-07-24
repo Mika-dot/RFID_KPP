@@ -1,0 +1,4 @@
+START 14.07.2026 14:09:47,34 
+RFID_DIR=D:\Desktop\RFID_KPP-main\RFID_readers\Версия (БД) 
+PY_EXE=D:\Desktop\RFID_KPP-main\RFID_readers\Версия (БД)\venv310_32\Scripts\python.exe 
+READER=172.31.128.170:8888 

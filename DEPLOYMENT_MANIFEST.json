@@ -1,0 +1,51 @@
+{
+  "release": "3.4.0-operational",
+  "entry_point": "RUN_RFID_KPP_FINAL.cmd",
+  "configuration": "deploy/config_v3.cmd",
+  "credentials_embedded": true,
+  "active_files": {
+    "rfid_reader": "RFID_reader_v4/rfid_to_sql_v4.py",
+    "rusguard_sync": "DB_RusGard/db_sync_v2.py",
+    "video": "RTSP/RTSP_yolo_DB_v3.py",
+    "aggregator": "KPP/kpp_aggregator_v3.py",
+    "web": "web/kpp_reel_dashboard_v3_ru.py",
+    "migration": "migrations/001_kpp_v3_reliability.sql",
+    "migration_runner": "deploy/apply_migration_v3.py",
+    "service_loop": "deploy/RUN_SERVICE_LOOP.cmd",
+    "service_launcher": "deploy/start_services_v3.py",
+    "web_waiter": "deploy/wait_for_web_v3.py",
+    "service_wrappers": [
+      "deploy/RUN_RFID_READER_V3.cmd",
+      "deploy/RUN_RUSGUARD_V3.cmd",
+      "deploy/RUN_RTSP_V3.cmd",
+      "deploy/RUN_AGGREGATOR_V3.cmd",
+      "deploy/RUN_WEB_V3.cmd"
+    ]
+  },
+  "startup_actions": [
+    "stop legacy and prior v3 service processes",
+    "resolve existing 64-bit and 32-bit Python interpreters",
+    "install only missing dependencies",
+    "apply idempotent SQL migration with safety snapshots",
+    "run schema precheck",
+    "start only v3.4 components through Python CreateProcess and argument-free wrappers"
+  ],
+  "invariants": [
+    "unknown RFID is not counted as a reel",
+    "full EPC+TID confirmation is required within +/-24h",
+    "RFID checkpoint advances atomically with event/session state",
+    "pending local spool records are not deleted before delivery",
+    "video transitions are not globally suppressed by cooldown",
+    "one external video/SKUD event is assigned to one passage group",
+    "camera capture uses FFmpeg and does not call unsupported driver buffer settings by default",
+    "legacy launcher name remains unchanged",
+    "service wrappers receive no positional arguments through cmd START"
+  ],
+  "operational_visibility": [
+    "RFID heartbeat every 10 seconds with reads, local spool and SQL delivery state",
+    "RTSP heartbeat every 10 seconds per camera with frames, detections, reels, frame age and queue state",
+    "Aggregator heartbeat every 10 seconds with source cursor lag, sessions and reel/unknown counts",
+    "RusGuard cursor bootstraps from already imported destination MAX and reports only new rows",
+    "Web heartbeat reports DB latency, request/slow/error counts; cached dashboard endpoints reduce SQL load"
+  ]
+}

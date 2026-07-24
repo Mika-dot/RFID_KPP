@@ -65,6 +65,11 @@ class Config:
     TASK_LOOKBACK_HOURS = int(os.getenv("KPP_TASK_LOOKBACK_HOURS", "24"))
     TASK_MATCH_WARN_DELTA_HOURS = int(os.getenv("KPP_TASK_MATCH_WARN_DELTA_HOURS", "24"))
     TASK_START_FROM_LATEST_IF_NO_STATE = os.getenv("KPP_TASK_START_FROM_LATEST_IF_NO_STATE", "1") == "1"
+    # В live-режиме стартуем с полного кэша 1С, а LOOKBACK используем только для дозагрузки хвоста.
+    # Иначе после перезапуска в памяти остаются только последние 24 часа и старые метки перестают матчиться.
+    TASK_FULL_CACHE_ON_START = os.getenv("KPP_TASK_FULL_CACHE_ON_START", "1") == "1"
+    TASK_EPC_ONLY_MAX_CANDIDATES = int(os.getenv("KPP_TASK_EPC_ONLY_MAX_CANDIDATES", "1"))
+    TASK_EPC_ONLY_REQUIRE_TIME_WINDOW = os.getenv("KPP_TASK_EPC_ONLY_REQUIRE_TIME_WINDOW", "1") == "1"
 
     # --- Склад / Warehouse из 1С ---
     WAREHOUSE_ENABLED = os.getenv("KPP_WAREHOUSE_ENABLED", "1") == "1"
@@ -82,6 +87,9 @@ class Config:
     WAREHOUSE_EMIT_INTERVAL_SEC = int(os.getenv("KPP_WAREHOUSE_EMIT_INTERVAL_SEC", "60"))
     WAREHOUSE_ONLY_GRACE_MINUTES = int(os.getenv("KPP_WAREHOUSE_ONLY_GRACE_MINUTES", "10"))
     WAREHOUSE_START_FROM_LATEST_IF_NO_STATE = os.getenv("KPP_WAREHOUSE_START_FROM_LATEST_IF_NO_STATE", "1") == "1"
+    WAREHOUSE_FULL_CACHE_ON_START = os.getenv("KPP_WAREHOUSE_FULL_CACHE_ON_START", "1") == "1"
+    WAREHOUSE_EPC_ONLY_MAX_CANDIDATES = int(os.getenv("KPP_WAREHOUSE_EPC_ONLY_MAX_CANDIDATES", "1"))
+    WAREHOUSE_EPC_ONLY_REQUIRE_TIME_WINDOW = os.getenv("KPP_WAREHOUSE_EPC_ONLY_REQUIRE_TIME_WINDOW", "1") == "1"
 
     # --- Полная пересборка ---
     FULL_REBUILD_ON_START = os.getenv("KPP_FULL_REBUILD_ON_START", "1") == "1"
@@ -591,8 +599,9 @@ WHERE {Config.TASK_DT_COL} >= DATEADD(hour, -?, GETDATE())
 ORDER BY {Config.TASK_DT_COL} DESC, {Config.TASK_ID_COL} DESC;
 """
                     cur.execute(query, Config.TASK_LOOKBACK_HOURS)
-                    self.tasks_by_full_tag = {}
-                    self.tasks_by_epc = {}
+                    # ВАЖНО: не очищаем полный кэш. LOOKBACK — это дозагрузка/обновление хвоста,
+                    # а не единственный источник 1С-меток. Очистка каждые 30 секунд ломала матчинг
+                    # для событий, чьи записи 1С старше окна LOOKBACK.
 
                 max_row_id = self.last_task_row_id
                 for row in cur.fetchall():
@@ -741,8 +750,8 @@ WHERE {Config.WAREHOUSE_DT_COL} >= DATEADD(hour, -?, GETDATE())
 ORDER BY {Config.WAREHOUSE_DT_COL} DESC, {Config.WAREHOUSE_ID_COL} DESC;
 """
                     cur.execute(query, Config.WAREHOUSE_LOOKBACK_HOURS)
-                    self.warehouse_by_full_tag = {}
-                    self.warehouse_by_epc = {}
+                    # Не очищаем полный кэш склада: иначе WAREHOUSE_ONLY/привязка к КПП
+                    # видят только последние N часов после каждого reload.
 
                 max_row_id = self.last_warehouse_row_id
                 for row in cur.fetchall():
@@ -766,6 +775,66 @@ ORDER BY {Config.WAREHOUSE_DT_COL} DESC, {Config.WAREHOUSE_ID_COL} DESC;
         except Exception as exc:
             self._log(f"Ошибка загрузки Warehouse: {exc}", "ERROR")
             return 0
+
+    def load_all_warehouse_records_for_rebuild(self) -> int:
+        if not Config.WAREHOUSE_ENABLED:
+            return 0
+        self.warehouse_by_full_tag = {}
+        self.warehouse_by_epc = {}
+        total_loaded = 0
+        last_id = 0
+        self._log("Полная загрузка Warehouse для rebuild/live-cache...", "INFO")
+        try:
+            while True:
+                query = f"""
+SELECT TOP ({Config.WAREHOUSE_BATCH_SIZE})
+    {Config.WAREHOUSE_ID_COL},
+    {Config.WAREHOUSE_DT_COL},
+    {Config.WAREHOUSE_TAG_COL},
+    {Config.WAREHOUSE_DOCIDS_COL},
+    {Config.WAREHOUSE_SERIES_COL}
+FROM {Config.WAREHOUSE_TABLE}
+WHERE {Config.WAREHOUSE_ID_COL} > ?
+ORDER BY {Config.WAREHOUSE_ID_COL} ASC;
+"""
+                with self._conn_tasks() as conn:
+                    cur = conn.cursor()
+                    cur.execute(query, last_id)
+                    rows = cur.fetchall()
+                if not rows:
+                    break
+                batch_loaded = 0
+                for row in rows:
+                    record = self._build_warehouse_from_row(row)
+                    if record is None:
+                        continue
+                    batch_loaded += 1 if self._append_warehouse(record) else 0
+                    last_id = max(last_id, record.source_row_id)
+                total_loaded += batch_loaded
+                self._log(f"Warehouse full-cache batch: loaded={batch_loaded}, total={total_loaded}, last_id={last_id}", "INFO")
+            self.last_warehouse_row_id = last_id
+            self.last_warehouse_reload_at = datetime.now()
+            self._state_set("LAST_WAREHOUSE_ROW_ID", str(self.last_warehouse_row_id))
+            self._log(f"Полная загрузка Warehouse завершена: {total_loaded} записей, уникальных меток={len(self.warehouse_by_full_tag)}", "OK")
+            return total_loaded
+        except Exception as exc:
+            self._log(f"Ошибка полной загрузки Warehouse: {exc}", "ERROR")
+            return total_loaded
+
+    @staticmethod
+    def _candidates_in_time_window(candidates: Iterable[object], event_time: datetime, hours: int) -> List[object]:
+        window_sec = hours * 3600
+        result: List[object] = []
+        for item in candidates:
+            dt = getattr(item, "dt", None)
+            if dt is None:
+                continue
+            try:
+                if abs((dt - event_time).total_seconds()) <= window_sec:
+                    result.append(item)
+            except Exception:
+                continue
+        return result
 
     def get_new_rfid_reads(self) -> List[RfidRead]:
         query = f"""
@@ -914,7 +983,7 @@ ORDER BY EPC, TID, RecordTime, Id;
         self.rebuild_processed_reads = 0
 
         self.load_all_1c_tasks_for_rebuild()
-        self.load_warehouse_records()
+        self.load_all_warehouse_records_for_rebuild()
 
         query = f"""
 SELECT Id, RecordTime, Antenna, RSSI, EPC, TID
@@ -1056,12 +1125,23 @@ ORDER BY EPC ASC, TID ASC, RecordTime ASC, Id ASC;
                 warnings.append(f"Несколько exact задач по полной метке: {len(exact)}")
             return task, "FULL_TAG", warnings
 
-        epc_matches = self.tasks_by_epc.get(session.epc, [])
+        epc_matches = self.tasks_by_epc.get(session.epc, []) if session.epc else []
         if epc_matches:
-            task = self._pick_best_task_candidate(epc_matches, session, warnings)
-            if len(epc_matches) > 1:
-                warnings.append(f"Несколько задач по EPC: {len(epc_matches)}")
-            return task, "EPC_ONLY", warnings
+            event_time = session.first_seen or session.last_seen or datetime.now()
+            in_window = self._candidates_in_time_window(epc_matches, event_time, Config.TASK_MATCH_WARN_DELTA_HOURS)
+            candidates = in_window if in_window else epc_matches
+
+            if Config.TASK_EPC_ONLY_REQUIRE_TIME_WINDOW and not in_window:
+                warnings.append(f"EPC_ONLY запрещен: нет задач 1С в окне ±{Config.TASK_MATCH_WARN_DELTA_HOURS} ч, кандидатов по EPC={len(epc_matches)}")
+                return None, "EPC_ONLY_OUT_OF_WINDOW", warnings
+
+            if len(candidates) > Config.TASK_EPC_ONLY_MAX_CANDIDATES:
+                warnings.append(f"EPC_ONLY запрещен: неоднозначный EPC, кандидатов 1С={len(candidates)}")
+                return None, "EPC_AMBIGUOUS", warnings
+
+            task = self._pick_best_task_candidate(candidates, session, warnings)
+            warnings.append("1С: полный EPC+TID не совпал, использован только уникальный EPC")
+            return task, "EPC_ONLY_UNIQUE", warnings
 
         return None, "NOT_FOUND", warnings
 
@@ -1101,22 +1181,32 @@ ORDER BY EPC ASC, TID ASC, RecordTime ASC, Id ASC;
             return record, "WAREHOUSE_FULL_TAG", warnings
         epc_matches = self.warehouse_by_epc.get(session.epc, []) if session.epc else []
         if epc_matches:
-            record = self._pick_best_warehouse_candidate(epc_matches, event_time, warnings)
-            if len(epc_matches) > 1:
-                warnings.append(f"Несколько Warehouse записей по EPC: {len(epc_matches)}")
-            return record, "WAREHOUSE_EPC_ONLY", warnings
+            in_window = self._candidates_in_time_window(epc_matches, event_time, Config.WAREHOUSE_MATCH_WINDOW_HOURS)
+            candidates = in_window if in_window else epc_matches
+
+            if Config.WAREHOUSE_EPC_ONLY_REQUIRE_TIME_WINDOW and not in_window:
+                warnings.append(f"Warehouse EPC_ONLY запрещен: нет склада в окне ±{Config.WAREHOUSE_MATCH_WINDOW_HOURS} ч, кандидатов по EPC={len(epc_matches)}")
+                return None, "WAREHOUSE_EPC_ONLY_OUT_OF_WINDOW", warnings
+
+            if len(candidates) > Config.WAREHOUSE_EPC_ONLY_MAX_CANDIDATES:
+                warnings.append(f"Warehouse EPC_ONLY запрещен: неоднозначный EPC, кандидатов склада={len(candidates)}")
+                return None, "WAREHOUSE_EPC_AMBIGUOUS", warnings
+
+            record = self._pick_best_warehouse_candidate(candidates, event_time, warnings)
+            warnings.append("Warehouse: полный EPC+TID не совпал, использован только уникальный EPC")
+            return record, "WAREHOUSE_EPC_ONLY_UNIQUE", warnings
         return None, "WAREHOUSE_NOT_FOUND", warnings
 
     @staticmethod
     def _task_match_with_warehouse(task_match_type: str, warehouse: Optional[WarehouseRecord]) -> str:
         if warehouse is None:
             return task_match_type
-        if task_match_type in ("FULL_TAG_WAREHOUSE", "EPC_ONLY_WAREHOUSE", "WAREHOUSE_ONLY"):
+        if task_match_type in ("FULL_TAG_WAREHOUSE", "EPC_ONLY_WAREHOUSE", "EPC_ONLY_UNIQUE_WAREHOUSE", "WAREHOUSE_ONLY"):
             return task_match_type
         if task_match_type == "FULL_TAG":
             return "FULL_TAG_WAREHOUSE"
-        if task_match_type == "EPC_ONLY":
-            return "EPC_ONLY_WAREHOUSE"
+        if task_match_type in ("EPC_ONLY", "EPC_ONLY_UNIQUE"):
+            return "EPC_ONLY_UNIQUE_WAREHOUSE"
         return "WAREHOUSE_ONLY"
 
     def _warehouse_to_evidence(self, warehouse: Optional[WarehouseRecord], match_type: str = "") -> Optional[dict]:
@@ -1139,10 +1229,18 @@ ORDER BY EPC ASC, TID ASC, RecordTime ASC, Id ASC;
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
     def _find_kpp_event_for_warehouse(self, warehouse: WarehouseRecord) -> Optional[int]:
-        query = f"""
+        exact_query = f"""
 SELECT TOP (1) EventId
 FROM {Config.EVENT_TABLE}
 WHERE SourceTag = ?
+  AND ISNULL(SessionCloseReason, '') <> 'WAREHOUSE_ONLY'
+  AND FirstSeen BETWEEN DATEADD(hour, -?, ?) AND DATEADD(hour, ?, ?)
+ORDER BY ABS(DATEDIFF(second, FirstSeen, ?)) ASC, EventId DESC;
+"""
+        epc_query = f"""
+SELECT TOP (1) EventId
+FROM {Config.EVENT_TABLE}
+WHERE EPC = ?
   AND ISNULL(SessionCloseReason, '') <> 'WAREHOUSE_ONLY'
   AND FirstSeen BETWEEN DATEADD(hour, -?, ?) AND DATEADD(hour, ?, ?)
 ORDER BY ABS(DATEDIFF(second, FirstSeen, ?)) ASC, EventId DESC;
@@ -1151,7 +1249,7 @@ ORDER BY ABS(DATEDIFF(second, FirstSeen, ?)) ASC, EventId DESC;
             with self._conn_kpp() as conn:
                 cur = conn.cursor()
                 cur.execute(
-                    query,
+                    exact_query,
                     warehouse.tag,
                     Config.WAREHOUSE_MATCH_WINDOW_HOURS,
                     warehouse.dt,
@@ -1160,7 +1258,27 @@ ORDER BY ABS(DATEDIFF(second, FirstSeen, ?)) ASC, EventId DESC;
                     warehouse.dt,
                 )
                 row = cur.fetchone()
-                return int(row[0]) if row else None
+                if row:
+                    return int(row[0])
+
+                # Если считыватель временно пишет только EPC без TID, пытаемся привязать склад
+                # к КПП-событию по EPC, но только если EPC не неоднозначен в Warehouse-кэше.
+                if warehouse.epc:
+                    epc_candidates = self.warehouse_by_epc.get(warehouse.epc, [])
+                    if len(epc_candidates) <= Config.WAREHOUSE_EPC_ONLY_MAX_CANDIDATES:
+                        cur.execute(
+                            epc_query,
+                            warehouse.epc,
+                            Config.WAREHOUSE_MATCH_WINDOW_HOURS,
+                            warehouse.dt,
+                            Config.WAREHOUSE_MATCH_WINDOW_HOURS,
+                            warehouse.dt,
+                            warehouse.dt,
+                        )
+                        row = cur.fetchone()
+                        if row:
+                            return int(row[0])
+                return None
         except Exception as exc:
             self._log(f"Ошибка поиска КПП-события для Warehouse {warehouse.source_row_id}: {exc}", "WARN")
             return None
@@ -2166,8 +2284,10 @@ ORDER BY ISNULL(NextRecheckAt, FirstSeen) ASC, FirstSeen ASC;
         print(f"📊 Интервал опроса:          {Config.POLL_INTERVAL_SEC} сек")
         print(f"📊 Reload задач 1С:          {Config.TASK_RELOAD_INTERVAL_SEC} сек")
         print(f"📊 Режим загрузки 1С:        {Config.TASK_LOAD_MODE}")
+        print(f"📊 Полный кэш 1С на старте:  {Config.TASK_FULL_CACHE_ON_START}")
         print(f"📊 Warehouse включен:        {Config.WAREHOUSE_ENABLED}")
         print(f"📊 Режим Warehouse:          {Config.WAREHOUSE_LOAD_MODE}, окно ±{Config.WAREHOUSE_MATCH_WINDOW_HOURS} ч")
+        print(f"📊 Полный кэш Warehouse:     {Config.WAREHOUSE_FULL_CACHE_ON_START}")
         print(f"📊 Enrich pending:           {Config.ENRICH_INTERVAL_SEC} сек")
         print(f"📊 Recovery lookback:        {Config.RECOVERY_LOOKBACK_MINUTES} мин")
         print(f"📊 FULL_REBUILD_ON_START:    {Config.FULL_REBUILD_ON_START}")
@@ -2189,8 +2309,14 @@ ORDER BY ISNULL(NextRecheckAt, FirstSeen) ASC, FirstSeen ASC;
             self.bootstrap_last_rfid_id()
             self.bootstrap_last_task_row_id()
             self.bootstrap_last_warehouse_row_id()
-            self.load_1c_tasks()
-            self.load_warehouse_records()
+            if Config.TASK_FULL_CACHE_ON_START:
+                self.load_all_1c_tasks_for_rebuild()
+            else:
+                self.load_1c_tasks()
+            if Config.WAREHOUSE_FULL_CACHE_ON_START:
+                self.load_all_warehouse_records_for_rebuild()
+            else:
+                self.load_warehouse_records()
             self.recover_recent_history()
             self.enrich_pending_events()
             self.reconcile_warehouse_events()

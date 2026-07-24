@@ -1,0 +1,65 @@
+{
+  "created": "2026-07-01",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 2663,
+      "sha256": "56fd125e867e9704c38addf709fd2d67b0ff23f57508508742bf4526a71568d5"
+    },
+    {
+      "path": "RUN_RFID_KPP_FINAL.cmd",
+      "bytes": 916,
+      "sha256": "200a6fee18ec8b2aeb248008fda8bca28b74e76566ba4470c734697e35a232f1"
+    },
+    {
+      "path": "RUN_RFID_ONLY_FINAL.cmd",
+      "bytes": 92,
+      "sha256": "a0f25f676f011732a229301d67ccb0e302369b437f51b8747b104a23af177c58"
+    },
+    {
+      "path": "autostart/kpp_env_config_FINAL.cmd",
+      "bytes": 1368,
+      "sha256": "68b540d4db9618686affa7a99826d58bd9fb23f9a4ac395142c2134aef141765"
+    },
+    {
+      "path": "autostart/00_check_paths_FINAL.cmd",
+      "bytes": 1610,
+      "sha256": "7ac23880b2fb51be88e0267f3cb8b156db7428d37945b78a0dc8cc3190eb0b7a"
+    },
+    {
+      "path": "autostart/01_rfid_reader_FINAL.cmd",
+      "bytes": 3375,
+      "sha256": "3736cc8a1f684a8902be4aafcc1d5f500056533c8c8bcca3c8e22896519140ce"
+    },
+    {
+      "path": "autostart/04_kpp_aggregator_FINAL.cmd",
+      "bytes": 2148,
+      "sha256": "db683bfe3cd56f7b91b6a022efbe86b9f9f74a842405125f9538327dbf3472f0"
+    },
+    {
+      "path": "RFID_readers/Версия (БД)/rfid_to_sql_v3_2.py",
+      "bytes": 25889,
+      "sha256": "0c812af2f7e6c7f45f1efac682441948862a9ea6b9f3396cf67c19b5eb548923"
+    },
+    {
+      "path": "KPP/kpp_1_reliable_v2.4_full_rebuild.py",
+      "bytes": 102317,
+      "sha256": "12b863b74e51cad0fdaef4e4dd0cbc4af9b65a2b8b602d704b011eaa2263bc19"
+    },
+    {
+      "path": "RTSP/RTSP_yolo_DB_v2.py",
+      "bytes": 24576,
+      "sha256": "af6875c1a3c851b27b76b6153d8b1ed0ec1239036bd41d3902560a35e057c199"
+    },
+    {
+      "path": "web/kpp_reel_dashboard_v2.7_ru.py",
+      "bytes": 101555,
+      "sha256": "675eadffecb72111974888a0dc3f7d328b1ad7fc86e4d9b6b99c4bc4cbd9b1bb"
+    },
+    {
+      "path": "DB_RusGard/db_sync.py",
+      "bytes": 9990,
+      "sha256": "f7563b83d5284d362d6e83e3691aa3a012e8fed83f2bf26ed70d660e127b0410"
+    }
+  ]
+}
