@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 5 RFID KPP Web FINAL FIXED v3.4
+title 5 RFID KPP Web FINAL FIXED v3.4.1 Warehouse Report
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -12,13 +12,13 @@ if not defined PY64 call "%ROOT%\deploy\resolve_python.cmd"
 if errorlevel 1 goto :fatal
 if not defined PY64 goto :missing_python
 if not exist "%PY64%" goto :bad_python
-if not exist "%ROOT%\web\kpp_reel_dashboard_v3_ru.py" goto :bad_script
+if not exist "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py" goto :bad_script
 
 cd /d "%ROOT%\web"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-"%PY64%" -u "%ROOT%\web\kpp_reel_dashboard_v3_ru.py"
+"%PY64%" -u "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py"
 set "RC=%ERRORLEVEL%"
 echo.
 echo [%DATE% %TIME%] Exit code %RC%. Restarting in 5 seconds.
@@ -38,7 +38,7 @@ echo [FATAL] Python file does not exist: %PY64%
 goto :fatal
 
 :bad_script
-echo [FATAL] Script does not exist: %ROOT%\web\kpp_reel_dashboard_v3_ru.py
+echo [FATAL] Script does not exist: %ROOT%\web\kpp_reel_dashboard_v3_fixed.py
 goto :fatal
 
 :bad_workdir
