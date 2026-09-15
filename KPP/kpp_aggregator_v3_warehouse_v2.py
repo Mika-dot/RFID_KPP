@@ -37,6 +37,7 @@ WHERE IsReel=1
   AND WarehouseId IS NOT NULL
   AND (FinalDirection IS NULL OR FinalDirection='UNKNOWN');
 """
+            )
             repaired = int(cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0)
             conn.commit()
         if repaired:
