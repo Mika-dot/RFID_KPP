@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,9 +41,7 @@ def main() -> int:
     if not args.once:
         reporter.register_progress_watchdog(
             "pipeline",
-            timeout_seconds=float(app.os.getenv("KPP_WATCHDOG_SEC", "180"))
-            if hasattr(app, "os")
-            else 180.0,
+            timeout_seconds=float(os.getenv("KPP_WATCHDOG_SEC", "180")),
             exit_code=73,
         )
 
