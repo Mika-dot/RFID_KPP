@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Run one current Perimeter service behind the existing observability contract.
-
-The production service script is executed unchanged.  This wrapper restores:
-- Sentry initialization and crash reporting;
-- local /health and /health/ready endpoints on ports 18101..18105;
-- runtime/health heartbeat JSON used by peer checks and Zabbix.
-"""
+"""Run one current Perimeter service behind the restored observability contract."""
 from __future__ import annotations
 
 import argparse
@@ -14,13 +8,9 @@ import ctypes
 import logging
 import os
 import runpy
-import socket
 import sys
-import time
 from pathlib import Path
 from typing import Mapping, Optional
-from urllib.parse import urlparse
-
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -34,7 +24,6 @@ from common.observability import (  # noqa: E402
     odbc_probe,
     safe_error_name,
 )
-
 
 log = logging.getLogger("perimeter-service-runner")
 
@@ -66,47 +55,19 @@ def _sql_connection(prefix: str) -> str:
     )
 
 
-def tcp_probe(host: str, port: int, timeout: float = 3.0) -> Mapping[str, object]:
-    if not host:
-        raise RuntimeError("HostMissing")
-    started = time.monotonic()
-    with socket.create_connection((host, int(port)), timeout=max(0.5, float(timeout))):
-        pass
-    return {
-        "status": "ok",
-        "latency_ms": (time.monotonic() - started) * 1000.0,
-    }
-
-
-def rtsp_tcp_probe(url: str) -> Mapping[str, object]:
-    if not url:
-        raise RuntimeError("RtspUrlMissing")
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        raise RuntimeError("RtspHostMissing")
-    return tcp_probe(parsed.hostname, parsed.port or 554, 3.0)
-
-
-def file_probe(path: Path) -> Mapping[str, object]:
+def _file_probe(path: Path) -> Mapping[str, object]:
     if not path.is_file():
         raise FileNotFoundError(str(path))
     return {"status": "ok", "latency_ms": 0.0}
 
 
-def _register_dependency_checks(service: str, reporter, script: Path) -> None:
+def _register_dependency_checks(service: str, reporter, target: Path) -> None:
     if service == "Perimeter.RfidReader":
         reporter.register_probe(
             "database",
             lambda: odbc_probe(os.getenv("RFID_DB_CONNECTION", ""), 5),
         )
-        reporter.register_probe(
-            "rfid_reader",
-            lambda: tcp_probe(
-                os.getenv("RFID_READER_IP", ""),
-                int(os.getenv("RFID_READER_PORT", "8888")),
-                3.0,
-            ),
-        )
+        # rfid_reader is updated by monitored_rfid.py from the real vendor SDK.
         return
 
     if service == "Perimeter.RusGuardSync":
@@ -118,9 +79,7 @@ def _register_dependency_checks(service: str, reporter, script: Path) -> None:
             "destination_database",
             lambda: odbc_probe(_sql_connection("DST"), 5),
         )
-        # The actual sync code remains the current production script.  If it
-        # exits or throws, the runner is no longer healthy and Sentry records it.
-        reporter.touch_dependency("sync_loop", stale_after_seconds=None)
+        # sync_loop is updated by monitored_rusguard.py.
         return
 
     if service == "Perimeter.Yolo":
@@ -128,22 +87,16 @@ def _register_dependency_checks(service: str, reporter, script: Path) -> None:
             "database",
             lambda: odbc_probe(os.getenv("RFID_DB_CONNECTION", ""), 5),
         )
-
         raw_model = os.getenv(
             "RFID_MODEL_PATH",
-            "runs/detect/rfid_forklift_reel2/weights/best.pt",
+            str(ROOT / "RTSP" / "runs" / "detect" / "rfid_forklift_reel2" / "weights" / "best.pt"),
         )
         model_path = Path(raw_model)
         if not model_path.is_absolute():
-            model_path = (script.parent / model_path).resolve()
-        reporter.register_probe("model", lambda: file_probe(model_path))
-
-        for camera_id in (0, 1):
-            reporter.register_probe(
-                f"camera_{camera_id}",
-                lambda cid=camera_id: rtsp_tcp_probe(os.getenv(f"RFID_RTSP_{cid}", "")),
-            )
-        reporter.touch_dependency("pipeline", stale_after_seconds=None)
+            model_path = (ROOT / "RTSP" / model_path).resolve()
+        reporter.register_probe("model", lambda: _file_probe(model_path))
+        # camera_0/camera_1/pipeline are driven from actual frames/main loop by
+        # monitored_yolo.py rather than by a weak TCP-port probe.
         return
 
     if service == "Perimeter.Aggregator":
@@ -151,10 +104,10 @@ def _register_dependency_checks(service: str, reporter, script: Path) -> None:
             "database",
             lambda: odbc_probe(os.getenv("KPP_CONN_STR", ""), 5),
         )
-        reporter.touch_dependency("pipeline", stale_after_seconds=None)
         reporter.register_peer("rfid_reader", "Perimeter.RfidReader")
         reporter.register_peer("yolo", "Perimeter.Yolo")
         reporter.register_peer("rusguard", "Perimeter.RusGuardSync")
+        # pipeline is driven by monitored_aggregator.py.
         return
 
     if service == "Perimeter.WebDashboard":
@@ -187,7 +140,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     _disable_windows_crash_dialogs()
-
     reporter = init_observability(
         args.service,
         root=ROOT,
@@ -211,7 +163,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     runner_argv = sys.argv
+    target_dir = str(script.parent)
+    inserted_target_dir = target_dir not in sys.path
+    if inserted_target_dir:
+        # runpy.run_path does not provide normal script-directory import
+        # semantics. Current Warehouse/Web wrappers use sibling imports, so the
+        # target directory must be visible exactly as with `python script.py`.
+        sys.path.insert(0, target_dir)
     sys.argv = [str(script)]
+
     try:
         runpy.run_path(str(script), run_name="__main__")
         return 0
@@ -235,6 +195,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
     finally:
         sys.argv = runner_argv
+        if inserted_target_dir:
+            try:
+                sys.path.remove(target_dir)
+            except ValueError:
+                pass
         try:
             reporter.stop()
         except Exception:
