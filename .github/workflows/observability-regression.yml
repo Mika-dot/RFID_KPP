@@ -43,7 +43,12 @@ jobs:
             KPP/kpp_aggregator_v3_warehouse.py \
             KPP/kpp_aggregator_v3_warehouse_v3.py \
             web/kpp_reel_dashboard_v3_ru.py \
-            web/kpp_reel_dashboard_v3_fixed.py
+            web/kpp_reel_dashboard_v3_fixed.py \
+            tests/test_observability_restore.py
+
+      - name: Run observability contract tests
+        run: |
+          python -m unittest -v tests.test_observability_restore
 
       - name: Run Warehouse regression tests
         run: |
