@@ -1,17 +1,28 @@
 {
-  "release": "3.4.5-warehouse-recheck",
+  "release": "3.4.5-warehouse-recheck+obs2",
+  "schema_version": "3.4.5",
   "entry_point": "RUN_RFID_KPP_FINAL.cmd",
   "configuration": "deploy/config_v3.cmd",
-  "credentials_embedded": true,
+  "configuration_template": "deploy/config_v3.example.cmd",
+  "configuration_is_local_only": true,
+  "credentials_embedded": false,
+  "validated_runtime_sha": "8ed4a8cc1b3718fe0afef2079cd9b08590ef0e3a",
   "active_files": {
     "rfid_reader": "RFID_reader_v4/rfid_to_sql_v4.py",
     "rusguard_sync": "DB_RusGard/db_sync_v2.py",
     "video": "RTSP/RTSP_yolo_DB_v3.py",
     "aggregator": "KPP/kpp_aggregator_v3_warehouse_v3.py",
     "web": "web/kpp_reel_dashboard_v3_fixed.py",
+    "warehouse_identity": "common/warehouse_identity.py",
+    "warehouse_report": "common/warehouse_report.py",
+    "observability": "common/observability.py",
+    "service_runner": "deploy/run_service.py",
+    "rfid_monitor_adapter": "deploy/monitored_rfid.py",
+    "rusguard_monitor_adapter": "deploy/monitored_rusguard.py",
+    "yolo_monitor_adapter": "deploy/monitored_yolo.py",
+    "aggregator_monitor_adapter": "deploy/monitored_aggregator.py",
     "migration": "migrations/001_kpp_v3_reliability.sql",
     "migration_runner": "deploy/apply_migration_v3.py",
-    "service_loop": "deploy/RUN_SERVICE_LOOP.cmd",
     "service_launcher": "deploy/start_services_v3.py",
     "web_waiter": "deploy/wait_for_web_v3.py",
     "service_wrappers": [
@@ -22,32 +33,52 @@
       "deploy/RUN_WEB_V3.cmd"
     ]
   },
+  "monitoring": {
+    "zabbix_agent_port": 10050,
+    "health_endpoints": {
+      "Perimeter.RfidReader": 18101,
+      "Perimeter.RusGuardSync": 18102,
+      "Perimeter.Yolo": 18103,
+      "Perimeter.Aggregator": 18104,
+      "Perimeter.WebDashboard": 18105
+    },
+    "paths": [
+      "/health",
+      "/health/ready"
+    ],
+    "web_port": 5050,
+    "temporary_perimeter_master_is_not_canonical": true
+  },
+  "warehouse_contract": {
+    "tag_optional": true,
+    "required_identity_fields": ["Ids", "SeriesNumber"],
+    "identity_priority": ["TAG", "IDS", "SERIES"],
+    "ambiguous_series_auto_link": false,
+    "warehouse_only_recheck_hours": 168,
+    "warehouse_cursor": "LAST_WAREHOUSE_ID_V3_4_5_RECHECK",
+    "physical_unknown_rfid_promotion": "RfidReadCount>0",
+    "synthetic_supersession": "SUPERSEDED_BY_KPP"
+  },
   "startup_actions": [
     "stop legacy and prior v3 service processes",
     "resolve existing 64-bit and 32-bit Python interpreters",
     "install only missing dependencies",
     "apply idempotent SQL migration with safety snapshots",
     "run schema precheck",
-    "start only v3.4.5 components through Python CreateProcess and argument-free wrappers"
+    "start five current production components through monitored service wrappers",
+    "wait for web service on port 5050"
   ],
   "invariants": [
-    "unknown RFID is not counted as a reel",
-    "full EPC+TID confirmation is required within +/-24h",
-    "Warehouse Tag is optional; required Ids and SeriesNumber resolve identity in TAG, IDS, SERIES order",
-    "persisted WarehouseId wins over a closer unlinked event and Warehouse-only rows are rechecked for late RFID",
+    "unknown RFID is not counted as a reel unless later confirmed by valid Warehouse/1C evidence",
+    "Warehouse Tag is optional; Ids and SeriesNumber are mandatory identity values",
+    "Warehouse resolution priority is TAG then IDS then unique SERIES",
+    "ambiguous SeriesNumber never auto-links",
+    "persisted WarehouseId wins over a closer unlinked event",
+    "WAREHOUSE_ONLY rows are rechecked for late physical RFID for 168 hours",
+    "physical RFID with RfidReadCount>0 may be promoted from UNKNOWN_RFID by Warehouse evidence",
     "RFID checkpoint advances atomically with event/session state",
     "pending local spool records are not deleted before delivery",
-    "video transitions are not globally suppressed by cooldown",
-    "one external video/SKUD event is assigned to one passage group",
-    "camera capture uses FFmpeg and does not call unsupported driver buffer settings by default",
-    "legacy launcher name remains unchanged",
-    "service wrappers receive no positional arguments through cmd START"
-  ],
-  "operational_visibility": [
-    "RFID heartbeat every 10 seconds with reads, local spool and SQL delivery state",
-    "RTSP heartbeat every 10 seconds per camera with frames, detections, reels, frame age and queue state",
-    "Aggregator heartbeat every 10 seconds with source cursor lag, sessions and reel/unknown counts",
-    "RusGuard cursor bootstraps from already imported destination MAX and reports only new rows",
-    "Web heartbeat reports DB latency, request/slow/error counts; cached dashboard endpoints reduce SQL load"
+    "existing Zabbix/Sentry architecture uses health ports 18101-18105 and must not be silently replaced",
+    "production config_v3.cmd is local-only and must never be committed"
   ]
 }

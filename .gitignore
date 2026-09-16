@@ -1,0 +1,33 @@
+# Local production configuration / secrets
+deploy/config_v3.cmd
+*.local.cmd
+.env
+.env.*
+!.env.example
+
+# Runtime state
+runtime/
+recordings/
+*.sqlite
+*.sqlite3
+*.db
+*.lock
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+venv64/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local backups / staging
+*_BACKUP_*/
+RFID_KPP_OBS_BACKUP_*/
+*.download
