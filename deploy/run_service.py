@@ -8,7 +8,9 @@ import ctypes
 import logging
 import os
 import runpy
+import socket
 import sys
+import time
 from pathlib import Path
 from typing import Mapping, Optional
 
@@ -61,13 +63,42 @@ def _file_probe(path: Path) -> Mapping[str, object]:
     return {"status": "ok", "latency_ms": 0.0}
 
 
+def _tcp_probe(host: str, port: int, timeout: float = 3.0) -> Mapping[str, object]:
+    if not host:
+        raise RuntimeError("HostMissing")
+    started = time.monotonic()
+    with socket.create_connection((host, int(port)), timeout=max(0.5, float(timeout))):
+        pass
+    return {
+        "status": "ok",
+        "latency_ms": (time.monotonic() - started) * 1000.0,
+    }
+
+
+def _require_dependency(reporter, name: str) -> None:
+    if name in reporter.required_dependencies:
+        return
+    reporter.required_dependencies = tuple(reporter.required_dependencies) + (name,)
+    reporter.set_dependency(name, "unknown")
+
+
 def _register_dependency_checks(service: str, reporter, target: Path) -> None:
     if service == "Perimeter.RfidReader":
         reporter.register_probe(
             "database",
             lambda: odbc_probe(os.getenv("RFID_DB_CONNECTION", ""), 5),
         )
-        # rfid_reader is updated by monitored_rfid.py from the real vendor SDK.
+        # SDK state comes from monitored_rfid.py. Keep a separate physical TCP
+        # dependency so a silent/stale SDK cannot mask a dead reader endpoint.
+        _require_dependency(reporter, "rfid_tcp")
+        reporter.register_probe(
+            "rfid_tcp",
+            lambda: _tcp_probe(
+                os.getenv("RFID_READER_IP", ""),
+                int(os.getenv("RFID_READER_PORT", "8888")),
+                3.0,
+            ),
+        )
         return
 
     if service == "Perimeter.RusGuardSync":
@@ -96,7 +127,7 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             model_path = (ROOT / "RTSP" / model_path).resolve()
         reporter.register_probe("model", lambda: _file_probe(model_path))
         # camera_0/camera_1/pipeline are driven from actual frames/main loop by
-        # monitored_yolo.py rather than by a weak TCP-port probe.
+        # monitored_yolo.py rather than by a weak RTSP TCP-port probe.
         return
 
     if service == "Perimeter.Aggregator":
@@ -122,6 +153,15 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             ),
         )
         reporter.register_peer("aggregator", "Perimeter.Aggregator")
+        _require_dependency(reporter, "web_port")
+        reporter.register_probe(
+            "web_port",
+            lambda: _tcp_probe(
+                "127.0.0.1",
+                int(os.getenv("KPP_WEB_PORT", "5050")),
+                3.0,
+            ),
+        )
         return
 
 
