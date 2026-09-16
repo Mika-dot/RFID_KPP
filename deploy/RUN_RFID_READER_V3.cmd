@@ -14,13 +14,14 @@ if not defined PY32 goto :missing_python
 if not exist "%PY32%" goto :bad_python
 if not exist "%ROOT%\RFID_reader_v4\rfid_to_sql_v4.py" goto :bad_script
 if not exist "%ROOT%\deploy\run_service.py" goto :bad_runner
+if not exist "%ROOT%\deploy\monitored_rfid.py" goto :bad_monitor
 
 cd /d "%ROOT%\RFID_reader_v4"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs1"
-"%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\RFID_reader_v4\rfid_to_sql_v4.py"
+set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs2"
+"%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\deploy\monitored_rfid.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY32%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.RfidReader" --exit-code %RC% >nul 2>&1
 echo.
@@ -46,6 +47,10 @@ goto :fatal
 
 :bad_runner
 echo [FATAL] Missing deploy\run_service.py
+goto :fatal
+
+:bad_monitor
+echo [FATAL] Missing deploy\monitored_rfid.py
 goto :fatal
 
 :bad_workdir
