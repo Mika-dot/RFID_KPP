@@ -18,16 +18,20 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertNotIn('start "1 RFID Reader', text)
         self.assertNotIn("kpp_1_reliable_v2.4_full_rebuild.py", text)
 
-    def test_production_config_has_no_placeholders(self) -> None:
-        text = (ROOT / "deploy" / "config_v3.cmd").read_text(encoding="ascii")
+    def test_production_config_is_local_only_and_example_has_placeholders(self) -> None:
+        production = ROOT / "deploy" / "config_v3.cmd"
+        example = ROOT / "deploy" / "config_v3.example.cmd"
+        self.assertFalse(production.exists(), "production secrets must not be tracked")
+        self.assertTrue(example.exists())
+        text = example.read_text(encoding="ascii")
         for placeholder in ("<SQL_SERVER>", "<SQL_PASSWORD>", "<CAMERA_USER>", "<RFID_READER_IP>"):
-            self.assertNotIn(placeholder, text)
+            self.assertIn(placeholder, text)
         for required in ("KPP_CONN_STR", "RFID_READER_IP", "RFID_RTSP_0", "RFID_RTSP_1", "SRC_SERVER"):
             self.assertIn(required, text)
 
     def test_cmd_files_are_ascii_crlf(self) -> None:
         files = [ROOT / "RUN_RFID_KPP_FINAL.cmd", *sorted((ROOT / "deploy").glob("*.cmd"))]
-        self.assertGreaterEqual(len(files), 10)
+        self.assertGreaterEqual(len(files), 9)
         for path in files:
             data = path.read_bytes()
             self.assertTrue(all(byte < 128 for byte in data), path)
@@ -37,7 +41,10 @@ class DeploymentHotfixTests(unittest.TestCase):
     def test_manifest_uses_required_entrypoint(self) -> None:
         manifest = json.loads((ROOT / "DEPLOYMENT_MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["entry_point"], "RUN_RFID_KPP_FINAL.cmd")
-        self.assertEqual(manifest["release"], "3.4.5-warehouse-recheck")
+        self.assertEqual(manifest["release"], "3.4.5-warehouse-recheck+obs2")
+        self.assertEqual(manifest["schema_version"], "3.4.5")
+        self.assertTrue(manifest["configuration_is_local_only"])
+        self.assertFalse(manifest["credentials_embedded"])
         self.assertEqual(
             manifest["active_files"]["aggregator"],
             "KPP/kpp_aggregator_v3_warehouse_v3.py",
@@ -45,6 +52,14 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertEqual(
             manifest["active_files"]["web"],
             "web/kpp_reel_dashboard_v3_fixed.py",
+        )
+        self.assertEqual(
+            manifest["monitoring"]["health_endpoints"]["Perimeter.RfidReader"],
+            18101,
+        )
+        self.assertEqual(
+            manifest["monitoring"]["health_endpoints"]["Perimeter.WebDashboard"],
+            18105,
         )
 
     def test_wrappers_are_argument_free(self) -> None:
@@ -69,7 +84,7 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertEqual(command[4], r"D:\\RFID KPP\\deploy\\RUN_WEB_V3.cmd")
 
     def test_rtsp_driver_setting_is_disabled_by_default(self) -> None:
-        config = (ROOT / "deploy" / "config_v3.cmd").read_text(encoding="ascii")
+        config = (ROOT / "deploy" / "config_v3.example.cmd").read_text(encoding="ascii")
         source = (ROOT / "RTSP" / "RTSP_yolo_DB_v3.py").read_text(encoding="utf-8")
         self.assertIn("RFID_SET_CAPTURE_BUFFER=0", config)
         self.assertIn('RTSP_BACKEND = os.getenv("RFID_RTSP_BACKEND", "FFMPEG")', source)
