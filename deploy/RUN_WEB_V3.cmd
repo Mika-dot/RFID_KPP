@@ -18,7 +18,7 @@ cd /d "%ROOT%\web"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs1"
+set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs2"
 "%PY64%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.WebDashboard" --script "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY64%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.WebDashboard" --exit-code %RC% >nul 2>&1
