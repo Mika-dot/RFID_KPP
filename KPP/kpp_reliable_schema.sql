@@ -31,6 +31,10 @@ BEGIN
         Task1CDocIds           NVARCHAR(128) NULL,
         TaskMatchType          VARCHAR(32) NULL,
 
+        WarehouseId            BIGINT NULL,
+        WarehouseDt            DATETIME2(3) NULL,
+        WarehouseDocIds        NVARCHAR(128) NULL,
+
         FirstSeen              DATETIME2(3) NOT NULL,
         LastSeen               DATETIME2(3) NOT NULL,
         CompletedAt            DATETIME2(3) NULL,

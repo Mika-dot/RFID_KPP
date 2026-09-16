@@ -2,7 +2,7 @@
 setlocal EnableExtensions DisableDelayedExpansion
 cd /d "%~dp0"
 set "ROOT=%CD%"
-set "PATCH_VERSION=3.4.0-operational"
+set "PATCH_VERSION=3.4.5-warehouse-recheck"
 
 echo ================================================================
 echo RFID KPP FINAL FIXED %PATCH_VERSION%
@@ -38,7 +38,7 @@ if errorlevel 1 goto :fatal
 "%PY64%" "%ROOT%\deploy\start_services_v3.py"
 if errorlevel 1 goto :fatal
 
-echo [OK] All v3.4 services were launched.
+echo [OK] All v3.4.5 services were launched.
 echo [INFO] Waiting for web service: http://127.0.0.1:5050
 "%PY64%" "%ROOT%\deploy\wait_for_web_v3.py" --url "http://127.0.0.1:5050" --timeout 90 --open
 if errorlevel 1 echo [WARN] Web did not answer within 90 seconds. Check service windows.

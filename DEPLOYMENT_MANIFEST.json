@@ -1,5 +1,5 @@
 {
-  "release": "3.4.0-operational",
+  "release": "3.4.5-warehouse-recheck",
   "entry_point": "RUN_RFID_KPP_FINAL.cmd",
   "configuration": "deploy/config_v3.cmd",
   "credentials_embedded": true,
@@ -7,8 +7,8 @@
     "rfid_reader": "RFID_reader_v4/rfid_to_sql_v4.py",
     "rusguard_sync": "DB_RusGard/db_sync_v2.py",
     "video": "RTSP/RTSP_yolo_DB_v3.py",
-    "aggregator": "KPP/kpp_aggregator_v3.py",
-    "web": "web/kpp_reel_dashboard_v3_ru.py",
+    "aggregator": "KPP/kpp_aggregator_v3_warehouse_v3.py",
+    "web": "web/kpp_reel_dashboard_v3_fixed.py",
     "migration": "migrations/001_kpp_v3_reliability.sql",
     "migration_runner": "deploy/apply_migration_v3.py",
     "service_loop": "deploy/RUN_SERVICE_LOOP.cmd",
@@ -28,11 +28,13 @@
     "install only missing dependencies",
     "apply idempotent SQL migration with safety snapshots",
     "run schema precheck",
-    "start only v3.4 components through Python CreateProcess and argument-free wrappers"
+    "start only v3.4.5 components through Python CreateProcess and argument-free wrappers"
   ],
   "invariants": [
     "unknown RFID is not counted as a reel",
     "full EPC+TID confirmation is required within +/-24h",
+    "Warehouse Tag is optional; required Ids and SeriesNumber resolve identity in TAG, IDS, SERIES order",
+    "persisted WarehouseId wins over a closer unlinked event and Warehouse-only rows are rechecked for late RFID",
     "RFID checkpoint advances atomically with event/session state",
     "pending local spool records are not deleted before delivery",
     "video transitions are not globally suppressed by cooldown",

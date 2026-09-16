@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Idempotent one-click SQL migration for RFID KPP v3.2."""
+"""Idempotent one-click SQL migration for RFID KPP v3.4.5."""
 from __future__ import annotations
 
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATION = ROOT / "migrations" / "001_kpp_v3_reliability.sql"
-EXPECTED_VERSION = "3.2.0"
+EXPECTED_VERSION = "3.4.5"
 
 
 def complete(cur) -> bool:
@@ -38,6 +38,17 @@ def complete(cur) -> bool:
             return False
     cur.execute("SELECT OBJECT_ID('dbo.KPP_RuntimeState', 'U')")
     if cur.fetchone()[0] is None:
+        return False
+    cur.execute(
+        """
+SELECT t.name
+FROM sys.columns c
+JOIN sys.types t ON t.user_type_id=c.user_type_id
+WHERE c.object_id=OBJECT_ID('dbo.KPP_ReelEvents') AND c.name='WarehouseId'
+"""
+    )
+    warehouse_id_type = cur.fetchone()
+    if not warehouse_id_type or str(warehouse_id_type[0]).lower() != "bigint":
         return False
     cur.execute("SELECT StateValue FROM dbo.KPP_RuntimeState WHERE StateKey='KPP_SCHEMA_VERSION'")
     row = cur.fetchone()
