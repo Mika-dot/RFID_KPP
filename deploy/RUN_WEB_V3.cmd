@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 5 RFID KPP Web FINAL FIXED v3.4.5 Warehouse Identity Report
+title 5 RFID KPP Web v3.4.5 Warehouse Identity + Observability
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -12,13 +12,16 @@ if errorlevel 1 goto :fatal
 if not defined PY64 goto :missing_python
 if not exist "%PY64%" goto :bad_python
 if not exist "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py" goto :bad_script
+if not exist "%ROOT%\deploy\run_service.py" goto :bad_runner
 
 cd /d "%ROOT%\web"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-"%PY64%" -u "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py"
+set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs1"
+"%PY64%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.WebDashboard" --script "%ROOT%\web\kpp_reel_dashboard_v3_fixed.py"
 set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" "%PY64%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.WebDashboard" --exit-code %RC% >nul 2>&1
 echo.
 echo [%DATE% %TIME%] Exit code %RC%. Restarting in 5 seconds.
 timeout /t 5 /nobreak >nul
@@ -33,7 +36,15 @@ echo [FATAL] PY64 is empty after Python detection.
 goto :fatal
 
 :bad_python
-echo [FATAL] Python file does not exist: %ROOT%\web\kpp_reel_dashboard_v3_fixed.py
+echo [FATAL] Python file does not exist: %PY64%
+goto :fatal
+
+:bad_script
+echo [FATAL] Script does not exist: %ROOT%\web\kpp_reel_dashboard_v3_fixed.py
+goto :fatal
+
+:bad_runner
+echo [FATAL] Missing deploy\run_service.py
 goto :fatal
 
 :bad_workdir
