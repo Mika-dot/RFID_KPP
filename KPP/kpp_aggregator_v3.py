@@ -116,7 +116,7 @@ class Config:
     UNKNOWN_RECHECK_HOURS = float(os.getenv("KPP_UNKNOWN_RECHECK_HOURS", "30"))
     EXTERNAL_RECHECK_HOURS = float(os.getenv("KPP_EXTERNAL_RECHECK_HOURS", "6"))
     STATUS_SEC = float(os.getenv("KPP_STATUS_INTERVAL_SEC", "10"))
-    PROCESSING_VERSION = "3.4.0"
+    PROCESSING_VERSION = "3.4.5"
     APP_LOCK_NAME = os.getenv("KPP_APP_LOCK_NAME", "RFID_KPP_AGGREGATOR_V3")
 
 
@@ -996,6 +996,7 @@ UPDATE {Config.EVENT_TABLE}
 SET NeedRecheck=0, FinalizedAt=COALESCE(FinalizedAt,SYSDATETIME()), UpdatedAt=SYSDATETIME(),
     WarningFlags=CONCAT(ISNULL(WarningFlags,''), CASE WHEN ISNULL(WarningFlags,'')='' THEN '' ELSE ' | ' END, 'EXTERNAL_MATCH_RECHECK_EXPIRED')
 WHERE IsReel=1 AND NeedRecheck=1
+  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
   AND FirstSeen<DATEADD(hour,-?,SYSDATETIME());
 """,
                 Config.EXTERNAL_RECHECK_HOURS,

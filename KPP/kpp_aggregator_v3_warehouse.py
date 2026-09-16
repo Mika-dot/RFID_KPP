@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -34,13 +35,46 @@ from common.warehouse_identity import (
 class Aggregator(BaseAggregator):
     WAREHOUSE_BATCH_SIZE = int(os.getenv("KPP_WAREHOUSE_RECONCILE_BATCH", "2000"))
     WAREHOUSE_RECONCILE_SEC = float(os.getenv("KPP_WAREHOUSE_RECONCILE_SEC", "15"))
+    WAREHOUSE_RECHECK_SEC = float(os.getenv("KPP_WAREHOUSE_RECHECK_SEC", "60"))
+    WAREHOUSE_RECHECK_HOURS = float(os.getenv("KPP_WAREHOUSE_RECHECK_HOURS", "168"))
+    WAREHOUSE_RECHECK_BATCH = int(os.getenv("KPP_WAREHOUSE_RECHECK_BATCH", "500"))
     # New cursor intentionally replays Warehouse from Id=0 once. Older builds
     # advanced their cursor past nullable-Tag rows after marking them invalid.
-    WAREHOUSE_STATE_KEY = "LAST_WAREHOUSE_ID_V3_4_4_IDENTITY"
+    WAREHOUSE_STATE_KEY = "LAST_WAREHOUSE_ID_V3_4_5_RECHECK"
 
     def __init__(self) -> None:
         super().__init__()
         self.last_warehouse_reconcile = datetime.min
+        self.last_warehouse_recheck = datetime.min
+
+    def bootstrap(self) -> None:
+        super().bootstrap()
+        with self.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+UPDATE {Config.EVENT_TABLE}
+SET NeedRecheck=1,
+    NextRecheckAt=COALESCE(NextRecheckAt,SYSDATETIME()),
+    FinalizedAt=NULL,
+    UpdatedAt=SYSDATETIME()
+WHERE SessionCloseReason='WAREHOUSE_ONLY'
+  AND IsReel=1
+  AND WarehouseDt>=DATEADD(hour,-?,SYSDATETIME());
+
+UPDATE {Config.EVENT_TABLE}
+SET NeedRecheck=0,
+    NextRecheckAt=NULL,
+    FinalizedAt=COALESCE(FinalizedAt,SYSDATETIME()),
+    UpdatedAt=SYSDATETIME()
+WHERE SessionCloseReason='WAREHOUSE_ONLY'
+  AND IsReel=1
+  AND WarehouseDt<DATEADD(hour,-?,SYSDATETIME());
+""",
+                self.WAREHOUSE_RECHECK_HOURS,
+                self.WAREHOUSE_RECHECK_HOURS,
+            )
+            conn.commit()
 
     def _load_task_candidates(
         self,
@@ -58,8 +92,16 @@ class Aggregator(BaseAggregator):
             clauses.append("UPPER(LTRIM(RTRIM(Tag)))=?")
             params.append(tag)
         if doc_ids:
-            clauses.append("UPPER(LTRIM(RTRIM(Ids)))=?")
-            params.append(doc_ids)
+            try:
+                canonical_ids = str(uuid.UUID(doc_ids))
+            except (ValueError, AttributeError):
+                canonical_ids = ""
+            if canonical_ids:
+                # dbo.RfidTags.Ids is UNIQUEIDENTIFIER. String functions on it
+                # fail in SQL Server; conversion of the parameter remains
+                # sargable against an index on Ids.
+                clauses.append("Ids=CONVERT(uniqueidentifier, ?)")
+                params.append(canonical_ids)
         if series_number:
             clauses.append("UPPER(LTRIM(RTRIM(SeriesNumber)))=?")
             params.append(series_number)
@@ -99,6 +141,24 @@ WHERE Dt BETWEEN ? AND ?
             Config.TASK_WINDOW_HOURS,
         )
 
+    def _find_existing_linked_event(
+        self, cur, warehouse_id: int, warehouse_dt: datetime
+    ) -> Optional[tuple[int, str]]:
+        cur.execute(
+            f"""
+SELECT TOP(1) EventId,SourceTag
+FROM {Config.EVENT_TABLE}
+WHERE WarehouseId=?
+  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND IsReel=1
+ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)),EventId DESC;
+""",
+            warehouse_id,
+            warehouse_dt,
+        )
+        row = cur.fetchone()
+        return (int(row[0]), normalize_tag(row[1])) if row else None
+
     def _find_kpp_event(self, cur, tag: str, dt: datetime, warehouse_id: int) -> Optional[int]:
         if not tag:
             return None
@@ -112,12 +172,14 @@ WHERE UPPER(LTRIM(RTRIM(SourceTag)))=?
   AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
   AND (WarehouseId IS NULL OR WarehouseId=?)
   AND FirstSeen BETWEEN ? AND ?
-ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)), EventId DESC;
+ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
+         ABS(DATEDIFF(SECOND,FirstSeen,?)), EventId DESC;
 """,
             tag,
             warehouse_id,
             start,
             end,
+            warehouse_id,
             dt,
         )
         row = cur.fetchone()
@@ -183,6 +245,36 @@ WHERE EventId=?;
             event_id,
         )
 
+    def _supersede_warehouse_only(self, cur, warehouse_id: int, event_id: int) -> None:
+        cur.execute(
+            f"""
+UPDATE {Config.EVENT_TABLE}
+SET IsReel=0,
+    ObjectType='SUPERSEDED',
+    ReelClassification='SUPERSEDED_BY_KPP',
+    NeedRecheck=0,
+    NextRecheckAt=NULL,
+    FinalizedAt=COALESCE(FinalizedAt,SYSDATETIME()),
+    WarningFlags=CASE
+        WHEN CHARINDEX('SUPERSEDED_BY_KPP',ISNULL(WarningFlags,''))>0 THEN WarningFlags
+        WHEN ISNULL(WarningFlags,'')='' THEN 'SUPERSEDED_BY_KPP'
+        ELSE CONCAT(WarningFlags,' | SUPERSEDED_BY_KPP')
+    END,
+    EvidenceJson=JSON_MODIFY(
+        CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+        '$.superseded_by_event_id',?),
+    ProcessingVersion='3.4.5-warehouse-recheck',
+    UpdatedAt=SYSDATETIME()
+WHERE WarehouseId=?
+  AND SessionCloseReason='WAREHOUSE_ONLY'
+  AND EventId<>?
+  AND IsReel=1;
+""",
+            event_id,
+            warehouse_id,
+            event_id,
+        )
+
     def _insert_warehouse_only(
         self,
         cur,
@@ -206,7 +298,7 @@ WHERE EventId=?;
         match_type = "WAREHOUSE_ONLY"
         evidence = json.dumps(
             {
-                "processing_version": "3.4.4-warehouse-identity",
+                "processing_version": "3.4.5-warehouse-recheck",
                 "source": "WAREHOUSE_ONLY",
                 "warehouse": {
                     "id": warehouse_id,
@@ -253,11 +345,25 @@ BEGIN
         'UNKNOWN',0,
         0,0,0,0,
         'UNKNOWN',100,'SINGLE',0,0,1,'WAREHOUSE',
-        ?,?,0,0,SYSDATETIME(),
-        1,'REEL',?,'WAREHOUSE_TIME','3.4.4-warehouse-identity',
+        ?,?,1,0,NULL,
+        1,'REEL',?,'WAREHOUSE_TIME','3.4.5-warehouse-recheck',
         SYSDATETIME(),SYSDATETIME()
     );
 END;
+UPDATE {Config.EVENT_TABLE}
+SET SourceTag=?,EPC=?,TID=?,
+    Task1CId=COALESCE(Task1CId,?),
+    Task1CDt=COALESCE(Task1CDt,?),
+    Task1CDocIds=COALESCE(Task1CDocIds,?),
+    EvidenceJson=?,
+    NeedRecheck=1,
+    NextRecheckAt=DATEADD(second,?,SYSDATETIME()),
+    LastRecheckAt=SYSDATETIME(),
+    RecheckCount=ISNULL(RecheckCount,0)+1,
+    FinalizedAt=NULL,
+    ProcessingVersion='3.4.5-warehouse-recheck',
+    UpdatedAt=SYSDATETIME()
+WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
 """,
             warehouse_id,
             event_key,
@@ -277,7 +383,101 @@ END;
             "WAREHOUSE_ONLY_NO_RFID" + (" | AMBIGUOUS_SERIES" if link_status == MATCH_AMBIGUOUS_SERIES else ""),
             evidence,
             match_type,
+            tag,
+            epc,
+            tid,
+            task_id,
+            task_dt,
+            task_doc,
+            evidence,
+            int(self.WAREHOUSE_RECHECK_SEC),
+            warehouse_id,
         )
+
+    def _process_warehouse_row(self, cur, row) -> tuple[str, bool]:
+        warehouse_id = int(row[0])
+        warehouse_dt = row[1]
+        tag = normalize_tag(row[2])
+        warehouse_doc_ids = str(row[3] or "").strip()
+        series_number = str(row[4] or "").strip()
+        normalized_ids = normalize_value(warehouse_doc_ids)
+        normalized_series = normalize_value(series_number)
+        # Tag is deliberately optional. Ids and SeriesNumber are mandatory 1C
+        # identity values on every valid Warehouse row.
+        if warehouse_dt is None or not normalized_ids or not normalized_series:
+            return "invalid", False
+
+        identity = self._resolve_identity(
+            cur,
+            tag,
+            normalized_ids,
+            normalized_series,
+            warehouse_dt,
+        )
+
+        event_id = None
+        event_candidate = None
+        linked = self._find_existing_linked_event(cur, warehouse_id, warehouse_dt)
+        if linked is not None:
+            event_id, linked_tag = linked
+            event_candidate = next(
+                (candidate for candidate in identity.candidates if candidate.tag == linked_tag),
+                None,
+            )
+
+        if event_id is None:
+            for candidate in identity.candidates:
+                event_id = self._find_kpp_event(
+                    cur, candidate.tag, warehouse_dt, warehouse_id
+                )
+                if event_id is not None:
+                    event_candidate = candidate
+                    break
+
+        if event_id is not None:
+            task = (
+                event_candidate.task if event_candidate is not None else None
+            ) or identity.primary_task
+            match_method = (
+                event_candidate.method
+                if event_candidate is not None
+                else identity.primary_method
+            )
+            self._enrich_existing_event(
+                cur,
+                event_id,
+                warehouse_id,
+                warehouse_dt,
+                warehouse_doc_ids,
+                series_number,
+                task,
+                match_method,
+            )
+            self._supersede_warehouse_only(cur, warehouse_id, event_id)
+            return "enriched", identity.series_ambiguous
+
+        match_method = (
+            identity.candidates[0].method
+            if identity.candidates
+            else identity.primary_method
+        )
+        link_status = (
+            MATCH_AMBIGUOUS_SERIES
+            if identity.series_ambiguous and not identity.candidates
+            else "WAREHOUSE_ONLY"
+        )
+        self._insert_warehouse_only(
+            cur,
+            warehouse_id,
+            warehouse_dt,
+            identity.preferred_tag,
+            warehouse_doc_ids,
+            series_number,
+            identity.primary_task,
+            match_method,
+            link_status,
+        )
+        return "warehouse_only", identity.series_ambiguous
 
     def reconcile_warehouse(self, force: bool = False) -> int:
         now = datetime.now()
@@ -311,73 +511,14 @@ ORDER BY Id ASC;
             for row in rows:
                 warehouse_id = int(row[0])
                 max_id = max(max_id, warehouse_id)
-                warehouse_dt = row[1]
-                tag = normalize_tag(row[2])
-                warehouse_doc_ids = str(row[3] or "").strip()
-                series_number = str(row[4] or "").strip()
-                normalized_ids = normalize_value(warehouse_doc_ids)
-                normalized_series = normalize_value(series_number)
-                # Tag is deliberately optional. Ids and SeriesNumber are the
-                # mandatory 1C identity carried by every Warehouse row.
-                if warehouse_dt is None or not normalized_ids or not normalized_series:
-                    invalid += 1
-                    continue
-
-                identity = self._resolve_identity(
-                    cur,
-                    tag,
-                    normalized_ids,
-                    normalized_series,
-                    warehouse_dt,
-                )
-                if identity.series_ambiguous:
+                outcome, ambiguous = self._process_warehouse_row(cur, row)
+                if ambiguous:
                     ambiguous_series += 1
-
-                event_id = None
-                event_candidate = None
-                for candidate in identity.candidates:
-                    event_id = self._find_kpp_event(
-                        cur, candidate.tag, warehouse_dt, warehouse_id
-                    )
-                    if event_id is not None:
-                        event_candidate = candidate
-                        break
-
-                if event_id is not None:
-                    task = event_candidate.task or identity.primary_task
-                    self._enrich_existing_event(
-                        cur,
-                        event_id,
-                        warehouse_id,
-                        warehouse_dt,
-                        warehouse_doc_ids,
-                        series_number,
-                        task,
-                        event_candidate.method,
-                    )
+                if outcome == "invalid":
+                    invalid += 1
+                elif outcome == "enriched":
                     enriched += 1
                 else:
-                    match_method = (
-                        identity.candidates[0].method
-                        if identity.candidates
-                        else identity.primary_method
-                    )
-                    link_status = (
-                        MATCH_AMBIGUOUS_SERIES
-                        if identity.series_ambiguous and not identity.candidates
-                        else "WAREHOUSE_ONLY"
-                    )
-                    self._insert_warehouse_only(
-                        cur,
-                        warehouse_id,
-                        warehouse_dt,
-                        identity.preferred_tag,
-                        warehouse_doc_ids,
-                        series_number,
-                        identity.primary_task,
-                        match_method,
-                        link_status,
-                    )
                     warehouse_only += 1
 
             self.state_set(conn, self.WAREHOUSE_STATE_KEY, str(max_id))
@@ -393,6 +534,76 @@ ORDER BY Id ASC;
             raise
         finally:
             conn.close()
+
+    def recheck_warehouse_only(self, force: bool = False) -> int:
+        now = datetime.now()
+        if not force and (
+            now - self.last_warehouse_recheck
+        ).total_seconds() < self.WAREHOUSE_RECHECK_SEC:
+            return 0
+        self.last_warehouse_recheck = now
+
+        conn = self.connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+SELECT TOP ({self.WAREHOUSE_RECHECK_BATCH})
+       w.Id,w.Dt,w.Tag,w.Ids,w.SeriesNumber
+FROM {Config.EVENT_TABLE} e
+JOIN {Config.WAREHOUSE_TABLE} w ON w.Id=e.WarehouseId
+WHERE e.SessionCloseReason='WAREHOUSE_ONLY'
+  AND e.IsReel=1
+  AND e.NeedRecheck=1
+  AND (e.NextRecheckAt IS NULL OR e.NextRecheckAt<=SYSDATETIME())
+  AND w.Dt>=DATEADD(hour,-?,SYSDATETIME())
+ORDER BY COALESCE(e.NextRecheckAt,e.CreatedAt),e.EventId;
+""",
+                self.WAREHOUSE_RECHECK_HOURS,
+            )
+            rows = cur.fetchall()
+            enriched = 0
+            for row in rows:
+                outcome, _ambiguous = self._process_warehouse_row(cur, row)
+                if outcome == "enriched":
+                    enriched += 1
+
+            cur.execute(
+                f"""
+UPDATE {Config.EVENT_TABLE}
+SET NeedRecheck=0,
+    NextRecheckAt=NULL,
+    FinalizedAt=COALESCE(FinalizedAt,SYSDATETIME()),
+    WarningFlags=CASE
+        WHEN CHARINDEX('WAREHOUSE_RECHECK_EXPIRED',ISNULL(WarningFlags,''))>0 THEN WarningFlags
+        WHEN ISNULL(WarningFlags,'')='' THEN 'WAREHOUSE_RECHECK_EXPIRED'
+        ELSE CONCAT(WarningFlags,' | WAREHOUSE_RECHECK_EXPIRED')
+    END,
+    UpdatedAt=SYSDATETIME()
+WHERE SessionCloseReason='WAREHOUSE_ONLY'
+  AND IsReel=1
+  AND NeedRecheck=1
+  AND WarehouseDt<DATEADD(hour,-?,SYSDATETIME());
+""",
+                self.WAREHOUSE_RECHECK_HOURS,
+            )
+            conn.commit()
+            if rows:
+                log.info(
+                    "WAREHOUSE RECHECK rows=%s enriched=%s pending=%s",
+                    len(rows), enriched, len(rows) - enriched,
+                )
+            return len(rows)
+        except Exception:
+            conn.rollback()
+            log.exception("Warehouse-only recheck rolled back")
+            raise
+        finally:
+            conn.close()
+
+    def recheck_pending(self) -> int:
+        rfid_count = super().recheck_pending()
+        return rfid_count + self.recheck_warehouse_only()
 
     def run(self, once: bool = False) -> None:
         self.bootstrap()

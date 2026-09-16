@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Warehouse reconciliation v3.4.4.
+"""Warehouse reconciliation v3.4.5.
 
 Address Warehouse is an independent confirmation of an outbound reel passage.
 If RFID missed the tag but Warehouse has the reel, the event is treated as OUT
@@ -31,7 +31,7 @@ SET FinalDirection='OUT',
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
     END,
-    ProcessingVersion='3.4.4-warehouse-identity',
+    ProcessingVersion='3.4.5-warehouse-recheck',
     UpdatedAt=SYSDATETIME()
 WHERE IsReel=1
   AND WarehouseId IS NOT NULL
@@ -89,7 +89,7 @@ SET FinalDirection=CASE
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
     END,
-    ProcessingVersion='3.4.4-warehouse-identity',
+    ProcessingVersion='3.4.5-warehouse-recheck',
     UpdatedAt=SYSDATETIME()
 WHERE EventId=?;
 """,
@@ -129,9 +129,9 @@ SET FinalDirection='OUT',
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
     END,
-    ProcessingVersion='3.4.4-warehouse-identity',
+    ProcessingVersion='3.4.5-warehouse-recheck',
     UpdatedAt=SYSDATETIME()
-WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY';
+WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
 """,
             warehouse_id,
         )

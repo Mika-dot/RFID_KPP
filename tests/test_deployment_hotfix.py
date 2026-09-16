@@ -37,7 +37,15 @@ class DeploymentHotfixTests(unittest.TestCase):
     def test_manifest_uses_required_entrypoint(self) -> None:
         manifest = json.loads((ROOT / "DEPLOYMENT_MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["entry_point"], "RUN_RFID_KPP_FINAL.cmd")
-        self.assertEqual(manifest["release"], "3.3.0-launchfix")
+        self.assertEqual(manifest["release"], "3.4.5-warehouse-recheck")
+        self.assertEqual(
+            manifest["active_files"]["aggregator"],
+            "KPP/kpp_aggregator_v3_warehouse_v3.py",
+        )
+        self.assertEqual(
+            manifest["active_files"]["web"],
+            "web/kpp_reel_dashboard_v3_fixed.py",
+        )
 
     def test_wrappers_are_argument_free(self) -> None:
         wrappers = sorted((ROOT / "deploy").glob("RUN_*_V3.cmd"))
@@ -73,8 +81,26 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertNotIn("len(tag) < 24", aggregator)
         self.assertIn("not normalized_ids or not normalized_series", aggregator)
         self.assertIn("resolve_warehouse_identity", aggregator)
-        self.assertIn("resolve_warehouse_identity", web)
+        self.assertIn("build_report_records", web)
         self.assertNotIn("ISNULL(e0.SourceTag,'')", web)
+        self.assertNotIn("LTRIM(RTRIM(Ids))", aggregator)
+        self.assertIn("Ids=CONVERT(uniqueidentifier, ?)", aggregator)
+        self.assertIn("CASE WHEN WarehouseId=? THEN 0 ELSE 1 END", aggregator)
+        self.assertIn("def recheck_warehouse_only", aggregator)
+
+    def test_stop_script_knows_production_entrypoints(self) -> None:
+        text = (ROOT / "deploy" / "stop_kpp_processes.ps1").read_text(encoding="utf-8")
+        self.assertIn("kpp_aggregator_v3_warehouse_v3.py", text)
+        self.assertIn("kpp_reel_dashboard_v3_fixed.py", text)
+        self.assertIn("RUN_AGGREGATOR_V3.cmd", text)
+        self.assertIn("RUN_WEB_V3.cmd", text)
+
+    def test_schema_uses_bigint_warehouse_relation(self) -> None:
+        migration = (ROOT / "migrations" / "001_kpp_v3_reliability.sql").read_text(encoding="utf-8")
+        runner = (ROOT / "deploy" / "apply_migration_v3.py").read_text(encoding="utf-8")
+        self.assertIn("ADD WarehouseId BIGINT NULL", migration)
+        self.assertIn("ALTER COLUMN WarehouseId BIGINT NULL", migration)
+        self.assertIn('EXPECTED_VERSION = "3.4.5"', runner)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@ from pathlib import Path
 
 import numpy as np
 
+if importlib.util.find_spec("cv2") is None:
+    raise unittest.SkipTest("OpenCV is not installed in this unit-test environment")
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / "RTSP" / "RTSP_yolo_DB_v3.py"
 spec = importlib.util.spec_from_file_location("rtsp_v3", MODULE_PATH)
 rtsp = importlib.util.module_from_spec(spec)

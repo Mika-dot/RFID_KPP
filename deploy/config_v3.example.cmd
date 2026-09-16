@@ -1,5 +1,5 @@
 @echo off
-rem Скопировать в config_v3.cmd и заполнить. Не коммитить реальные пароли.
+rem Copy to config_v3.cmd and fill in values. Do not commit real passwords.
 set "ROOT=D:\Desktop\RFID_KPP-main"
 
 set "SQL_CONN=DRIVER={ODBC Driver 18 for SQL Server};SERVER=<SQL_SERVER>;DATABASE=<SQL_DATABASE>;UID=<SQL_USER>;PWD=<SQL_PASSWORD>;Encrypt=yes;TrustServerCertificate=yes;"
@@ -43,7 +43,7 @@ set "RFID_VIDEO_SPOOL_WARN_MB=4096"
 set "RFID_REEL_CLASS_NAME=cable_reel"
 set "RFID_HEADLESS=0"
 
-rem Только подтверждённая полной меткой 1С/склада RFID считается катушкой.
+rem Only RFID confirmed by a full 1C/warehouse tag is classified as a reel.
 set "KPP_TASK_MATCH_WINDOW_HOURS=24"
 set "KPP_ALLOW_UNIQUE_EPC_REEL=0"
 set "KPP_NON_REEL_TAGS_FILE=%ROOT%\deploy\non_reel_tags.txt"
@@ -68,6 +68,9 @@ set "KPP_RECHECK_INTERVAL_SEC=60"
 set "KPP_UNKNOWN_RECHECK_HOURS=30"
 set "KPP_REGISTRY_CACHE_HOURS=72"
 set "KPP_EXTERNAL_RECHECK_HOURS=6"
+set "KPP_WAREHOUSE_RECHECK_SEC=60"
+set "KPP_WAREHOUSE_RECHECK_HOURS=168"
+set "KPP_WAREHOUSE_RECHECK_BATCH=500"
 set "KPP_VIDEO_IN_DIRECTION=0>1"
 
 set "KPP_WEB_HOST=0.0.0.0"
@@ -77,6 +80,6 @@ set "KPP_WEB_AUTH_USER=<WEB_USER>"
 set "KPP_WEB_AUTH_PASSWORD=<WEB_PASSWORD>"
 set "KPP_WEB_LOCK_FILE=%ROOT%\runtime\web_v3.lock"
 
-rem Опционально: локальный LM Studio. Оставить пустым, чтобы данные событий не отправлялись в LLM.
+rem Optional local LM Studio. Leave empty to avoid sending event data to an LLM.
 set "KPP_AI_BASE_URL="
 set "KPP_AI_FALLBACK_BASE_URL="

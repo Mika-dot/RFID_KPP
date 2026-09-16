@@ -95,10 +95,10 @@ def main() -> int:
                     print(f"[OK] LAST_RFID_ID_V3={row[0]}")
                 cur.execute("SELECT StateValue FROM dbo.KPP_RuntimeState WHERE StateKey='KPP_SCHEMA_VERSION'")
                 schema_row = cur.fetchone()
-                if not schema_row or str(schema_row[0]).strip() != "3.2.0":
-                    fail("Не установлен KPP_SCHEMA_VERSION=3.2.0", errors)
+                if not schema_row or str(schema_row[0]).strip() != "3.4.5":
+                    fail("Не установлен KPP_SCHEMA_VERSION=3.4.5", errors)
                 else:
-                    print("[OK] KPP_SCHEMA_VERSION=3.2.0")
+                    print("[OK] KPP_SCHEMA_VERSION=3.4.5")
                 cur.execute("SELECT COUNT(*) FROM dbo.KPP_ActiveRfidSessions")
                 print(f"[OK] Durable active sessions: {cur.fetchone()[0]}")
         except Exception as exc:

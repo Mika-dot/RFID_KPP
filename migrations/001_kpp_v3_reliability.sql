@@ -88,7 +88,7 @@ IF COL_LENGTH('dbo.KPP_ReelEvents', 'ObjectType') IS NULL
 IF COL_LENGTH('dbo.KPP_ReelEvents', 'ReelClassification') IS NULL
     ALTER TABLE dbo.KPP_ReelEvents ADD ReelClassification VARCHAR(64) NULL;
 IF COL_LENGTH('dbo.KPP_ReelEvents', 'WarehouseId') IS NULL
-    ALTER TABLE dbo.KPP_ReelEvents ADD WarehouseId INT NULL;
+    ALTER TABLE dbo.KPP_ReelEvents ADD WarehouseId BIGINT NULL;
 IF COL_LENGTH('dbo.KPP_ReelEvents', 'WarehouseDt') IS NULL
     ALTER TABLE dbo.KPP_ReelEvents ADD WarehouseDt DATETIME2(3) NULL;
 IF COL_LENGTH('dbo.KPP_ReelEvents', 'WarehouseDocIds') IS NULL
@@ -107,6 +107,18 @@ IF COL_LENGTH('dbo.KPP_ReelEvents', 'ProcessingVersion') IS NULL
     ALTER TABLE dbo.KPP_ReelEvents ADD ProcessingVersion VARCHAR(32) NULL;
 IF COL_LENGTH('dbo.KPP_ReelEvents', 'VideoClientEventUuid') IS NULL
     ALTER TABLE dbo.KPP_ReelEvents ADD VideoClientEventUuid UNIQUEIDENTIFIER NULL;
+GO
+
+/* dbo.Warehouse.Id is BIGINT; keep the persisted relation lossless. */
+IF EXISTS (
+    SELECT 1
+    FROM sys.columns c
+    JOIN sys.types t ON t.user_type_id=c.user_type_id
+    WHERE c.object_id=OBJECT_ID('dbo.KPP_ReelEvents')
+      AND c.name='WarehouseId'
+      AND t.name='int'
+)
+    ALTER TABLE dbo.KPP_ReelEvents ALTER COLUMN WarehouseId BIGINT NULL;
 GO
 
 /* Историческая первичная классификация: только точная полная метка. */
@@ -151,6 +163,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.KPP_Reel
     CREATE INDEX IX_KPP_ReelEvents_NeedRecheck_FirstSeen ON dbo.KPP_ReelEvents(NeedRecheck, FirstSeen) INCLUDE(EventKey,SourceTag,IsReel,ObjectType,PassageGroupKey,RfidMinRawId,RfidMaxRawId);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.RfidTags') AND name='IX_RfidTags_Tag_Dt')
     CREATE INDEX IX_RfidTags_Tag_Dt ON dbo.RfidTags(Tag, Dt) INCLUDE(Id,Ids,SeriesNumber);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.RfidTags') AND name='IX_RfidTags_Ids_Dt')
+   AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RfidTags') AND name='Ids' AND max_length BETWEEN 1 AND 900)
+    CREATE INDEX IX_RfidTags_Ids_Dt ON dbo.RfidTags(Ids, Dt) INCLUDE(Id,Tag,SeriesNumber);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.RfidTags') AND name='IX_RfidTags_SeriesNumber_Dt')
+   AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('dbo.RfidTags') AND name='SeriesNumber' AND max_length BETWEEN 1 AND 900)
+    CREATE INDEX IX_RfidTags_SeriesNumber_Dt ON dbo.RfidTags(SeriesNumber, Dt) INCLUDE(Id,Tag,Ids);
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.Warehouse') AND name='IX_Warehouse_Tag_Dt')
     CREATE INDEX IX_Warehouse_Tag_Dt ON dbo.Warehouse(Tag, Dt) INCLUDE(Id,Ids,SeriesNumber);
 GO
@@ -234,7 +252,7 @@ GO
 
 /* Schema marker used by the one-click launcher. */
 MERGE dbo.KPP_RuntimeState AS target
-USING (SELECT N'KPP_SCHEMA_VERSION' AS StateKey, N'3.2.0' AS StateValue) AS source
+USING (SELECT N'KPP_SCHEMA_VERSION' AS StateKey, N'3.4.5' AS StateValue) AS source
 ON target.StateKey=source.StateKey
 WHEN MATCHED THEN UPDATE SET StateValue=source.StateValue, UpdatedAt=SYSDATETIME()
 WHEN NOT MATCHED THEN INSERT(StateKey,StateValue,UpdatedAt) VALUES(source.StateKey,source.StateValue,SYSDATETIME());
