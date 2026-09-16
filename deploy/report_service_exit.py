@@ -8,7 +8,6 @@ import os
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -25,7 +24,7 @@ def main() -> int:
     if args.exit_code == 0:
         return 0
 
-    release = os.getenv("PERIMETER_RELEASE", "3.4.5-warehouse-recheck+obs1")
+    release = os.getenv("PERIMETER_RELEASE", "3.4.5-warehouse-recheck+obs2")
     if init_sentry(args.service, release):
         try:
             import sentry_sdk
