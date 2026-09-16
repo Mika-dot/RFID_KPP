@@ -24,17 +24,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Compile observability and production Warehouse modules
+      - name: Compile observability adapters and production Warehouse modules
         run: |
           python -m py_compile \
             common/observability.py \
             deploy/run_service.py \
             deploy/report_service_exit.py \
+            deploy/monitored_rfid.py \
+            deploy/monitored_rusguard.py \
+            deploy/monitored_yolo.py \
+            deploy/monitored_aggregator.py \
             common/warehouse_identity.py \
             common/warehouse_report.py \
+            RFID_reader_v4/rfid_to_sql_v4.py \
+            DB_RusGard/db_sync_v2.py \
+            RTSP/RTSP_yolo_DB_v3.py \
             KPP/kpp_aggregator_v3.py \
             KPP/kpp_aggregator_v3_warehouse.py \
             KPP/kpp_aggregator_v3_warehouse_v3.py \
+            web/kpp_reel_dashboard_v3_ru.py \
             web/kpp_reel_dashboard_v3_fixed.py
 
       - name: Run Warehouse regression tests
