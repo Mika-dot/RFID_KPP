@@ -13,13 +13,14 @@ if not defined PY64 goto :missing_python
 if not exist "%PY64%" goto :bad_python
 if not exist "%ROOT%\KPP\kpp_aggregator_v3_warehouse_v3.py" goto :bad_script
 if not exist "%ROOT%\deploy\run_service.py" goto :bad_runner
+if not exist "%ROOT%\deploy\monitored_aggregator.py" goto :bad_monitor
 
 cd /d "%ROOT%\KPP"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs1"
-"%PY64%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.Aggregator" --script "%ROOT%\KPP\kpp_aggregator_v3_warehouse_v3.py"
+set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs2"
+"%PY64%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.Aggregator" --script "%ROOT%\deploy\monitored_aggregator.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY64%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.Aggregator" --exit-code %RC% >nul 2>&1
 echo.
@@ -45,6 +46,10 @@ goto :fatal
 
 :bad_runner
 echo [FATAL] Missing deploy\run_service.py
+goto :fatal
+
+:bad_monitor
+echo [FATAL] Missing deploy\monitored_aggregator.py
 goto :fatal
 
 :bad_workdir
