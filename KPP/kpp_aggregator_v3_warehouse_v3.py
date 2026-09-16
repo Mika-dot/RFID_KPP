@@ -9,6 +9,7 @@ for report/UI purposes.
 from __future__ import annotations
 
 import argparse
+from datetime import timedelta
 
 from kpp_aggregator_v3_warehouse import Aggregator as WarehouseAggregator
 from kpp_aggregator_v3_warehouse import Config, log
@@ -51,6 +52,67 @@ WHERE IsReel=1
                 "WAREHOUSE direction repair: OUT confirmed for %s historical events",
                 repaired,
             )
+
+    def _find_existing_linked_event(self, cur, warehouse_id, warehouse_dt):
+        """Reuse any real RFID event already linked to this Warehouse row.
+
+        Do not require IsReel=1 here: older/early processing may have persisted
+        the raw RFID passage as UNKNOWN_RFID before 1C/Warehouse evidence became
+        available. Warehouse confirmation is exactly the evidence that can
+        safely promote such an RFID event to a reel.
+        """
+        cur.execute(
+            f"""
+SELECT TOP(1) EventId,SourceTag
+FROM {Config.EVENT_TABLE}
+WHERE WarehouseId=?
+  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND ISNULL(RfidReadCount,0)>0
+ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)),EventId DESC;
+""",
+            warehouse_id,
+            warehouse_dt,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return int(row[0]), str(row[1] or "").strip().upper()
+
+    def _find_kpp_event(self, cur, tag, dt, warehouse_id):
+        """Find a physical RFID passage, including UNKNOWN_RFID events.
+
+        The base implementation used ``IsReel=1``. That loses an important
+        distinction in the report: RFID may have physically read a reel while
+        the aggregator failed to classify it before Warehouse/1C evidence
+        arrived. Requiring a positive raw RFID count prevents Warehouse from
+        attaching to synthetic/non-RFID rows while allowing the later evidence
+        to promote the real passage through ``_enrich_existing_event``.
+        """
+        if not tag:
+            return None
+        start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
+        end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
+        cur.execute(
+            f"""
+SELECT TOP(1) EventId
+FROM {Config.EVENT_TABLE}
+WHERE UPPER(LTRIM(RTRIM(SourceTag)))=?
+  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND ISNULL(RfidReadCount,0)>0
+  AND (WarehouseId IS NULL OR WarehouseId=?)
+  AND FirstSeen BETWEEN ? AND ?
+ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
+         ABS(DATEDIFF(SECOND,FirstSeen,?)), EventId DESC;
+""",
+            tag,
+            warehouse_id,
+            start,
+            end,
+            warehouse_id,
+            dt,
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
 
     def _enrich_existing_event(
         self,
