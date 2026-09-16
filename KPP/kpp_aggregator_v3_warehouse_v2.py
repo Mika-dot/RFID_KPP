@@ -50,7 +50,9 @@ WHERE IsReel=1
         warehouse_id,
         warehouse_dt,
         warehouse_doc_ids,
+        series_number,
         task,
+        match_method,
     ) -> None:
         super()._enrich_existing_event(
             cur,
@@ -58,7 +60,9 @@ WHERE IsReel=1
             warehouse_id,
             warehouse_dt,
             warehouse_doc_ids,
+            series_number,
             task,
+            match_method,
         )
         cur.execute(
             f"""
@@ -92,6 +96,8 @@ WHERE EventId=?;
         warehouse_doc_ids,
         series_number,
         task,
+        match_method,
+        link_status,
     ) -> None:
         super()._insert_warehouse_only(
             cur,
@@ -101,6 +107,8 @@ WHERE EventId=?;
             warehouse_doc_ids,
             series_number,
             task,
+            match_method,
+            link_status,
         )
         cur.execute(
             f"""

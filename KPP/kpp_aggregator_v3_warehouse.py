@@ -4,7 +4,8 @@
 
 Keeps the v3.4 RFID pipeline intact, but additionally treats dbo.Warehouse as an
 independent physical source:
-- if a Warehouse row matches an RFID/KPP event by full tag within +/-24h, enrich it;
+- match Warehouse to RFID/KPP by Tag, then Ids, then unambiguous SeriesNumber;
+- Tag is optional while Ids and SeriesNumber are required;
 - if no KPP event exists, create a WAREHOUSE_ONLY reel event;
 - process Warehouse rows incrementally with a durable runtime cursor.
 """
@@ -16,46 +17,91 @@ import json
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import List, Optional
 
 from kpp_aggregator_v3 import Aggregator as BaseAggregator
 from kpp_aggregator_v3 import Config, log
+from common.warehouse_identity import (
+    IdentityRecord,
+    IdentityResolution,
+    MATCH_AMBIGUOUS_SERIES,
+    normalize_tag,
+    normalize_value,
+    resolve_warehouse_identity,
+)
 
 
 class Aggregator(BaseAggregator):
     WAREHOUSE_BATCH_SIZE = int(os.getenv("KPP_WAREHOUSE_RECONCILE_BATCH", "2000"))
     WAREHOUSE_RECONCILE_SEC = float(os.getenv("KPP_WAREHOUSE_RECONCILE_SEC", "15"))
-    WAREHOUSE_STATE_KEY = "LAST_WAREHOUSE_ID_V3_4_1"
+    # New cursor intentionally replays Warehouse from Id=0 once. Older builds
+    # advanced their cursor past nullable-Tag rows after marking them invalid.
+    WAREHOUSE_STATE_KEY = "LAST_WAREHOUSE_ID_V3_4_4_IDENTITY"
 
     def __init__(self) -> None:
         super().__init__()
         self.last_warehouse_reconcile = datetime.min
 
-    @staticmethod
-    def _normalize_tag(tag: object) -> str:
-        return str(tag or "").strip().upper()
-
-    def _find_task(self, cur, tag: str, dt: datetime) -> Optional[Tuple[int, datetime, str]]:
+    def _load_task_candidates(
+        self,
+        cur,
+        tag: str,
+        doc_ids: str,
+        series_number: str,
+        dt: datetime,
+    ) -> List[IdentityRecord]:
         start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
         end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
+        clauses = []
+        params: List[object] = [start, end]
+        if tag:
+            clauses.append("UPPER(LTRIM(RTRIM(Tag)))=?")
+            params.append(tag)
+        if doc_ids:
+            clauses.append("UPPER(LTRIM(RTRIM(Ids)))=?")
+            params.append(doc_ids)
+        if series_number:
+            clauses.append("UPPER(LTRIM(RTRIM(SeriesNumber)))=?")
+            params.append(series_number)
+        if not clauses:
+            return []
         cur.execute(
             f"""
-SELECT TOP(1) Id,Dt,Ids
+SELECT Id,Dt,Tag,Ids,SeriesNumber
 FROM {Config.TASK_TABLE}
-WHERE UPPER(LTRIM(RTRIM(Tag)))=? AND Dt BETWEEN ? AND ?
-ORDER BY ABS(DATEDIFF(SECOND,Dt,?)), Id DESC;
+WHERE Dt BETWEEN ? AND ?
+  AND NULLIF(LTRIM(RTRIM(ISNULL(Tag,''))),'') IS NOT NULL
+  AND ({' OR '.join(clauses)});
 """,
-            tag,
-            start,
-            end,
-            dt,
+            params,
         )
-        row = cur.fetchone()
-        if not row:
-            return None
-        return int(row[0]), row[1], str(row[2] or "")
+        return [
+            IdentityRecord.from_values(row[0], row[1], row[2], row[3], row[4])
+            for row in cur.fetchall()
+            if row[1] is not None
+        ]
+
+    def _resolve_identity(
+        self,
+        cur,
+        tag: str,
+        doc_ids: str,
+        series_number: str,
+        dt: datetime,
+    ) -> IdentityResolution:
+        rows = self._load_task_candidates(cur, tag, doc_ids, series_number, dt)
+        return resolve_warehouse_identity(
+            tag,
+            doc_ids,
+            series_number,
+            dt,
+            rows,
+            Config.TASK_WINDOW_HOURS,
+        )
 
     def _find_kpp_event(self, cur, tag: str, dt: datetime, warehouse_id: int) -> Optional[int]:
+        if not tag:
+            return None
         start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
         end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
         cur.execute(
@@ -84,11 +130,25 @@ ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)), EventId DESC;
         warehouse_id: int,
         warehouse_dt: datetime,
         warehouse_doc_ids: str,
-        task: Optional[Tuple[int, datetime, str]],
+        series_number: str,
+        task: Optional[IdentityRecord],
+        match_method: str,
     ) -> None:
-        task_id = task[0] if task else None
-        task_dt = task[1] if task else None
-        task_doc = task[2] if task else None
+        task_id = task.row_id if task else None
+        task_dt = task.dt if task else None
+        task_doc = task.ids if task else None
+        link_status = f"MATCH_{match_method}"
+        warehouse_evidence = json.dumps(
+            {
+                "id": warehouse_id,
+                "dt": warehouse_dt.isoformat(),
+                "doc_ids": warehouse_doc_ids,
+                "series_number": series_number,
+                "match_method": match_method,
+                "link_status": link_status,
+            },
+            ensure_ascii=False,
+        )
         cur.execute(
             f"""
 UPDATE {Config.EVENT_TABLE}
@@ -105,6 +165,9 @@ SET WarehouseId=?, WarehouseDt=?, WarehouseDocIds=?,
         WHEN ISNULL(WarningFlags,'')='' THEN 'WAREHOUSE_CONFIRMED'
         ELSE CONCAT(WarningFlags,' | WAREHOUSE_CONFIRMED')
     END,
+    EvidenceJson=JSON_MODIFY(
+        CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+        '$.warehouse',JSON_QUERY(?)),
     UpdatedAt=SYSDATETIME()
 WHERE EventId=?;
 """,
@@ -116,6 +179,7 @@ WHERE EventId=?;
             task_doc,
             task_id,
             task_id,
+            warehouse_evidence,
             event_id,
         )
 
@@ -127,27 +191,37 @@ WHERE EventId=?;
         tag: str,
         warehouse_doc_ids: str,
         series_number: str,
-        task: Optional[Tuple[int, datetime, str]],
+        task: Optional[IdentityRecord],
+        match_method: str,
+        link_status: str,
     ) -> None:
-        event_key = hashlib.md5(f"WAREHOUSE_ONLY|{warehouse_id}|{tag}".encode("utf-8")).hexdigest()
+        event_key = hashlib.md5(
+            f"WAREHOUSE_ONLY|{warehouse_id}|{tag}|{warehouse_doc_ids}|{series_number}".encode("utf-8")
+        ).hexdigest()
         epc = tag[:24]
         tid = tag[24:] or None
-        task_id = task[0] if task else None
-        task_dt = task[1] if task else None
-        task_doc = task[2] if task else None
-        match_type = "FULL_TAG_BOTH" if task else "FULL_TAG_WAREHOUSE"
+        task_id = task.row_id if task else None
+        task_dt = task.dt if task else None
+        task_doc = task.ids if task else None
+        match_type = "WAREHOUSE_ONLY"
         evidence = json.dumps(
             {
-                "processing_version": "3.4.1-warehouse",
+                "processing_version": "3.4.4-warehouse-identity",
                 "source": "WAREHOUSE_ONLY",
                 "warehouse": {
                     "id": warehouse_id,
                     "dt": warehouse_dt.isoformat(),
-                    "series": series_number,
+                    "series_number": series_number,
                     "doc_ids": warehouse_doc_ids,
+                    "resolved_tag": tag,
+                    "match_method": match_method,
+                    "link_status": link_status,
                 },
                 "task_1c_id": task_id,
-                "warnings": ["WAREHOUSE_ONLY_NO_RFID"],
+                "warnings": [
+                    "WAREHOUSE_ONLY_NO_RFID",
+                    *(["AMBIGUOUS_SERIES"] if link_status == MATCH_AMBIGUOUS_SERIES else []),
+                ],
             },
             ensure_ascii=False,
         )
@@ -179,8 +253,8 @@ BEGIN
         'UNKNOWN',0,
         0,0,0,0,
         'UNKNOWN',100,'SINGLE',0,0,1,'WAREHOUSE',
-        'WAREHOUSE_ONLY_NO_RFID',?,0,0,SYSDATETIME(),
-        1,'REEL',?,'WAREHOUSE_TIME','3.4.1-warehouse',
+        ?,?,0,0,SYSDATETIME(),
+        1,'REEL',?,'WAREHOUSE_TIME','3.4.4-warehouse-identity',
         SYSDATETIME(),SYSDATETIME()
     );
 END;
@@ -200,6 +274,7 @@ END;
             warehouse_dt,
             warehouse_dt,
             warehouse_dt,
+            "WAREHOUSE_ONLY_NO_RFID" + (" | AMBIGUOUS_SERIES" if link_status == MATCH_AMBIGUOUS_SERIES else ""),
             evidence,
             match_type,
         )
@@ -232,41 +307,84 @@ ORDER BY Id ASC;
             enriched = 0
             warehouse_only = 0
             invalid = 0
+            ambiguous_series = 0
             for row in rows:
                 warehouse_id = int(row[0])
                 max_id = max(max_id, warehouse_id)
                 warehouse_dt = row[1]
-                tag = self._normalize_tag(row[2])
-                warehouse_doc_ids = str(row[3] or "")
-                series_number = str(row[4] or "")
-                if warehouse_dt is None or len(tag) < 24:
+                tag = normalize_tag(row[2])
+                warehouse_doc_ids = str(row[3] or "").strip()
+                series_number = str(row[4] or "").strip()
+                normalized_ids = normalize_value(warehouse_doc_ids)
+                normalized_series = normalize_value(series_number)
+                # Tag is deliberately optional. Ids and SeriesNumber are the
+                # mandatory 1C identity carried by every Warehouse row.
+                if warehouse_dt is None or not normalized_ids or not normalized_series:
                     invalid += 1
                     continue
 
-                task = self._find_task(cur, tag, warehouse_dt)
-                event_id = self._find_kpp_event(cur, tag, warehouse_dt, warehouse_id)
+                identity = self._resolve_identity(
+                    cur,
+                    tag,
+                    normalized_ids,
+                    normalized_series,
+                    warehouse_dt,
+                )
+                if identity.series_ambiguous:
+                    ambiguous_series += 1
+
+                event_id = None
+                event_candidate = None
+                for candidate in identity.candidates:
+                    event_id = self._find_kpp_event(
+                        cur, candidate.tag, warehouse_dt, warehouse_id
+                    )
+                    if event_id is not None:
+                        event_candidate = candidate
+                        break
+
                 if event_id is not None:
+                    task = event_candidate.task or identity.primary_task
                     self._enrich_existing_event(
-                        cur, event_id, warehouse_id, warehouse_dt, warehouse_doc_ids, task
+                        cur,
+                        event_id,
+                        warehouse_id,
+                        warehouse_dt,
+                        warehouse_doc_ids,
+                        series_number,
+                        task,
+                        event_candidate.method,
                     )
                     enriched += 1
                 else:
+                    match_method = (
+                        identity.candidates[0].method
+                        if identity.candidates
+                        else identity.primary_method
+                    )
+                    link_status = (
+                        MATCH_AMBIGUOUS_SERIES
+                        if identity.series_ambiguous and not identity.candidates
+                        else "WAREHOUSE_ONLY"
+                    )
                     self._insert_warehouse_only(
                         cur,
                         warehouse_id,
                         warehouse_dt,
-                        tag,
+                        identity.preferred_tag,
                         warehouse_doc_ids,
                         series_number,
-                        task,
+                        identity.primary_task,
+                        match_method,
+                        link_status,
                     )
                     warehouse_only += 1
 
             self.state_set(conn, self.WAREHOUSE_STATE_KEY, str(max_id))
             conn.commit()
             log.info(
-                "WAREHOUSE COMMIT rows=%s enriched=%s warehouse_only=%s invalid=%s cursor=%s",
-                len(rows), enriched, warehouse_only, invalid, max_id,
+                "WAREHOUSE COMMIT rows=%s enriched=%s warehouse_only=%s invalid=%s ambiguous_series=%s cursor=%s",
+                len(rows), enriched, warehouse_only, invalid, ambiguous_series, max_id,
             )
             return len(rows)
         except Exception:

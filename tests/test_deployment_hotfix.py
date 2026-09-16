@@ -67,6 +67,15 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertIn('RTSP_BACKEND = os.getenv("RFID_RTSP_BACKEND", "FFMPEG")', source)
         self.assertIn("if Config.SET_CAPTURE_BUFFER:", source)
 
+    def test_warehouse_nullable_tag_contract_is_in_production_entrypoints(self) -> None:
+        aggregator = (ROOT / "KPP" / "kpp_aggregator_v3_warehouse.py").read_text(encoding="utf-8")
+        web = (ROOT / "web" / "kpp_reel_dashboard_v3_fixed.py").read_text(encoding="utf-8")
+        self.assertNotIn("len(tag) < 24", aggregator)
+        self.assertIn("not normalized_ids or not normalized_series", aggregator)
+        self.assertIn("resolve_warehouse_identity", aggregator)
+        self.assertIn("resolve_warehouse_identity", web)
+        self.assertNotIn("ISNULL(e0.SourceTag,'')", web)
+
 
 if __name__ == "__main__":
     unittest.main()
