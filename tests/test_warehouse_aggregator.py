@@ -11,6 +11,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "KPP")]
 sys.modules.setdefault("pyodbc", types.SimpleNamespace(Connection=object, Cursor=object, connect=None))
 
 import kpp_aggregator_v3_warehouse as warehouse_aggregator  # noqa: E402
+import kpp_aggregator_v3_warehouse_v3 as production_aggregator  # noqa: E402
 from common.warehouse_identity import (  # noqa: E402
     IdentityCandidate,
     IdentityRecord,
@@ -51,6 +52,11 @@ class WarehouseAggregatorTests(unittest.TestCase):
 
     def make_aggregator(self):
         obj = warehouse_aggregator.Aggregator.__new__(warehouse_aggregator.Aggregator)
+        obj.WAREHOUSE_RECHECK_SEC = 60
+        return obj
+
+    def make_production_aggregator(self):
+        obj = production_aggregator.Aggregator.__new__(production_aggregator.Aggregator)
         obj.WAREHOUSE_RECHECK_SEC = 60
         return obj
 
@@ -102,6 +108,26 @@ class WarehouseAggregatorTests(unittest.TestCase):
         query, _params = cur.executions[0]
         self.assertIn("NeedRecheck=1", query)
         self.assertIn("NextRecheckAt=DATEADD(second,?", query)
+
+    def test_production_lookup_can_promote_unknown_rfid_event(self):
+        obj = self.make_production_aggregator()
+        cur = RecordingCursor(rows=[(44,)])
+        event_id = obj._find_kpp_event(cur, self.tag, self.dt, 101)
+        self.assertEqual(event_id, 44)
+        query, _params = cur.executions[0]
+        self.assertIn("ISNULL(RfidReadCount,0)>0", query)
+        self.assertNotIn("IsReel=1", query)
+        self.assertIn("ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'", query)
+
+    def test_production_existing_link_accepts_unknown_rfid_but_not_synthetic(self):
+        obj = self.make_production_aggregator()
+        cur = RecordingCursor(rows=[(45, self.tag.lower())])
+        linked = obj._find_existing_linked_event(cur, 101, self.dt)
+        self.assertEqual(linked, (45, self.tag))
+        query, _params = cur.executions[0]
+        self.assertIn("ISNULL(RfidReadCount,0)>0", query)
+        self.assertNotIn("IsReel=1", query)
+        self.assertIn("ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'", query)
 
 
 if __name__ == "__main__":
