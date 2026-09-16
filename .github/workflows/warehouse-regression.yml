@@ -1,0 +1,45 @@
+name: Warehouse regression
+
+on:
+  push:
+    branches:
+      - fix/warehouse-nullable-tag
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  warehouse-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile production Warehouse modules
+        run: |
+          python -m py_compile \
+            common/warehouse_identity.py \
+            common/warehouse_report.py \
+            KPP/kpp_aggregator_v3.py \
+            KPP/kpp_aggregator_v3_warehouse.py \
+            KPP/kpp_aggregator_v3_warehouse_v3.py \
+            web/kpp_reel_dashboard_v3_fixed.py \
+            deploy/apply_migration_v3.py \
+            deploy/precheck_v3.py
+
+      - name: Run Warehouse regression tests
+        run: |
+          python -m unittest -v \
+            tests.test_warehouse_identity \
+            tests.test_warehouse_report \
+            tests.test_warehouse_aggregator \
+            tests.test_deployment_hotfix
