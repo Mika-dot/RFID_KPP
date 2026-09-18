@@ -15,6 +15,7 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertTrue(launcher.exists())
         text = launcher.read_text(encoding="ascii")
         self.assertIn("start_services_v3.py", text)
+        self.assertIn("wait_for_services_v3.py", text)
         self.assertNotIn('start "1 RFID Reader', text)
         self.assertNotIn("kpp_1_reliable_v2.4_full_rebuild.py", text)
 
@@ -34,6 +35,9 @@ class DeploymentHotfixTests(unittest.TestCase):
             "SRC_SERVER",
             "RFID_BUSINESS_STALL_SEC",
             "RFID_BUSINESS_MAX_RESTARTS",
+            "RFID_READER_LOOP_WATCHDOG_SEC",
+            "RFID_DELIVERY_WRITER_WATCHDOG_SEC",
+            "RFID_RTSP_READ_WATCHDOG_SEC",
             "KPP_CONSECUTIVE_FAILURE_RESTART",
         ):
             self.assertIn(required, text)
@@ -50,7 +54,7 @@ class DeploymentHotfixTests(unittest.TestCase):
     def test_manifest_uses_required_entrypoint(self) -> None:
         manifest = json.loads((ROOT / "DEPLOYMENT_MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["entry_point"], "RUN_RFID_KPP_FINAL.cmd")
-        self.assertEqual(manifest["release"], "3.4.6-business-flow-selfheal")
+        self.assertEqual(manifest["release"], "3.4.7-resilience-audit")
         self.assertEqual(manifest["schema_version"], "3.4.5")
         self.assertTrue(manifest["configuration_is_local_only"])
         self.assertFalse(manifest["credentials_embedded"])
@@ -67,6 +71,14 @@ class DeploymentHotfixTests(unittest.TestCase):
             "common/business_flow.py",
         )
         self.assertEqual(
+            manifest["active_files"]["resilience_index_migration"],
+            "migrations/002_resilience_indexes.sql",
+        )
+        self.assertEqual(
+            manifest["active_files"]["readiness_waiter"],
+            "deploy/wait_for_services_v3.py",
+        )
+        self.assertEqual(
             manifest["monitoring"]["health_endpoints"]["Perimeter.RfidReader"],
             18101,
         )
@@ -75,8 +87,10 @@ class DeploymentHotfixTests(unittest.TestCase):
             18105,
         )
         self.assertTrue(manifest["monitoring"]["rfid_business_flow_required"])
+        self.assertTrue(manifest["monitoring"]["rfid_main_loop_watchdog"])
+        self.assertTrue(manifest["monitoring"]["rtsp_blocked_capture_self_heal"])
 
-    def test_wrappers_are_argument_free(self) -> None:
+    def test_wrappers_are_argument_free_and_same_release(self) -> None:
         wrappers = sorted((ROOT / "deploy").glob("RUN_*_V3.cmd"))
         self.assertEqual(len(wrappers), 5)
         for wrapper in wrappers:
@@ -85,6 +99,7 @@ class DeploymentHotfixTests(unittest.TestCase):
             self.assertNotIn("%~2", text)
             self.assertNotIn("%~3", text)
             self.assertIn("resolve_python.cmd", text)
+            self.assertIn("PERIMETER_RELEASE=3.4.7-resilience-audit", text)
 
     def test_python_launcher_builds_safe_command(self) -> None:
         path = ROOT / "deploy" / "start_services_v3.py"
@@ -103,10 +118,13 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertIn("RFID_SET_CAPTURE_BUFFER=0", config)
         self.assertIn('RTSP_BACKEND = os.getenv("RFID_RTSP_BACKEND", "FFMPEG")', source)
 
-    def test_schema_uses_bigint_warehouse_relation(self) -> None:
+    def test_schema_uses_bigint_warehouse_relation_and_resilience_index(self) -> None:
         migration = (ROOT / "migrations" / "001_kpp_v3_reliability.sql").read_text(encoding="utf-8")
+        migration2 = (ROOT / "migrations" / "002_resilience_indexes.sql").read_text(encoding="utf-8")
         self.assertIn("WarehouseId BIGINT NULL", migration)
         self.assertIn("ALTER TABLE dbo.KPP_ReelEvents ALTER COLUMN WarehouseId BIGINT NULL", migration)
+        self.assertIn("IX_Warehouse_Dt_Id", migration2)
+        self.assertIn("ON dbo.Warehouse(Dt, Id)", migration2)
 
     def test_stop_script_knows_production_entrypoints(self) -> None:
         text = (ROOT / "deploy" / "stop_kpp_processes.ps1").read_text(encoding="utf-8")
@@ -133,6 +151,12 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertIn("MATCH_IDS", report)
         self.assertIn("MATCH_SERIES", report)
         self.assertIn("build_report_records", web)
+
+    def test_web_readiness_probes_http_not_only_tcp(self) -> None:
+        runner = (ROOT / "deploy" / "run_service.py").read_text(encoding="utf-8")
+        web_block = runner.split('if service == "Perimeter.WebDashboard":', 1)[1]
+        self.assertIn("_http_probe", web_block)
+        self.assertIn('"web_port"', web_block)
 
 
 if __name__ == "__main__":
