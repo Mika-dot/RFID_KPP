@@ -88,8 +88,12 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             "database",
             lambda: odbc_probe(os.getenv("RFID_DB_CONNECTION", ""), 5),
         )
+        # TCP/SDK health alone is insufficient. A reader may keep answering
+        # while the actual RFID business data-plane is stalled. The monitored
+        # adapter owns this semantic dependency using cross-source evidence.
+        _require_dependency(reporter, "business_flow")
         # SDK state comes from monitored_rfid.py. Keep a separate physical TCP
-        # dependency so a silent/stale SDK cannot mask a dead reader endpoint.
+        # dependency so a dead reader endpoint cannot be masked by the process.
         _require_dependency(reporter, "rfid_tcp")
         reporter.register_probe(
             "rfid_tcp",
