@@ -35,6 +35,7 @@ jobs:
             deploy/monitored_rusguard.py \
             deploy/monitored_yolo.py \
             deploy/monitored_aggregator.py \
+            deploy/wait_for_services_v3.py \
             common/warehouse_identity.py \
             common/warehouse_report.py \
             RFID_reader_v4/rfid_to_sql_v4.py \
