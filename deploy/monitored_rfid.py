@@ -36,12 +36,7 @@ def _load_app():
 
 
 class _PersistentFlowState:
-    """Latch confirmed silent failures across process restarts.
-
-    A restart is not proof of recovery. The latch is cleared only after a new
-    *fresh* raw RFID timestamp appears in SQL. Delayed spool/backlog delivery
-    cannot make a still-dead live reader look recovered.
-    """
+    """Latch confirmed silent failures across process restarts."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -62,11 +57,12 @@ class _PersistentFlowState:
         except FileNotFoundError:
             return
         except Exception:
-            # Corrupt recovery metadata must never prevent the RFID service from
-            # starting. The semantic watchdog will reconstruct state.
-            self.fault_latched = False
-            self.rfid_marker = ""
-            self.restart_attempts = 0
+            # Recovery metadata is safety state. Corruption must fail closed:
+            # stay red without entering a restart storm. A new *fresh* RFID read
+            # clears this latch through the normal business-flow rule.
+            self.fault_latched = True
+            self.rfid_marker = "<state-invalid>"
+            self.restart_attempts = 2_147_483_647
             self.last_fault_detail = "state_file_invalid"
 
     def _save(self) -> None:
@@ -158,9 +154,12 @@ class _BusinessFlowWatchdog:
         try:
             conn = pyodbc.connect(self.connection_string, autocommit=True, timeout=8)
             cur = conn.cursor()
+            try:
+                cur.timeout = 10
+            except Exception:
+                pass
             cur.execute("SELECT SYSDATETIME()")
             now = cur.fetchone()[0]
-
             cur.execute(
                 """
 SELECT TOP(1) COALESCE(SourceReaderTime,ReceivedAt,RecordTime)
@@ -170,7 +169,6 @@ ORDER BY Id DESC;
             )
             row = cur.fetchone()
             rfid_at = row[0] if row else None
-
             cur.execute(
                 """
 SELECT TOP(1) COALESCE(CapturedAt,[Timestamp])
@@ -191,7 +189,6 @@ WHERE (CapturedAt >= DATEADD(SECOND,?,SYSDATETIME()))
                 -int(self.evidence_window_sec),
             )
             video_recent_events = int(cur.fetchone()[0] or 0)
-
             cur.execute("SELECT TOP(1) Dt FROM dbo.Warehouse ORDER BY Id DESC;")
             row = cur.fetchone()
             warehouse_at = row[0] if row else None
@@ -260,13 +257,11 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
                     fault_latched=self.state.fault_latched,
                     latched_rfid_marker=self.state.rfid_marker,
                 )
-
                 if assessment.clear_latch:
                     self.state.clear()
                     self.exhausted_reported = False
                 elif assessment.latch_fault:
                     self.state.latch(source_marker(rfid_at), assessment.detail)
-
                 self._publish_metrics(assessment, video_recent_events, warehouse_recent_events)
                 self.reporter.set_dependency(
                     "business_flow",
@@ -275,7 +270,6 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
                     stale_after_seconds=max(30.0, self.interval_sec * 3.0),
                     detail=assessment.detail,
                 )
-
                 if (
                     assessment.status != self.last_reported_state
                     and assessment.status in {"degraded", "unavailable"}
@@ -283,7 +277,6 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
                     self.reporter.capture_exception(RuntimeError(f"RfidBusinessFlow:{assessment.detail}"))
                     flush_sentry(2.0)
                 self.last_reported_state = assessment.status
-
                 if assessment.status == "unavailable":
                     if self.state.restart_attempts >= self.max_restarts:
                         self.unavailable_since = None
@@ -306,9 +299,6 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
                 else:
                     self.unavailable_since = None
             except Exception as exc:
-                # A semantic-probe failure must never produce a false green.
-                # SQL availability is handled independently, so do not restart
-                # the physical reader solely because this diagnostic query failed.
                 self.unavailable_since = None
                 self.reporter.set_dependency(
                     "business_flow",
@@ -395,11 +385,7 @@ class _LibraryProxy:
         self._loop_progress()
         code = int(rc)
         if code != 0:
-            self._reporter.set_dependency(
-                "rfid_reader",
-                "unavailable",
-                detail=f"inventory_code_{code}",
-            )
+            self._reporter.set_dependency("rfid_reader", "unavailable", detail=f"inventory_code_{code}")
             raise RuntimeError(f"RfidInventoryStartFailed:{code}")
         self._receive_error_streak = 0
         self._reporter.touch_dependency("rfid_reader")
@@ -417,13 +403,8 @@ class _LibraryProxy:
             self._receive_error_streak = 0
             self._reporter.touch_dependency("rfid_reader")
             return rc
-
         self._receive_error_streak += 1
-        self._reporter.set_dependency(
-            "rfid_reader",
-            "unavailable",
-            detail=f"receive_code_{code}",
-        )
+        self._reporter.set_dependency("rfid_reader", "unavailable", detail=f"receive_code_{code}")
         if self._receive_error_streak >= self._receive_error_limit:
             raise RuntimeError(f"RfidReceiveErrorStreak:{code}")
         return rc
@@ -444,8 +425,9 @@ class _LibraryProxy:
 def main() -> int:
     app = _load_app()
     reporter = get_reporter()
+    writer_stale_sec = max(30.0, float(os.getenv("RFID_DELIVERY_WRITER_WATCHDOG_SEC", "90")))
 
-    for dependency in ("reader_loop", "delivery_writer"):
+    for dependency in ("reader_loop", "delivery_writer", "local_spool"):
         if dependency not in reporter.required_dependencies:
             reporter.required_dependencies = tuple(reporter.required_dependencies) + (dependency,)
 
@@ -454,11 +436,10 @@ def main() -> int:
         timeout_seconds=float(os.getenv("RFID_READER_LOOP_WATCHDOG_SEC", "90")),
         exit_code=75,
     )
-    reporter.register_progress_watchdog(
-        "delivery_writer",
-        timeout_seconds=float(os.getenv("RFID_DELIVERY_WRITER_WATCHDOG_SEC", "90")),
-        exit_code=76,
-    )
+    # Do not claim readiness until the real loop has made progress.
+    reporter.set_dependency("reader_loop", "unknown", stale_after_seconds=float(os.getenv("RFID_READER_LOOP_WATCHDOG_SEC", "90")))
+    reporter.set_dependency("delivery_writer", "unknown", stale_after_seconds=writer_stale_sec)
+    reporter.set_dependency("local_spool", "unknown", stale_after_seconds=None)
 
     watchdog = _SdkCallWatchdog(
         reporter,
@@ -479,27 +460,79 @@ def main() -> int:
 
     app.load_library = monitored_load_library
 
-    # The SQL delivery thread calls Spool.next_pending every ~200 ms even when
-    # idle. Its progress therefore proves both that the thread is alive and that
-    # SQLite remains readable. If the thread dies or SQLite blocks indefinitely,
-    # the delivery_writer watchdog rebuilds the process.
+    # Local spool is the durability boundary. If it fails, keep the current read
+    # in the core backpressure loop instead of killing the process and losing the
+    # in-memory read. Mark readiness red and keep reader_loop progress alive so
+    # the process is not restarted merely because disk/SQLite is unavailable.
+    original_spool_init = app.Spool.__init__
+    original_enqueue = app.Spool.enqueue
     original_next_pending = app.Spool.next_pending
+    original_writer_run = app.SQLWriter.run
+
+    def monitored_spool_init(spool, path):
+        original_spool_init(spool, path)
+        reporter.touch_dependency("local_spool", stale_after_seconds=None)
+
+    def monitored_enqueue(spool, item):
+        try:
+            result = original_enqueue(spool, item)
+            reporter.touch_dependency("local_spool", stale_after_seconds=None)
+            return result
+        except Exception as exc:
+            reporter.set_dependency(
+                "local_spool",
+                "unavailable",
+                stale_after_seconds=None,
+                detail=safe_error_name(exc),
+            )
+            reporter.capture_exception(exc)
+            raise
+        finally:
+            reporter.progress("reader_loop")
 
     def monitored_next_pending(spool):
         try:
             result = original_next_pending(spool)
-            reporter.progress("delivery_writer")
+            reporter.set_dependency(
+                "delivery_writer",
+                "ok",
+                stale_after_seconds=writer_stale_sec,
+            )
             return result
         except Exception as exc:
             reporter.set_dependency(
                 "delivery_writer",
                 "unavailable",
+                stale_after_seconds=writer_stale_sec,
                 detail=safe_error_name(exc),
             )
-            reporter.capture_exception(exc)
+            reporter.set_dependency(
+                "local_spool",
+                "unavailable",
+                stale_after_seconds=None,
+                detail=safe_error_name(exc),
+            )
             raise
 
+    def resilient_writer_run(writer):
+        while writer.running:
+            try:
+                original_writer_run(writer)
+                return
+            except Exception as exc:
+                reporter.set_dependency(
+                    "delivery_writer",
+                    "unavailable",
+                    stale_after_seconds=writer_stale_sec,
+                    detail=safe_error_name(exc),
+                )
+                reporter.capture_exception(exc)
+                time.sleep(1.0)
+
+    app.Spool.__init__ = monitored_spool_init
+    app.Spool.enqueue = monitored_enqueue
     app.Spool.next_pending = monitored_next_pending
+    app.SQLWriter.run = resilient_writer_run
 
     _BusinessFlowWatchdog(reporter, app.Config.DB_CONN)
     return int(app.main() or 0)
