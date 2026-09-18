@@ -3,7 +3,7 @@ name: Observability regression
 on:
   push:
     branches:
-      - perimeter-3.4.5-observability-restored
+      - main
   pull_request:
     branches:
       - main
@@ -28,6 +28,7 @@ jobs:
         run: |
           python -m py_compile \
             common/observability.py \
+            common/business_flow.py \
             deploy/run_service.py \
             deploy/report_service_exit.py \
             deploy/monitored_rfid.py \
@@ -44,11 +45,14 @@ jobs:
             KPP/kpp_aggregator_v3_warehouse_v3.py \
             web/kpp_reel_dashboard_v3_ru.py \
             web/kpp_reel_dashboard_v3_fixed.py \
-            tests/test_observability_restore.py
+            tests/test_observability_restore.py \
+            tests/test_business_flow_selfheal.py
 
-      - name: Run observability contract tests
+      - name: Run observability and self-heal tests
         run: |
-          python -m unittest -v tests.test_observability_restore
+          python -m unittest -v \
+            tests.test_observability_restore \
+            tests.test_business_flow_selfheal
 
       - name: Run Warehouse regression tests
         run: |
