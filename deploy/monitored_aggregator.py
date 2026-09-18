@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
-from common.observability import get_reporter, safe_error_name  # noqa: E402
+from common.observability import flush_sentry, get_reporter, safe_error_name  # noqa: E402
 
 
 def _load_app():
@@ -38,6 +38,12 @@ def main() -> int:
 
     app = _load_app()
     reporter = get_reporter()
+    max_consecutive_failures = max(
+        1,
+        int(os.getenv("KPP_CONSECUTIVE_FAILURE_RESTART", "5")),
+    )
+    consecutive_failures = 0
+
     if not args.once:
         reporter.register_progress_watchdog(
             "pipeline",
@@ -57,10 +63,12 @@ def main() -> int:
             count = aggregator.process_once()
             aggregator.recheck_pending()
             wh_count = aggregator.reconcile_warehouse()
+            consecutive_failures = 0
             reporter.progress("pipeline")
             reporter.touch_dependency("database")
             reporter.mark_success()
             reporter.set_metric("last_rfid_id", getattr(aggregator, "last_rfid_id", 0))
+            reporter.set_metric("consecutive_failures", 0)
             if args.once:
                 return 0
             if count >= app.Config.RFID_BATCH_SIZE or wh_count >= aggregator.WAREHOUSE_BATCH_SIZE:
@@ -72,14 +80,32 @@ def main() -> int:
             )
             return 0
         except Exception as exc:
-            # The loop is alive and retrying, so refresh the watchdog timestamp,
-            # then expose the failed iteration as degraded readiness.
-            reporter.progress("pipeline")
+            # IMPORTANT: do NOT call reporter.progress() here.  The old adapter
+            # refreshed the watchdog on every failed iteration, so an endlessly
+            # failing aggregator could remain alive forever and never trigger
+            # the existing CMD restart supervisor.
+            consecutive_failures += 1
+            reporter.set_metric("consecutive_failures", consecutive_failures)
             reporter.set_dependency("pipeline", "unavailable", detail=safe_error_name(exc))
             reporter.set_dependency("database", "unavailable", detail=safe_error_name(exc))
-            app.log.exception("Aggregator iteration failed")
+            reporter.capture_exception(exc)
+            app.log.exception(
+                "Aggregator iteration failed (%s/%s)",
+                consecutive_failures,
+                max_consecutive_failures,
+            )
             if args.once:
                 raise
+            if consecutive_failures >= max_consecutive_failures:
+                reporter.capture_exception(
+                    RuntimeError(
+                        f"AggregatorConsecutiveFailures:{consecutive_failures}"
+                    )
+                )
+                flush_sentry(2.0)
+                # RUN_AGGREGATOR_V3.cmd sees the non-zero exit and restarts the
+                # process after 5 seconds. Durable cursors/sessions remain in SQL.
+                os._exit(73)
             time.sleep(max(2.0, app.Config.POLL_SEC))
 
 
