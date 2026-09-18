@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
 import logging
 import os
 import runpy
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Mapping, Optional
@@ -80,6 +82,43 @@ def _require_dependency(reporter, name: str) -> None:
         return
     reporter.required_dependencies = tuple(reporter.required_dependencies) + (name,)
     reporter.set_dependency(name, "unknown")
+
+
+def _install_robust_heartbeat_writer(reporter) -> None:
+    """Avoid Windows temp-file collisions/PermissionError in heartbeat writes."""
+
+    def robust_write(force_ready: bool = False) -> None:
+        payload, _ = reporter.snapshot(ready=True)
+        if force_ready:
+            payload["status"] = "degraded"
+        path = reporter.heartbeat_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        last_error: Optional[BaseException] = None
+
+        for attempt in range(5):
+            temp = path.with_name(
+                f"{path.name}.{os.getpid()}.{threading.get_ident()}.{attempt}.tmp"
+            )
+            try:
+                temp.write_text(raw, encoding="utf-8")
+                os.replace(str(temp), str(path))
+                return
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.05 * (attempt + 1))
+            finally:
+                try:
+                    if temp.exists():
+                        temp.unlink()
+                except OSError:
+                    pass
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("HeartbeatWriteFailed")
+
+    reporter._write_heartbeat = robust_write
 
 
 def _register_dependency_checks(service: str, reporter, target: Path) -> None:
@@ -189,6 +228,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         root=ROOT,
         start_server=False,
     )
+    _install_robust_heartbeat_writer(reporter)
     _register_dependency_checks(args.service, reporter, script)
 
     cfg = SERVICE_CONFIG[args.service]
