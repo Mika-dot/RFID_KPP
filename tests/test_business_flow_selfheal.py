@@ -128,14 +128,31 @@ class BusinessFlowSelfHealTests(unittest.TestCase):
         text = (ROOT / "deploy" / "monitored_rusguard.py").read_text(encoding="utf-8")
         exception_block = text.split("except Exception as exc:", 1)[1]
         self.assertNotIn('reporter.progress("sync_loop")', exception_block)
-        self.assertIn('register_progress_watchdog(', text)
-        self.assertIn('exit_code=72', text)
+        self.assertIn("register_progress_watchdog(", text)
+        self.assertIn("exit_code=72", text)
+
+    def test_rusguard_source_scan_is_bounded_and_skips_unrelated_history(self) -> None:
+        text = (ROOT / "DB_RusGard" / "db_sync_v2.py").read_text(encoding="utf-8")
+        self.assertIn("[Log]._id <= ?", text)
+        self.assertIn("source_high_watermark", text)
+        self.assertIn("set_state(dst, high_watermark)", text)
+        self.assertIn("len(rows) < BATCH_SIZE", text)
 
     def test_rfid_adapter_has_controlled_self_heal_exit(self) -> None:
         text = (ROOT / "deploy" / "monitored_rfid.py").read_text(encoding="utf-8")
         self.assertIn('"business_flow"', text)
         self.assertIn("os._exit(72)", text)
         self.assertIn("RfidInventoryStartFailed", text)
+
+    def test_rfid_main_loop_and_delivery_writer_are_watchdog_protected(self) -> None:
+        text = (ROOT / "deploy" / "monitored_rfid.py").read_text(encoding="utf-8")
+        self.assertIn('"reader_loop"', text)
+        self.assertIn('"delivery_writer"', text)
+        self.assertIn("RFID_READER_LOOP_WATCHDOG_SEC", text)
+        self.assertIn("RFID_DELIVERY_WRITER_WATCHDOG_SEC", text)
+        self.assertIn("exit_code=75", text)
+        self.assertIn("exit_code=76", text)
+        self.assertIn('reporter.progress("delivery_writer")', text)
 
     def test_yolo_adapter_restarts_on_blocked_capture_thread(self) -> None:
         text = (ROOT / "deploy" / "monitored_yolo.py").read_text(encoding="utf-8")
@@ -156,6 +173,23 @@ class BusinessFlowSelfHealTests(unittest.TestCase):
         )
         status_try = process_block.split("self.maybe_log_status(", 1)[1]
         self.assertNotIn("restore_active_snapshot", status_try)
+
+    def test_startup_requires_readiness_from_all_five_services(self) -> None:
+        waiter = (ROOT / "deploy" / "wait_for_services_v3.py").read_text(encoding="utf-8")
+        launcher = (ROOT / "RUN_RFID_KPP_FINAL.cmd").read_text(encoding="ascii")
+        for port in (18101, 18102, 18103, 18104, 18105):
+            self.assertIn(str(port), waiter)
+        self.assertIn("/health/ready", waiter)
+        self.assertIn("wait_for_services_v3.py", launcher)
+        self.assertIn("goto :startup_not_ready", launcher)
+
+    def test_warehouse_recent_activity_has_dt_leading_index(self) -> None:
+        migration = (ROOT / "migrations" / "002_resilience_indexes.sql").read_text(encoding="utf-8")
+        runner = (ROOT / "deploy" / "apply_migration_v3.py").read_text(encoding="utf-8")
+        self.assertIn("IX_Warehouse_Dt_Id", migration)
+        self.assertIn("ON dbo.Warehouse(Dt, Id)", migration)
+        self.assertIn("002_resilience_indexes.sql", runner)
+        self.assertIn("IX_Warehouse_Dt_Id", runner)
 
 
 if __name__ == "__main__":
