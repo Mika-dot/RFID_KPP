@@ -128,8 +128,10 @@ class DeploymentHotfixTests(unittest.TestCase):
         aggregator = (ROOT / "KPP" / "kpp_aggregator_v3_warehouse.py").read_text(encoding="utf-8")
         report = (ROOT / "common" / "warehouse_report.py").read_text(encoding="utf-8")
         web = (ROOT / "web" / "kpp_reel_dashboard_v3_fixed.py").read_text(encoding="utf-8")
-        self.assertIn("TAG -> IDS -> SERIES", aggregator)
-        self.assertIn("TAG -> IDS -> SERIES", report)
+        self.assertIn("Tag, then Ids, then unambiguous SeriesNumber", aggregator)
+        self.assertIn("MATCH_TAG", report)
+        self.assertIn("MATCH_IDS", report)
+        self.assertIn("MATCH_SERIES", report)
         self.assertIn("build_report_rows", web)
 
 
