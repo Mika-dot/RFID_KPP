@@ -24,6 +24,18 @@ set "RFID_SPOOL_WARN_MB=4096"
 set "RFID_CONSOLE_OUTPUT=1"
 set "RFID_HEARTBEAT_SEC=10"
 set "RFID_SDK_CALL_TIMEOUT_SEC=30"
+set "RFID_SDK_ERROR_STREAK_LIMIT=5"
+
+rem RFID semantic business-flow watchdog / self-heal
+rem A quiet gate is valid. Failure is confirmed only when independent
+rem Perimeter sources show activity while raw RFID remains stale.
+set "RFID_BUSINESS_CHECK_SEC=15"
+set "RFID_BUSINESS_STALL_SEC=900"
+set "RFID_BUSINESS_EVIDENCE_WINDOW_SEC=1800"
+set "RFID_BUSINESS_MIN_VIDEO_EVENTS=2"
+set "RFID_BUSINESS_SELF_HEAL_SEC=60"
+set "RFID_BUSINESS_MAX_RESTARTS=3"
+set "RFID_BUSINESS_STATE_PATH=%ROOT%\runtime\rfid_business_flow_state.json"
 
 rem RusGuard source and destination
 set "SRC_SERVER=<RUSGUARD_SQL_SERVER>"
@@ -110,6 +122,7 @@ set "KPP_WAREHOUSE_RECHECK_SEC=60"
 set "KPP_WAREHOUSE_RECHECK_HOURS=168"
 set "KPP_WAREHOUSE_RECHECK_BATCH=500"
 set "KPP_WATCHDOG_SEC=180"
+set "KPP_CONSECUTIVE_FAILURE_RESTART=5"
 
 rem Web
 set "KPP_WEB_HOST=0.0.0.0"
@@ -132,7 +145,7 @@ set "KPP_AI_BASE_URL="
 set "KPP_AI_FALLBACK_BASE_URL="
 
 rem Observability uses existing service ports 18101..18105 and existing Sentry projects.
-set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs2"
+set "PERIMETER_RELEASE=3.4.6-business-flow-selfheal"
 set "PERIMETER_HEALTH_HOST=127.0.0.1"
 set "PERIMETER_HEARTBEAT_SEC=10"
 set "PERIMETER_ENVIRONMENT=production"
