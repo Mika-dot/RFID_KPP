@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 1 RFID Reader v3.4.5 Warehouse Recheck + Observability
+title 1 RFID Reader v3.4.6 Business Flow Self-Heal
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -20,7 +20,7 @@ cd /d "%ROOT%\RFID_reader_v4"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.5-warehouse-recheck+obs2"
+set "PERIMETER_RELEASE=3.4.6-business-flow-selfheal"
 "%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\deploy\monitored_rfid.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY32%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.RfidReader" --exit-code %RC% >nul 2>&1
