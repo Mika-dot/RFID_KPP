@@ -1,0 +1,32 @@
+name: Cleanup accidental branch
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete accidental temporary branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'heads/fix/perimeter-business-flow-selfheal'
+              });
+              core.info('Deleted accidental temporary branch');
+            } catch (error) {
+              if (error.status === 422 || error.status === 404) {
+                core.info('Temporary branch already absent');
+              } else {
+                throw error;
+              }
+            }
