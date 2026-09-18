@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Read-only preflight for RFID KPP v3.2."""
+"""Read-only preflight for RFID KPP v3.4.7 runtime."""
 from __future__ import annotations
 
 import importlib
 import os
-import sys
 from pathlib import Path
 
 
@@ -40,6 +39,9 @@ REQUIRED_TABLES = [
     "dbo.KPP_EventVideoLinks",
     "dbo.KPP_EventSkudLinks",
     "dbo.KPP_ProcessingErrors",
+]
+REQUIRED_INDEXES = [
+    ("dbo.Warehouse", "IX_Warehouse_Dt_Id"),
 ]
 
 
@@ -87,6 +89,14 @@ def main() -> int:
                         cur.execute("SELECT COL_LENGTH(?, ?)", table, column)
                         if cur.fetchone()[0] is None:
                             fail(f"Не найден столбец {table}.{column}; примените миграцию", errors)
+                for table, index_name in REQUIRED_INDEXES:
+                    cur.execute(
+                        "SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(?) AND name=?",
+                        table,
+                        index_name,
+                    )
+                    if cur.fetchone() is None:
+                        fail(f"Не найден индекс {table}.{index_name}; примените миграцию", errors)
                 cur.execute("SELECT StateValue FROM dbo.KPP_RuntimeState WHERE StateKey='LAST_RFID_ID_V3'")
                 row = cur.fetchone()
                 if not row:
@@ -98,7 +108,7 @@ def main() -> int:
                 if not schema_row or str(schema_row[0]).strip() != "3.4.5":
                     fail("Не установлен KPP_SCHEMA_VERSION=3.4.5", errors)
                 else:
-                    print("[OK] KPP_SCHEMA_VERSION=3.4.5")
+                    print("[OK] KPP_SCHEMA_VERSION=3.4.5 + resilience indexes")
                 cur.execute("SELECT COUNT(*) FROM dbo.KPP_ActiveRfidSessions")
                 print(f"[OK] Durable active sessions: {cur.fetchone()[0]}")
         except Exception as exc:
@@ -107,7 +117,7 @@ def main() -> int:
     if errors:
         print(f"\nPRECHECK FAILED: {len(errors)} ошибок")
         return 1
-    print("\nPRECHECK OK: конфигурация и схема v3.2 готовы к запуску")
+    print("\nPRECHECK OK: конфигурация, схема v3.4.5 и resilience indexes готовы к запуску")
     return 0
 
 
