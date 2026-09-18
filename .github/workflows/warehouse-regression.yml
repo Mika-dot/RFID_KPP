@@ -3,7 +3,7 @@ name: Warehouse regression
 on:
   push:
     branches:
-      - fix/warehouse-nullable-tag
+      - main
   pull_request:
     branches:
       - main
