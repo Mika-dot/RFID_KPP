@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import http.client
 import json
 import logging
 import os
@@ -77,6 +78,27 @@ def _tcp_probe(host: str, port: int, timeout: float = 3.0) -> Mapping[str, objec
     }
 
 
+def _http_probe(host: str, port: int, timeout: float = 3.0) -> Mapping[str, object]:
+    """Prove the actual Waitress/Flask request path responds, not just TCP SYN."""
+    started = time.monotonic()
+    conn = http.client.HTTPConnection(host, int(port), timeout=max(0.5, float(timeout)))
+    try:
+        conn.request("GET", "/", headers={"Connection": "close"})
+        response = conn.getresponse()
+        # With production Basic Auth enabled, 401 is the expected cheap answer.
+        # Any <500 code proves the application request path is executing.
+        response.read(4096)
+        if int(response.status) >= 500:
+            raise RuntimeError(f"WebHttpStatus{response.status}")
+        return {
+            "status": "ok",
+            "latency_ms": (time.monotonic() - started) * 1000.0,
+            "detail": f"http_{response.status}",
+        }
+    finally:
+        conn.close()
+
+
 def _require_dependency(reporter, name: str) -> None:
     if name in reporter.required_dependencies:
         return
@@ -127,12 +149,7 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             "database",
             lambda: odbc_probe(os.getenv("RFID_DB_CONNECTION", ""), 5),
         )
-        # TCP/SDK health alone is insufficient. A reader may keep answering
-        # while the actual RFID business data-plane is stalled. The monitored
-        # adapter owns this semantic dependency using cross-source evidence.
         _require_dependency(reporter, "business_flow")
-        # SDK state comes from monitored_rfid.py. Keep a separate physical TCP
-        # dependency so a dead reader endpoint cannot be masked by the process.
         _require_dependency(reporter, "rfid_tcp")
         reporter.register_probe(
             "rfid_tcp",
@@ -153,7 +170,6 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             "destination_database",
             lambda: odbc_probe(_sql_connection("DST"), 5),
         )
-        # sync_loop is updated by monitored_rusguard.py.
         return
 
     if service == "Perimeter.Yolo":
@@ -169,8 +185,6 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
         if not model_path.is_absolute():
             model_path = (ROOT / "RTSP" / model_path).resolve()
         reporter.register_probe("model", lambda: _file_probe(model_path))
-        # camera_0/camera_1/pipeline are driven from actual frames/main loop by
-        # monitored_yolo.py rather than by a weak RTSP TCP-port probe.
         return
 
     if service == "Perimeter.Aggregator":
@@ -181,7 +195,6 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
         reporter.register_peer("rfid_reader", "Perimeter.RfidReader")
         reporter.register_peer("yolo", "Perimeter.Yolo")
         reporter.register_peer("rusguard", "Perimeter.RusGuardSync")
-        # pipeline is driven by monitored_aggregator.py.
         return
 
     if service == "Perimeter.WebDashboard":
@@ -196,10 +209,12 @@ def _register_dependency_checks(service: str, reporter, target: Path) -> None:
             ),
         )
         reporter.register_peer("aggregator", "Perimeter.Aggregator")
+        # Keep the established dependency key for monitoring compatibility, but
+        # validate an actual HTTP request instead of merely opening the port.
         _require_dependency(reporter, "web_port")
         reporter.register_probe(
             "web_port",
-            lambda: _tcp_probe(
+            lambda: _http_probe(
                 "127.0.0.1",
                 int(os.getenv("KPP_WEB_PORT", "5050")),
                 3.0,
@@ -250,9 +265,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     target_dir = str(script.parent)
     inserted_target_dir = target_dir not in sys.path
     if inserted_target_dir:
-        # runpy.run_path does not provide normal script-directory import
-        # semantics. Current Warehouse/Web wrappers use sibling imports, so the
-        # target directory must be visible exactly as with `python script.py`.
         sys.path.insert(0, target_dir)
     sys.argv = [str(script)]
 
