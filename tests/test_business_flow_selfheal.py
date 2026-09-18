@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from common.business_flow import assess_rfid_flow, source_marker
+from deploy.monitored_rfid import _PersistentFlowState
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,6 +120,16 @@ class BusinessFlowSelfHealTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertTrue(result.clear_latch)
 
+    def test_corrupt_rfid_recovery_state_fails_closed_without_restart_storm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text("{broken", encoding="utf-8")
+            state = _PersistentFlowState(path)
+            self.assertTrue(state.fault_latched)
+            self.assertEqual(state.rfid_marker, "<state-invalid>")
+            self.assertGreater(state.restart_attempts, 1_000_000)
+            self.assertEqual(state.last_fault_detail, "state_file_invalid")
+
     def test_aggregator_failure_path_does_not_refresh_progress_watchdog(self) -> None:
         text = (ROOT / "deploy" / "monitored_aggregator.py").read_text(encoding="utf-8")
         exception_block = text.split("except Exception as exc:", 1)[1]
@@ -144,22 +156,28 @@ class BusinessFlowSelfHealTests(unittest.TestCase):
         self.assertIn("os._exit(72)", text)
         self.assertIn("RfidInventoryStartFailed", text)
 
-    def test_rfid_main_loop_and_delivery_writer_are_watchdog_protected(self) -> None:
+    def test_rfid_main_loop_is_watchdog_protected_but_spool_failure_is_data_preserving(self) -> None:
         text = (ROOT / "deploy" / "monitored_rfid.py").read_text(encoding="utf-8")
         self.assertIn('"reader_loop"', text)
         self.assertIn('"delivery_writer"', text)
+        self.assertIn('"local_spool"', text)
         self.assertIn("RFID_READER_LOOP_WATCHDOG_SEC", text)
-        self.assertIn("RFID_DELIVERY_WRITER_WATCHDOG_SEC", text)
         self.assertIn("exit_code=75", text)
-        self.assertIn("exit_code=76", text)
-        self.assertIn('reporter.progress("delivery_writer")', text)
+        self.assertNotIn("exit_code=76", text)
+        self.assertIn("resilient_writer_run", text)
+        self.assertIn('reporter.progress("reader_loop")', text)
+        self.assertIn("original_enqueue", text)
 
-    def test_yolo_adapter_restarts_on_blocked_capture_thread(self) -> None:
+    def test_yolo_adapter_restarts_blocked_capture_but_preserves_undurable_spool_events(self) -> None:
         text = (ROOT / "deploy" / "monitored_yolo.py").read_text(encoding="utf-8")
         self.assertIn("RFID_RTSP_READ_WATCHDOG_SEC", text)
         self.assertIn("capture_progress_mono", text)
         self.assertIn("capture_thread_blocked", text)
         self.assertIn("os._exit(74)", text)
+        self.assertIn('"local_spool"', text)
+        self.assertIn('"delivery_writer"', text)
+        self.assertIn("resilient_writer_run", text)
+        self.assertNotIn("exit_code=77", text)
 
     def test_production_aggregator_does_not_rollback_after_commit_for_status_failure(self) -> None:
         text = (ROOT / "KPP" / "kpp_aggregator_v3_warehouse_v3.py").read_text(encoding="utf-8")
