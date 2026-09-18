@@ -42,15 +42,18 @@ def main() -> int:
     last_heartbeat = 0.0
     total_rows = 0
     last_cursor = 0
+    consecutive_failures = 0
     app.log.info("RusGuard Sync v3.4 + observability adapter started")
 
     while True:
         try:
             count, last_cursor = app.sync_page()
+            consecutive_failures = 0
             reporter.progress("sync_loop")
             reporter.touch_dependency("source_database")
             reporter.touch_dependency("destination_database")
             reporter.mark_success()
+            reporter.set_metric("consecutive_failures", 0)
             total_rows += count
             now = time.monotonic()
             if count >= app.BATCH_SIZE:
@@ -64,10 +67,14 @@ def main() -> int:
         except KeyboardInterrupt:
             return 0
         except Exception as exc:
-            # Keep the watchdog alive while the loop is actively retrying, but
-            # leave readiness degraded until a successful iteration occurs.
-            reporter.progress("sync_loop")
+            # Do NOT refresh sync_loop progress here. A loop that continuously
+            # fails is not healthy progress; the watchdog must eventually exit
+            # this process so the existing CMD supervisor can rebuild all SQL
+            # connections and module state.
+            consecutive_failures += 1
+            reporter.set_metric("consecutive_failures", consecutive_failures)
             reporter.set_dependency("sync_loop", "unavailable", detail=safe_error_name(exc))
+            reporter.capture_exception(exc)
             app.log.exception("RusGuard sync failed; cursor not changed")
             time.sleep(max(5.0, app.POLL_SEC))
 
