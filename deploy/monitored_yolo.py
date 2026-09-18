@@ -33,6 +33,10 @@ def _load_app():
 def main() -> int:
     app = _load_app()
     reporter = get_reporter()
+    writer_stale_sec = max(
+        30.0,
+        float(app.os.getenv("RFID_VIDEO_DELIVERY_WRITER_WATCHDOG_SEC", "90")),
+    )
 
     for dependency in ("local_spool", "delivery_writer"):
         if dependency not in reporter.required_dependencies:
@@ -43,14 +47,12 @@ def main() -> int:
         timeout_seconds=float(app.os.getenv("RFID_YOLO_WATCHDOG_SEC", "120")),
         exit_code=71,
     )
-    reporter.register_progress_watchdog(
-        "delivery_writer",
-        timeout_seconds=float(app.os.getenv("RFID_VIDEO_DELIVERY_WRITER_WATCHDOG_SEC", "90")),
-        exit_code=77,
+    reporter.set_dependency(
+        "pipeline",
+        "unknown",
+        stale_after_seconds=float(app.os.getenv("RFID_YOLO_WATCHDOG_SEC", "120")),
     )
-    # local_spool is durable state, not a periodic signal. It starts unknown and
-    # is marked OK by DurableEventSpool.__init__ below once SQLite is actually
-    # opened and its schema is available.
+    reporter.set_dependency("delivery_writer", "unknown", stale_after_seconds=writer_stale_sec)
     reporter.set_dependency("local_spool", "unknown", stale_after_seconds=None)
 
     rtsp_block_sec = max(
@@ -58,10 +60,6 @@ def main() -> int:
         float(app.os.getenv("RFID_RTSP_READ_WATCHDOG_SEC", "45")),
     )
 
-    # OpenCV/FFmpeg may block forever inside VideoCapture.read(). The main YOLO
-    # loop continues polling read_new(), so the ordinary pipeline watchdog alone
-    # cannot detect this failure. Replace the capture loop with equivalent logic
-    # that exposes a monotonic heartbeat around each potentially blocking call.
     original_init = app.RTSPStream.__init__
 
     def monitored_init(stream, url, camera_id):
@@ -125,7 +123,6 @@ def main() -> int:
 
     def monitored_read_new(stream, after_sequence):
         reporter.progress("pipeline")
-
         capture_age = max(
             0.0,
             time.monotonic()
@@ -173,12 +170,14 @@ def main() -> int:
 
     app.RTSPStream.read_new = monitored_read_new
 
-    # Surface local durable-spool failures immediately. Do not restart only for
-    # an enqueue failure: the business loop intentionally retains undurable
-    # transitions in RAM and retries, so killing it would be the data-losing act.
+    # Video spool is the durability boundary. Core logic deliberately retains
+    # transitions in RAM and retries when enqueue fails. Therefore writer/spool
+    # faults must make readiness red but must NOT kill the process and discard
+    # those undurable transitions.
     original_spool_init = app.DurableEventSpool.__init__
     original_spool_enqueue = app.DurableEventSpool.enqueue
     original_next_pending = app.DurableEventSpool.next_pending
+    original_writer_run = app.DBWriter.run
 
     def monitored_spool_init(spool, path):
         original_spool_init(spool, path)
@@ -200,20 +199,46 @@ def main() -> int:
     def monitored_next_pending(spool):
         try:
             result = original_next_pending(spool)
-            reporter.progress("delivery_writer")
+            reporter.set_dependency(
+                "delivery_writer",
+                "ok",
+                stale_after_seconds=writer_stale_sec,
+            )
             return result
         except Exception as exc:
             reporter.set_dependency(
                 "delivery_writer",
                 "unavailable",
+                stale_after_seconds=writer_stale_sec,
                 detail=safe_error_name(exc),
             )
-            reporter.capture_exception(exc)
+            reporter.set_dependency(
+                "local_spool",
+                "unavailable",
+                stale_after_seconds=None,
+                detail=safe_error_name(exc),
+            )
             raise
+
+    def resilient_writer_run(writer):
+        while writer.running:
+            try:
+                original_writer_run(writer)
+                return
+            except Exception as exc:
+                reporter.set_dependency(
+                    "delivery_writer",
+                    "unavailable",
+                    stale_after_seconds=writer_stale_sec,
+                    detail=safe_error_name(exc),
+                )
+                reporter.capture_exception(exc)
+                time.sleep(1.0)
 
     app.DurableEventSpool.__init__ = monitored_spool_init
     app.DurableEventSpool.enqueue = monitored_spool_enqueue
     app.DurableEventSpool.next_pending = monitored_next_pending
+    app.DBWriter.run = resilient_writer_run
 
     original_insert = app.DBWriter.insert
 
