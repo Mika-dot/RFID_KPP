@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """Надёжная синхронизация RusGuard -> SQL v2.
 
-Читает по монотонному ExternalId2, страницами, без ограничения «последние сутки».
-Курсор обновляется только в той же транзакции, где зафиксированы вставки.
+Читает по монотонному ExternalId2 страницами. Каждый poll фиксирует high-water
+mark источника и сканирует только конечный диапазон (cursor, high_watermark].
+Это не даёт долгому периоду без событий нужных ворот снова и снова перечитывать
+всю чужую историю RusGuard. Курсор обновляется только в транзакции назначения.
 Время CreatedAt остаётся временем физического события; ReceivedAt — доставка.
 """
 from __future__ import annotations
@@ -87,6 +89,7 @@ LEFT JOIN CardType ON AcsKeys.CardTypeID=CardType._id
 LEFT JOIN Property P1 ON [Log].DriverID=P1._idResource AND P1.PropertyName='HardwareName'
 LEFT JOIN Property P2 ON [Log].DriverID=P2._idResource AND P2.PropertyName='Name'
 WHERE [Log]._id > ?
+  AND [Log]._id <= ?
   AND LogMsgSubtypes.Name IN (
     N'Вход',N'Вход с подтверждением',N'Вход по ключу',N'Въезд',N'Въезд по ключу',N'Въезд с подтверждением',N'Вход по лицу',N'Въезд по лицу',
     N'Выход',N'Выход по считывателю картоприёмника',N'Выход с подтверждением',N'Выход по считывателю картоприёмника с подтверждением',
@@ -148,19 +151,41 @@ WHEN NOT MATCHED THEN INSERT(StateKey,StateValue,UpdatedAt) VALUES(s.StateKey,s.
     )
 
 
+def source_high_watermark(src: pyodbc.Connection) -> int:
+    cur = src.cursor()
+    cur.execute("SELECT ISNULL(MAX([_id]),0) FROM [Log]")
+    row = cur.fetchone()
+    return int(row[0] or 0)
+
+
 def sync_page() -> Tuple[int, int]:
     with pyodbc.connect(DST_CONN, autocommit=False, timeout=15) as dst:
         cursor_value, _bootstrapped = resolve_cursor(dst)
         with pyodbc.connect(SRC_CONN, autocommit=True, timeout=15) as src:
+            high_watermark = source_high_watermark(src)
+            if high_watermark <= cursor_value:
+                return 0, cursor_value
             cur_src = src.cursor()
-            cur_src.execute(SELECT_SQL, cursor_value, GATE_NAME)
+            cur_src.execute(SELECT_SQL, cursor_value, high_watermark, GATE_NAME)
             rows = cur_src.fetchall()
+
+        # The source snapshot is bounded by high_watermark. If fewer than one
+        # full matching page exists, every relevant row up to that watermark has
+        # been examined and the durable cursor can safely skip unrelated logs.
         if not rows:
-            return 0, cursor_value
+            set_state(dst, high_watermark)
+            dst.commit()
+            log.info(
+                "RusGuard cursor advanced over unrelated source rows: %s -> %s",
+                cursor_value,
+                high_watermark,
+            )
+            return 0, high_watermark
+
         cur_dst = dst.cursor()
-        max_id = cursor_value
+        max_matching_id = cursor_value
         for row in rows:
-            max_id = max(max_id, int(row.ExternalId2))
+            max_matching_id = max(max_matching_id, int(row.ExternalId2))
             cur_dst.execute(
                 f"""
 IF NOT EXISTS(SELECT 1 FROM {DEST_TABLE} WHERE ExternalId2=?)
@@ -174,10 +199,18 @@ INSERT INTO {DEST_TABLE}(
                 row.CreatedAt, row.PersonControlDeviceName, row.Direction, row.ExternalStatus, row.ExternalStatusId,
                 row.FullName, row.FirmName, row.ExternalPassTypeName, row.KeyName, row.CardNumParsed, row.CardNumReal,
             )
-        set_state(dst, max_id)
+
+        next_cursor = high_watermark if len(rows) < BATCH_SIZE else max_matching_id
+        set_state(dst, next_cursor)
         dst.commit()
-        log.info("RusGuard COMMIT: rows=%s cursor=%s last_event=%s", len(rows), max_id, rows[-1].CreatedAt)
-        return len(rows), max_id
+        log.info(
+            "RusGuard COMMIT: rows=%s cursor=%s source_high=%s last_event=%s",
+            len(rows),
+            next_cursor,
+            high_watermark,
+            rows[-1].CreatedAt,
+        )
+        return len(rows), next_cursor
 
 
 def main() -> int:
@@ -185,7 +218,7 @@ def main() -> int:
     last_heartbeat = 0.0
     total_rows = 0
     last_cursor = 0
-    log.info("RusGuard Sync v3.4 запущен; повторный импорт уже имеющихся строк отключён")
+    log.info("RusGuard Sync v3.4 запущен; bounded high-watermark scan включён")
     while True:
         try:
             count, last_cursor = sync_page()
