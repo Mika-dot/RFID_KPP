@@ -3,7 +3,7 @@
 """Semantic business-flow health helpers for Perimeter.
 
 Transport/process health is not enough for a physical checkpoint: a process can
-stay alive while one data source silently stops producing events.  Keep the
+stay alive while one data source silently stops producing events. Keep the
 classification pure so production adapters and regression tests use the same
 rules.
 """
@@ -61,10 +61,10 @@ def assess_rfid_flow(
     """Classify RFID business flow using independent Perimeter evidence.
 
     Zero RFID reads is *not* automatically a fault because the checkpoint can be
-    idle.  A stale RFID source becomes a fault when video/Warehouse prove that
-    physical/business activity continued.  Once confirmed, the fault is
-    latched until a new raw RFID timestamp appears; otherwise a restart followed
-    by another silent reader would incorrectly become green again.
+    idle. A stale RFID source becomes a fault when video/Warehouse prove that
+    physical/business activity continued. Once confirmed, the fault is latched
+    until a *fresh* new raw RFID timestamp appears; a delayed backlog row after
+    restart is not proof that the live reader recovered.
     """
     stall_seconds = max(1.0, float(stall_seconds))
     min_video_events = max(1, int(min_video_events))
@@ -75,12 +75,17 @@ def assess_rfid_flow(
     video_age = _age_seconds(now, video_at)
     warehouse_age = _age_seconds(now, warehouse_at)
     marker = source_marker(rfid_at)
+    rfid_fresh = rfid_age is not None and rfid_age <= stall_seconds
 
     if fault_latched:
-        if rfid_at is not None and marker != str(latched_rfid_marker or ""):
+        if (
+            rfid_at is not None
+            and marker != str(latched_rfid_marker or "")
+            and rfid_fresh
+        ):
             return RfidFlowAssessment(
                 "ok",
-                "recovered_new_rfid_read",
+                "recovered_new_fresh_rfid_read",
                 rfid_age,
                 video_age,
                 warehouse_age,
@@ -94,7 +99,7 @@ def assess_rfid_flow(
             warehouse_age,
         )
 
-    rfid_stale = rfid_age is None or rfid_age > stall_seconds
+    rfid_stale = not rfid_fresh
     if not rfid_stale:
         return RfidFlowAssessment(
             "ok",
@@ -116,7 +121,7 @@ def assess_rfid_flow(
             latch_fault=True,
         )
 
-    # Multiple physical video passages are independently sufficient.  Requiring
+    # Multiple physical video passages are independently sufficient. Requiring
     # more than one avoids restarting the reader for a single genuinely
     # untagged/missed reel.
     if video_recent_events >= min_video_events:
