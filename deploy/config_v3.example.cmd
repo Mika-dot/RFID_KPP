@@ -25,6 +25,8 @@ set "RFID_CONSOLE_OUTPUT=1"
 set "RFID_HEARTBEAT_SEC=10"
 set "RFID_SDK_CALL_TIMEOUT_SEC=30"
 set "RFID_SDK_ERROR_STREAK_LIMIT=5"
+set "RFID_READER_LOOP_WATCHDOG_SEC=90"
+set "RFID_DELIVERY_WRITER_WATCHDOG_SEC=90"
 
 rem RFID semantic business-flow watchdog / self-heal
 rem A quiet gate is valid. Failure is confirmed only when independent
@@ -75,6 +77,7 @@ set "RFID_MAX_FRAME_AGE_SEC=2.0"
 set "RFID_RTSP_RECONNECT_SEC=3"
 set "RFID_RTSP_BACKEND=FFMPEG"
 set "RFID_SET_CAPTURE_BUFFER=0"
+set "RFID_RTSP_READ_WATCHDOG_SEC=45"
 set "RFID_TRACK_MAX_DISTANCE_PX=140"
 set "RFID_TRACK_MAX_AGE_SEC=4"
 set "RFID_TRACK_MIN_HITS=2"
@@ -145,7 +148,7 @@ set "KPP_AI_BASE_URL="
 set "KPP_AI_FALLBACK_BASE_URL="
 
 rem Observability uses existing service ports 18101..18105 and existing Sentry projects.
-set "PERIMETER_RELEASE=3.4.6-business-flow-selfheal"
+set "PERIMETER_RELEASE=3.4.7-resilience-audit"
 set "PERIMETER_HEALTH_HOST=127.0.0.1"
 set "PERIMETER_HEARTBEAT_SEC=10"
 set "PERIMETER_ENVIRONMENT=production"
