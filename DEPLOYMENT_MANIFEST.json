@@ -1,12 +1,11 @@
 {
-  "release": "3.4.6-business-flow-selfheal",
+  "release": "3.4.7-resilience-audit",
   "schema_version": "3.4.5",
   "entry_point": "RUN_RFID_KPP_FINAL.cmd",
   "configuration": "deploy/config_v3.cmd",
   "configuration_template": "deploy/config_v3.example.cmd",
   "configuration_is_local_only": true,
   "credentials_embedded": false,
-  "validated_runtime_sha": "8ed4a8cc1b3718fe0afef2079cd9b08590ef0e3a",
   "active_files": {
     "rfid_reader": "RFID_reader_v4/rfid_to_sql_v4.py",
     "rusguard_sync": "DB_RusGard/db_sync_v2.py",
@@ -23,8 +22,10 @@
     "yolo_monitor_adapter": "deploy/monitored_yolo.py",
     "aggregator_monitor_adapter": "deploy/monitored_aggregator.py",
     "migration": "migrations/001_kpp_v3_reliability.sql",
+    "resilience_index_migration": "migrations/002_resilience_indexes.sql",
     "migration_runner": "deploy/apply_migration_v3.py",
     "service_launcher": "deploy/start_services_v3.py",
+    "readiness_waiter": "deploy/wait_for_services_v3.py",
     "web_waiter": "deploy/wait_for_web_v3.py",
     "service_wrappers": [
       "deploy/RUN_RFID_READER_V3.cmd",
@@ -50,7 +51,10 @@
     "web_port": 5050,
     "temporary_perimeter_master_is_not_canonical": true,
     "rfid_business_flow_required": true,
-    "rfid_business_flow_fault_is_latched_until_new_read": true,
+    "rfid_business_flow_fault_is_latched_until_new_fresh_read": true,
+    "rfid_main_loop_watchdog": true,
+    "rfid_delivery_writer_watchdog": true,
+    "rtsp_blocked_capture_self_heal": true,
     "rfid_self_heal_max_restarts": 3
   },
   "warehouse_contract": {
@@ -67,10 +71,11 @@
     "stop legacy and prior v3 service processes",
     "resolve existing 64-bit and 32-bit Python interpreters",
     "install only missing dependencies",
-    "apply idempotent SQL migration with safety snapshots",
-    "run schema precheck",
+    "apply idempotent SQL migrations and resilience indexes",
+    "run schema/index precheck",
     "start five current production components through monitored service wrappers",
-    "wait for web service on port 5050"
+    "require HTTP readiness from all five health endpoints",
+    "open web service only after functional readiness"
   ],
   "invariants": [
     "unknown RFID is not counted as a reel unless later confirmed by valid Warehouse/1C evidence",
@@ -83,8 +88,15 @@
     "RFID checkpoint advances atomically with event/session state",
     "pending local spool records are not deleted before delivery",
     "RFID readiness includes semantic business-flow health, not only process/TCP health",
-    "confirmed silent RFID failure remains red across restarts until a new RFID read is persisted",
+    "confirmed silent RFID failure remains red across restarts until a new fresh RFID read is persisted",
+    "delayed stale RFID backlog cannot clear a confirmed live-reader fault",
+    "RFID main loop and durable SQL delivery thread are independently watchdog-protected",
+    "RTSP reconnect activity is distinguished from a capture thread blocked inside OpenCV/FFmpeg",
+    "RusGuard failed iterations do not refresh its progress watchdog",
     "aggregator failed iterations do not refresh its progress watchdog",
+    "post-COMMIT telemetry failure cannot roll back aggregator in-memory business state",
+    "RusGuard cursor advances across unrelated source rows using a bounded source high-watermark snapshot",
+    "startup success requires all five /health/ready endpoints to report ready",
     "existing Zabbix/Sentry architecture uses health ports 18101-18105 and must not be silently replaced",
     "production config_v3.cmd is local-only and must never be committed"
   ]
