@@ -1,5 +1,5 @@
 {
-  "release": "3.4.5-warehouse-recheck+obs2",
+  "release": "3.4.6-business-flow-selfheal",
   "schema_version": "3.4.5",
   "entry_point": "RUN_RFID_KPP_FINAL.cmd",
   "configuration": "deploy/config_v3.cmd",
@@ -15,6 +15,7 @@
     "web": "web/kpp_reel_dashboard_v3_fixed.py",
     "warehouse_identity": "common/warehouse_identity.py",
     "warehouse_report": "common/warehouse_report.py",
+    "business_flow": "common/business_flow.py",
     "observability": "common/observability.py",
     "service_runner": "deploy/run_service.py",
     "rfid_monitor_adapter": "deploy/monitored_rfid.py",
@@ -47,7 +48,10 @@
       "/health/ready"
     ],
     "web_port": 5050,
-    "temporary_perimeter_master_is_not_canonical": true
+    "temporary_perimeter_master_is_not_canonical": true,
+    "rfid_business_flow_required": true,
+    "rfid_business_flow_fault_is_latched_until_new_read": true,
+    "rfid_self_heal_max_restarts": 3
   },
   "warehouse_contract": {
     "tag_optional": true,
@@ -78,6 +82,9 @@
     "physical RFID with RfidReadCount>0 may be promoted from UNKNOWN_RFID by Warehouse evidence",
     "RFID checkpoint advances atomically with event/session state",
     "pending local spool records are not deleted before delivery",
+    "RFID readiness includes semantic business-flow health, not only process/TCP health",
+    "confirmed silent RFID failure remains red across restarts until a new RFID read is persisted",
+    "aggregator failed iterations do not refresh its progress watchdog",
     "existing Zabbix/Sentry architecture uses health ports 18101-18105 and must not be silently replaced",
     "production config_v3.cmd is local-only and must never be committed"
   ]
