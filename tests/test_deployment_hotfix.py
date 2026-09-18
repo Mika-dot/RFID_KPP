@@ -132,7 +132,7 @@ class DeploymentHotfixTests(unittest.TestCase):
         self.assertIn("MATCH_TAG", report)
         self.assertIn("MATCH_IDS", report)
         self.assertIn("MATCH_SERIES", report)
-        self.assertIn("build_report_rows", web)
+        self.assertIn("build_report_records", web)
 
 
 if __name__ == "__main__":
