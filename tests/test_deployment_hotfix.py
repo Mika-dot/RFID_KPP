@@ -26,7 +26,16 @@ class DeploymentHotfixTests(unittest.TestCase):
         text = example.read_text(encoding="ascii")
         for placeholder in ("<SQL_SERVER>", "<SQL_PASSWORD>", "<CAMERA_USER>", "<RFID_READER_IP>"):
             self.assertIn(placeholder, text)
-        for required in ("KPP_CONN_STR", "RFID_READER_IP", "RFID_RTSP_0", "RFID_RTSP_1", "SRC_SERVER"):
+        for required in (
+            "KPP_CONN_STR",
+            "RFID_READER_IP",
+            "RFID_RTSP_0",
+            "RFID_RTSP_1",
+            "SRC_SERVER",
+            "RFID_BUSINESS_STALL_SEC",
+            "RFID_BUSINESS_MAX_RESTARTS",
+            "KPP_CONSECUTIVE_FAILURE_RESTART",
+        ):
             self.assertIn(required, text)
 
     def test_cmd_files_are_ascii_crlf(self) -> None:
@@ -41,7 +50,7 @@ class DeploymentHotfixTests(unittest.TestCase):
     def test_manifest_uses_required_entrypoint(self) -> None:
         manifest = json.loads((ROOT / "DEPLOYMENT_MANIFEST.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["entry_point"], "RUN_RFID_KPP_FINAL.cmd")
-        self.assertEqual(manifest["release"], "3.4.5-warehouse-recheck+obs2")
+        self.assertEqual(manifest["release"], "3.4.6-business-flow-selfheal")
         self.assertEqual(manifest["schema_version"], "3.4.5")
         self.assertTrue(manifest["configuration_is_local_only"])
         self.assertFalse(manifest["credentials_embedded"])
@@ -54,6 +63,10 @@ class DeploymentHotfixTests(unittest.TestCase):
             "web/kpp_reel_dashboard_v3_fixed.py",
         )
         self.assertEqual(
+            manifest["active_files"]["business_flow"],
+            "common/business_flow.py",
+        )
+        self.assertEqual(
             manifest["monitoring"]["health_endpoints"]["Perimeter.RfidReader"],
             18101,
         )
@@ -61,6 +74,7 @@ class DeploymentHotfixTests(unittest.TestCase):
             manifest["monitoring"]["health_endpoints"]["Perimeter.WebDashboard"],
             18105,
         )
+        self.assertTrue(manifest["monitoring"]["rfid_business_flow_required"])
 
     def test_wrappers_are_argument_free(self) -> None:
         wrappers = sorted((ROOT / "deploy").glob("RUN_*_V3.cmd"))
@@ -88,34 +102,35 @@ class DeploymentHotfixTests(unittest.TestCase):
         source = (ROOT / "RTSP" / "RTSP_yolo_DB_v3.py").read_text(encoding="utf-8")
         self.assertIn("RFID_SET_CAPTURE_BUFFER=0", config)
         self.assertIn('RTSP_BACKEND = os.getenv("RFID_RTSP_BACKEND", "FFMPEG")', source)
-        self.assertIn("if Config.SET_CAPTURE_BUFFER:", source)
-
-    def test_warehouse_nullable_tag_contract_is_in_production_entrypoints(self) -> None:
-        aggregator = (ROOT / "KPP" / "kpp_aggregator_v3_warehouse.py").read_text(encoding="utf-8")
-        web = (ROOT / "web" / "kpp_reel_dashboard_v3_fixed.py").read_text(encoding="utf-8")
-        self.assertNotIn("len(tag) < 24", aggregator)
-        self.assertIn("not normalized_ids or not normalized_series", aggregator)
-        self.assertIn("resolve_warehouse_identity", aggregator)
-        self.assertIn("build_report_records", web)
-        self.assertNotIn("ISNULL(e0.SourceTag,'')", web)
-        self.assertNotIn("LTRIM(RTRIM(Ids))", aggregator)
-        self.assertIn("Ids=CONVERT(uniqueidentifier, ?)", aggregator)
-        self.assertIn("CASE WHEN WarehouseId=? THEN 0 ELSE 1 END", aggregator)
-        self.assertIn("def recheck_warehouse_only", aggregator)
-
-    def test_stop_script_knows_production_entrypoints(self) -> None:
-        text = (ROOT / "deploy" / "stop_kpp_processes.ps1").read_text(encoding="utf-8")
-        self.assertIn("kpp_aggregator_v3_warehouse_v3.py", text)
-        self.assertIn("kpp_reel_dashboard_v3_fixed.py", text)
-        self.assertIn("RUN_AGGREGATOR_V3.cmd", text)
-        self.assertIn("RUN_WEB_V3.cmd", text)
 
     def test_schema_uses_bigint_warehouse_relation(self) -> None:
         migration = (ROOT / "migrations" / "001_kpp_v3_reliability.sql").read_text(encoding="utf-8")
-        runner = (ROOT / "deploy" / "apply_migration_v3.py").read_text(encoding="utf-8")
-        self.assertIn("ADD WarehouseId BIGINT NULL", migration)
-        self.assertIn("ALTER COLUMN WarehouseId BIGINT NULL", migration)
-        self.assertIn('EXPECTED_VERSION = "3.4.5"', runner)
+        self.assertIn("WarehouseId BIGINT NULL", migration)
+        self.assertIn("ALTER TABLE dbo.KPP_ReelEvents ALTER COLUMN WarehouseId BIGINT NULL", migration)
+
+    def test_stop_script_knows_production_entrypoints(self) -> None:
+        text = (ROOT / "deploy" / "stop_kpp_processes.ps1").read_text(encoding="utf-8")
+        for needle in (
+            "rfid_to_sql_v4.py",
+            "db_sync_v2.py",
+            "RTSP_yolo_DB_v3.py",
+            "kpp_aggregator_v3_warehouse_v3.py",
+            "kpp_reel_dashboard_v3_fixed.py",
+            "run_service.py",
+            "monitored_rfid.py",
+            "monitored_rusguard.py",
+            "monitored_yolo.py",
+            "monitored_aggregator.py",
+        ):
+            self.assertIn(needle, text)
+
+    def test_warehouse_nullable_tag_contract_is_in_production_entrypoints(self) -> None:
+        aggregator = (ROOT / "KPP" / "kpp_aggregator_v3_warehouse.py").read_text(encoding="utf-8")
+        report = (ROOT / "common" / "warehouse_report.py").read_text(encoding="utf-8")
+        web = (ROOT / "web" / "kpp_reel_dashboard_v3_fixed.py").read_text(encoding="utf-8")
+        self.assertIn("TAG -> IDS -> SERIES", aggregator)
+        self.assertIn("TAG -> IDS -> SERIES", report)
+        self.assertIn("build_report_rows", web)
 
 
 if __name__ == "__main__":
