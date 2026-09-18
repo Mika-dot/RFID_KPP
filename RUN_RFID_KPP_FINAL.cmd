@@ -2,7 +2,7 @@
 setlocal EnableExtensions DisableDelayedExpansion
 cd /d "%~dp0"
 set "ROOT=%CD%"
-set "PATCH_VERSION=3.4.6-business-flow-selfheal"
+set "PATCH_VERSION=3.4.7-resilience-audit"
 
 echo ================================================================
 echo RFID KPP FINAL FIXED %PATCH_VERSION%
@@ -38,11 +38,20 @@ if errorlevel 1 goto :fatal
 "%PY64%" "%ROOT%\deploy\start_services_v3.py"
 if errorlevel 1 goto :fatal
 
-echo [OK] All v3.4.6 services were launched.
-echo [INFO] Waiting for web service: http://127.0.0.1:5050
-"%PY64%" "%ROOT%\deploy\wait_for_web_v3.py" --url "http://127.0.0.1:5050" --timeout 90 --open
-if errorlevel 1 echo [WARN] Web did not answer within 90 seconds. Check service windows.
+echo [INFO] Waiting for functional readiness on health ports 18101..18105
+"%PY64%" "%ROOT%\deploy\wait_for_services_v3.py" --timeout 180
+if errorlevel 1 goto :startup_not_ready
+
+echo [OK] All v3.4.7 services are functionally ready.
+echo [INFO] Opening web service: http://127.0.0.1:5050
+"%PY64%" "%ROOT%\deploy\wait_for_web_v3.py" --url "http://127.0.0.1:5050" --timeout 30 --open
+if errorlevel 1 echo [WARN] Web health was ready but application URL did not answer. Check WebDashboard console.
 exit /b 0
+
+:startup_not_ready
+echo [FATAL] Services were launched, but at least one did not become functionally ready.
+echo Check health ports 18101..18105 and the service consoles above.
+goto :fatal
 
 :missing_patch
 echo [FATAL] deploy\config_v3.cmd is missing.
@@ -59,6 +68,6 @@ goto :fatal
 
 :fatal
 echo.
-echo [FATAL] RFID KPP was not started. Read the error above.
+echo [FATAL] RFID KPP startup/readiness failed. Read the error above.
 pause
 exit /b 1
