@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 2 RusGuard Sync v3.4.6 Business Flow Self-Heal
+title 2 RusGuard Sync v3.4.7 Resilience Audit
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -20,7 +20,7 @@ cd /d "%ROOT%\DB_RusGard"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.6-business-flow-selfheal"
+set "PERIMETER_RELEASE=3.4.7-resilience-audit"
 "%PY64%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RusGuardSync" --script "%ROOT%\deploy\monitored_rusguard.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY64%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.RusGuardSync" --exit-code %RC% >nul 2>&1
