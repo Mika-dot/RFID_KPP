@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 1 RFID Reader v3.4.7 Resilience Audit
+title 1 RFID Reader v3.4.8 Continuous Recovery
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -14,14 +14,14 @@ if not defined PY32 goto :missing_python
 if not exist "%PY32%" goto :bad_python
 if not exist "%ROOT%\RFID_reader_v4\rfid_to_sql_v4.py" goto :bad_script
 if not exist "%ROOT%\deploy\run_service.py" goto :bad_runner
-if not exist "%ROOT%\deploy\monitored_rfid.py" goto :bad_monitor
+if not exist "%ROOT%\deploy\monitored_rfid_recovery.py" goto :bad_monitor
 
 cd /d "%ROOT%\RFID_reader_v4"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.7-resilience-audit"
-"%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\deploy\monitored_rfid.py"
+set "PERIMETER_RELEASE=3.4.8-rfid-continuous-recovery"
+"%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\deploy\monitored_rfid_recovery.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY32%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.RfidReader" --exit-code %RC% >nul 2>&1
 echo.
@@ -50,7 +50,7 @@ echo [FATAL] Missing deploy\run_service.py
 goto :fatal
 
 :bad_monitor
-echo [FATAL] Missing deploy\monitored_rfid.py
+echo [FATAL] Missing deploy\monitored_rfid_recovery.py
 goto :fatal
 
 :bad_workdir
