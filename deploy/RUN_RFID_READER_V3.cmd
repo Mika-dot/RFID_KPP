@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-title 1 RFID Reader v3.4.8 Continuous Recovery
+title 1 RFID Reader v3.4.7 Continuous Recovery
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
@@ -20,7 +20,7 @@ cd /d "%ROOT%\RFID_reader_v4"
 if errorlevel 1 goto :bad_workdir
 
 :restart
-set "PERIMETER_RELEASE=3.4.8-rfid-continuous-recovery"
+set "PERIMETER_RELEASE=3.4.7-resilience-audit"
 "%PY32%" -u "%ROOT%\deploy\run_service.py" --service "Perimeter.RfidReader" --script "%ROOT%\deploy\monitored_rfid_recovery.py"
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" "%PY32%" "%ROOT%\deploy\report_service_exit.py" --service "Perimeter.RfidReader" --exit-code %RC% >nul 2>&1
