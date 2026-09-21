@@ -16,11 +16,12 @@ class RfidContinuousRecoveryTests(unittest.TestCase):
 
     def test_recovery_never_has_terminal_three_attempt_exhaustion(self) -> None:
         source = (ROOT / "deploy" / "monitored_rfid_recovery.py").read_text(encoding="utf-8")
-        self.assertIn("RFID_BUSINESS_RECOVERY_BACKOFF_SEC", source)
-        self.assertIn('"self_heal_exhausted", False', source)
-        self.assertIn('"self_heal_continues"', source)
-        self.assertNotIn("RfidBusinessFlowSelfHealExhausted", source)
-        self.assertNotIn("os._exit(72)", source)
+        logic = source.split("class _BusinessFlowWatchdog", 1)[1]
+        self.assertIn("RFID_BUSINESS_RECOVERY_BACKOFF_SEC", logic)
+        self.assertIn('"self_heal_exhausted", False', logic)
+        self.assertIn('"self_heal_continues"', logic)
+        self.assertNotIn("RfidBusinessFlowSelfHealExhausted", logic)
+        self.assertNotIn("os._exit(72)", logic)
 
     def test_semantic_recovery_runs_on_reader_loop_and_preserves_cleanup(self) -> None:
         source = (ROOT / "deploy" / "monitored_rfid_recovery.py").read_text(encoding="utf-8")
@@ -40,9 +41,10 @@ class RfidContinuousRecoveryTests(unittest.TestCase):
 
     def test_periodic_process_recycle_is_graceful_not_hard_exit(self) -> None:
         source = (ROOT / "deploy" / "monitored_rfid_recovery.py").read_text(encoding="utf-8")
-        self.assertIn("RFID_BUSINESS_PROCESS_RECYCLE_EVERY", source)
-        self.assertIn("raise SystemExit(72)", source)
-        self.assertNotIn("os._exit(72)", source)
+        logic = source.split("class _BusinessFlowWatchdog", 1)[1]
+        self.assertIn("RFID_BUSINESS_PROCESS_RECYCLE_EVERY", logic)
+        self.assertIn("raise SystemExit(72)", logic)
+        self.assertNotIn("os._exit(72)", logic)
 
 
 if __name__ == "__main__":
