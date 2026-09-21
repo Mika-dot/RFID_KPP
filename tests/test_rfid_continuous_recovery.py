@@ -11,7 +11,7 @@ class RfidContinuousRecoveryTests(unittest.TestCase):
     def test_production_wrapper_uses_continuous_recovery_adapter(self) -> None:
         wrapper = (ROOT / "deploy" / "RUN_RFID_READER_V3.cmd").read_text(encoding="ascii")
         self.assertIn("monitored_rfid_recovery.py", wrapper)
-        self.assertIn("3.4.8-rfid-continuous-recovery", wrapper)
+        self.assertIn("PERIMETER_RELEASE=3.4.7-resilience-audit", wrapper)
         self.assertNotIn('--script "%ROOT%\\deploy\\monitored_rfid.py"', wrapper)
 
     def test_recovery_never_has_terminal_three_attempt_exhaustion(self) -> None:
