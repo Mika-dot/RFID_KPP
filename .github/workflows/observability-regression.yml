@@ -33,6 +33,7 @@ jobs:
             deploy/report_service_exit.py \
             deploy/monitored_rfid.py \
             deploy/monitored_rfid_recovery.py \
+            deploy/monitored_rfid_recovery_v2.py \
             deploy/monitored_rusguard.py \
             deploy/monitored_yolo.py \
             deploy/monitored_aggregator.py \
@@ -49,14 +50,16 @@ jobs:
             web/kpp_reel_dashboard_v3_fixed.py \
             tests/test_observability_restore.py \
             tests/test_business_flow_selfheal.py \
-            tests/test_rfid_continuous_recovery.py
+            tests/test_rfid_continuous_recovery.py \
+            tests/test_rfid_transport_health.py
 
       - name: Run observability and self-heal tests
         run: |
           python -m unittest -v \
             tests.test_observability_restore \
             tests.test_business_flow_selfheal \
-            tests.test_rfid_continuous_recovery
+            tests.test_rfid_continuous_recovery \
+            tests.test_rfid_transport_health
 
       - name: Run Warehouse regression tests
         run: |
