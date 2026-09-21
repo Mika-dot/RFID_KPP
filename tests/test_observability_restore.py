@@ -92,7 +92,7 @@ class ObservabilityRestoreTests(unittest.TestCase):
 
     def test_long_running_services_are_routed_through_monitored_adapters(self) -> None:
         expected = {
-            "deploy/RUN_RFID_READER_V3.cmd": "deploy\\monitored_rfid_recovery.py",
+            "deploy/RUN_RFID_READER_V3.cmd": "deploy\\monitored_rfid_recovery_v2.py",
             "deploy/RUN_RUSGUARD_V3.cmd": "deploy\\monitored_rusguard.py",
             "deploy/RUN_RTSP_V3.cmd": "deploy\\monitored_yolo.py",
             "deploy/RUN_AGGREGATOR_V3.cmd": "deploy\\monitored_aggregator.py",
