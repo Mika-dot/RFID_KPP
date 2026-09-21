@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from deploy import monitored_rfid_recovery as recovery
+from deploy import monitored_rfid_recovery_v2 as recovery_v2
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,12 +148,28 @@ class RfidContinuousRecoveryTests(unittest.TestCase):
             any(event[:3] == ("set", "rfid_tcp", "unknown") for event in reporter.events)
         )
 
-    def test_periodic_process_recycle_is_graceful_not_hard_exit(self) -> None:
-        source = (ROOT / "deploy" / "monitored_rfid_recovery.py").read_text(encoding="utf-8")
-        logic = source.split("class _BusinessFlowWatchdog", 1)[1]
-        self.assertIn("RFID_BUSINESS_PROCESS_RECYCLE_EVERY", logic)
-        self.assertIn("raise SystemExit(72)", logic)
-        self.assertNotIn("os._exit(72)", logic)
+    def test_process_recycle_is_single_escalation_not_periodic(self) -> None:
+        source = (ROOT / "deploy" / "monitored_rfid_recovery_v2.py").read_text(encoding="utf-8")
+        self.assertIn("RFID_BUSINESS_PROCESS_RECYCLE_ATTEMPT", source)
+        self.assertIn("next_attempt == self.process_recycle_attempt", source)
+        self.assertNotIn("next_attempt % self.process_recycle_every", source)
+        self.assertIn("RFID_BUSINESS_RECOVERY_BACKOFF_MAX_SEC", source)
+
+    def test_transport_health_refreshes_from_receive_loop(self) -> None:
+        calls = []
+
+        class Base:
+            def UHF_GetReceived_EX(self, *args):
+                calls.append("receive")
+                return -1
+
+        reporter = _Reporter()
+        # Build the production v2 proxy against the already tested base proxy
+        # behavior by stubbing only the inherited method call.
+        with mock.patch.object(recovery._LibraryProxy, "UHF_GetReceived_EX", return_value=-1):
+            proxy = recovery_v2._LibraryProxy(SimpleNamespace(), reporter, _Watchdog(), {-1})
+            self.assertEqual(proxy.UHF_GetReceived_EX(None, None), -1)
+        self.assertIn(("touch", "rfid_tcp"), reporter.events)
 
 
 if __name__ == "__main__":
