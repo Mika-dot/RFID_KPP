@@ -2,27 +2,32 @@
 # -*- coding: utf-8 -*-
 """Continuous recovery layer for Perimeter RFID reader.
 
-The legacy monitored adapter correctly detects semantic RFID silence, but its
-old recovery path used os._exit(72) and permanently stopped retrying after the
-configured fast-attempt budget.  This layer keeps the same health contract and
-adds a safe recovery state machine:
+This adapter keeps the mature telemetry/spool instrumentation from
+``monitored_rfid.py`` and fixes the semantic recovery path:
 
-* confirmed semantic failure stays latched/red until a fresh RFID read exists;
-* retries never stop permanently;
-* normal recovery is requested from the reader loop so the core finally block
-  executes UHFStopGet() and TCPDisconnect() before reconnecting;
-* every Nth recovery performs a graceful whole-process recycle via SystemExit,
-  which still executes the core cleanup/finally blocks;
-* a stuck native SDK call remains protected by the legacy hard watchdog.
+* confirmed RFID silence stays latched/red until a fresh RFID row appears;
+* recovery never terminates permanently after a fixed number of attempts;
+* session recovery is handed to the real reader loop, so the core cleanup path
+  executes UHFStopGet/TCPDisconnect before reconnecting;
+* every Nth semantic recovery gracefully recycles the Python/DLL process;
+* UHFInventory start failures are handled inside the long-running process and
+  cannot create a five-second wrapper restart storm;
+* no speculative UHFStopGet is issued immediately before UHFInventory;
+* the RFID TCP dependency reflects the SDK connection lifecycle rather than a
+  competing second socket probe (important for single-client readers);
+* a native SDK call that never returns is still protected by the legacy hard
+  SDK watchdog.
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import os
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -39,6 +44,7 @@ log = logging.getLogger("perimeter-rfid-recovery")
 
 _LegacyBusinessFlowWatchdog = legacy._BusinessFlowWatchdog
 _LegacyLibraryProxy = legacy._LibraryProxy
+_LegacyLoadApp = legacy._load_app
 
 
 class _RecoveryController:
@@ -72,7 +78,7 @@ class _RecoveryController:
 
 
 class _RecoveryMeta:
-    """Persist retry timing so a process recycle cannot create a restart storm."""
+    """Persist retry timing so process recycle cannot create a restart storm."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -92,9 +98,8 @@ class _RecoveryMeta:
         except FileNotFoundError:
             return
         except Exception:
-            # Corrupt retry metadata must never turn a real business-flow fault
-            # green. Forget only the timer and let the latched health state drive
-            # a new controlled recovery.
+            # Fault latch lives in a separate fail-closed state file. Corrupt
+            # retry timing must not suppress recovery or turn health green.
             self.last_attempt_at = None
             self.last_mode = "metadata_invalid"
             self.last_attempt = 0
@@ -178,8 +183,6 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
     def _publish_metrics(self, assessment, video_recent_events: int, warehouse_recent_events: int) -> None:
         super()._publish_metrics(assessment, video_recent_events, warehouse_recent_events)
         attempts = int(self.state.restart_attempts)
-        # Compatibility metric: recovery no longer has a terminal exhausted
-        # state.  After the fast-attempt budget it switches to bounded backoff.
         self.reporter.set_metric("self_heal_exhausted", False)
         self.reporter.set_metric(
             "self_heal_fast_attempts_exhausted",
@@ -189,8 +192,10 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
         self.reporter.set_metric("recovery_request_pending", _RECOVERY.pending())
         self.reporter.set_metric("recovery_last_mode", self.meta.last_mode)
         self.reporter.set_metric("recovery_last_attempt", int(self.meta.last_attempt))
-        age = self.meta.seconds_since_attempt()
-        self.reporter.set_metric("recovery_last_attempt_age_seconds", age)
+        self.reporter.set_metric(
+            "recovery_last_attempt_age_seconds",
+            self.meta.seconds_since_attempt(),
+        )
 
     def _recovery_delay(self) -> float:
         if int(self.state.restart_attempts) < int(self.max_restarts):
@@ -277,7 +282,12 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
 
                     since_attempt = self.meta.seconds_since_attempt()
                     if since_attempt is None:
-                        due = (time.monotonic() - self.unavailable_since) >= self.self_heal_sec
+                        # Existing latched faults from older releases must not sit
+                        # idle for another full backoff period after upgrade.
+                        if self.state.fault_latched and self.state.restart_attempts >= self.max_restarts:
+                            due = True
+                        else:
+                            due = (time.monotonic() - self.unavailable_since) >= self.self_heal_sec
                     else:
                         due = since_attempt >= self._recovery_delay()
 
@@ -305,22 +315,27 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
 class _LibraryProxy(_LegacyLibraryProxy):
     """Reader proxy that performs recovery on the reader-loop thread."""
 
-    def UHFInventory(self, *args):
-        # A process/TCP reconnect is not enough for some reader firmware states.
-        # Explicitly stop any stale inventory session before starting a new one.
-        try:
-            super().UHFStopGet()
-        except Exception as exc:
-            self._reporter.capture_exception(exc)
+    def TCPConnect(self, *args):
+        rc = super().TCPConnect(*args)
+        if int(rc) == 0:
+            self._reporter.touch_dependency("rfid_tcp")
+        else:
             self._reporter.set_dependency(
-                "rfid_reader",
-                "degraded",
-                detail=f"pre_inventory_stop_{safe_error_name(exc)}",
+                "rfid_tcp",
+                "unavailable",
+                detail=f"connect_code_{int(rc)}",
             )
-        settle = max(0.0, float(os.getenv("RFID_INVENTORY_RESET_SETTLE_SEC", "0.25")))
-        if settle:
-            time.sleep(settle)
-        return super().UHFInventory(*args)
+        return rc
+
+    def TCPDisconnect(self, *args):
+        try:
+            return super().TCPDisconnect(*args)
+        finally:
+            self._reporter.set_dependency(
+                "rfid_tcp",
+                "unavailable",
+                detail="disconnected",
+            )
 
     def UHF_GetReceived_EX(self, *args):
         rc = super().UHF_GetReceived_EX(*args)
@@ -339,26 +354,182 @@ class _LibraryProxy(_LegacyLibraryProxy):
         )
 
         if mode == "process":
-            # SystemExit is intentionally not caught by the core's
-            # ``except Exception``.  Its finally blocks still run, therefore
-            # UHFStopGet/TCPDisconnect and writer shutdown happen before the
-            # CMD wrapper starts a fresh Python/DLL process.
             exc = RuntimeError(f"RfidGracefulProcessRecycle:{attempt}:{reason}")
             self._reporter.mark_fatal(exc)
             flush_sentry(2.0)
+            # SystemExit is not caught by the core's ``except Exception`` but
+            # all finally blocks still execute before the wrapper restarts it.
             raise SystemExit(72)
 
-        # RuntimeError *is* caught by the core connection-epoch handler.  The
-        # epoch's finally block performs UHFStopGet + TCPDisconnect and the
-        # outer loop then TCPConnects and starts inventory again.
+        # RuntimeError is caught by the connection-epoch handler; its finally
+        # executes UHFStopGet + TCPDisconnect, then the outer loop reconnects.
         raise RuntimeError(f"RfidControlledReconnect:{attempt}:{reason}")
 
 
+def _start_inventory_or_recover(app, lib) -> bool:
+    """Start inventory without ever escaping into the CMD restart loop."""
+    try:
+        lib.UHFInventory()
+        return True
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
+        # SystemExit from semantic process recycle must propagate after cleanup.
+        if isinstance(exc, SystemExit):
+            raise
+        log.error("RFID inventory start failed; resetting session: %s", exc)
+        try:
+            app.disconnect(lib)
+        except Exception:
+            pass
+        time.sleep(max(0.5, float(app.Config.RECONNECT_SEC)))
+        return False
+
+
+def _robust_reader_main(app) -> int:
+    """Production reader loop with inventory-start failure containment."""
+    instance_lock = app.SingleInstanceLock(app.Config.LOCK_PATH)
+    app.validate()
+    lib = app.load_library()
+    spool = app.Spool(app.Config.SPOOL_PATH)
+    writer = app.SQLWriter(spool)
+    writer.start()
+    sequence = 0
+    reads_total = 0
+    reads_since_heartbeat = 0
+    last_read_at: Optional[datetime] = None
+    last_heartbeat = time.monotonic()
+
+    try:
+        while True:
+            epoch = str(uuid.uuid4())
+            reconnect_at = datetime.now()
+            rc = lib.TCPConnect(app.Config.READER_IP.encode("utf-8"), app.Config.READER_PORT)
+            if int(rc) != 0:
+                log.error("TCPConnect code=%s", rc)
+                time.sleep(app.Config.RECONNECT_SEC)
+                continue
+
+            if not _start_inventory_or_recover(app, lib):
+                continue
+
+            log.info("RFID reader connected, epoch=%s", epoch)
+            try:
+                while True:
+                    length = ctypes.c_int(0)
+                    buf = (ctypes.c_ubyte * 512)()
+                    result = lib.UHF_GetReceived_EX(ctypes.byref(length), ctypes.byref(buf))
+                    if result == 0 and length.value > 0:
+                        parsed = app.parse_buf(buf, length.value)
+                        if parsed:
+                            sequence += 1
+                            reads_total += 1
+                            reads_since_heartbeat += 1
+                            source_time = datetime.now()
+                            last_read_at = source_time
+                            quality = (
+                                "APPROXIMATE_AFTER_RECONNECT"
+                                if (source_time - reconnect_at).total_seconds() < app.Config.RECONNECT_UNCERTAIN_SEC
+                                else "HOST_CAPTURE_TIME"
+                            )
+                            item = {
+                                "client_uuid": str(uuid.uuid4()),
+                                "source_time": source_time.isoformat(),
+                                "source_sequence": sequence,
+                                "connection_epoch": epoch,
+                                "antenna": int(parsed["antenna"]),
+                                "rssi": float(parsed["rssi"]),
+                                "epc": str(parsed["epc"]),
+                                "tid": str(parsed["tid"]),
+                                "time_quality": quality,
+                            }
+                            app.enqueue_with_backpressure(spool, item)
+                            if app.Config.CONSOLE:
+                                print(
+                                    f"{source_time:%H:%M:%S.%f}"[:-3],
+                                    parsed["antenna"],
+                                    f"{parsed['rssi']:.1f}",
+                                    parsed["epc"],
+                                    "✓ spool",
+                                    flush=True,
+                                )
+                    else:
+                        time.sleep(app.Config.IDLE_SLEEP_SEC)
+
+                    now_mono = time.monotonic()
+                    if now_mono - last_heartbeat >= app.Config.HEARTBEAT_SEC:
+                        pending, sent, total = spool.stats()
+                        age = (
+                            "нет чтений"
+                            if last_read_at is None
+                            else f"{(datetime.now() - last_read_at).total_seconds():.1f}с назад"
+                        )
+                        db_age = (
+                            "никогда"
+                            if writer.last_success_at is None
+                            else f"{(datetime.now() - writer.last_success_at).total_seconds():.1f}с назад"
+                        )
+                        log.info(
+                            "STATUS reader=CONNECTED reads_total=%s reads_%ss=%s last_read=%s "
+                            "spool_pending=%s spool_sent=%s spool_total=%s db_delivered=%s "
+                            "db_last_ok=%s db_errors=%s",
+                            reads_total,
+                            int(app.Config.HEARTBEAT_SEC),
+                            reads_since_heartbeat,
+                            age,
+                            pending,
+                            sent,
+                            total,
+                            writer.delivered_total,
+                            db_age,
+                            writer.failed_total,
+                        )
+                        reads_since_heartbeat = 0
+                        last_heartbeat = now_mono
+                    time.sleep(app.Config.READ_SLEEP_SEC)
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                log.exception("RFID connection epoch failed")
+            finally:
+                app.disconnect(lib)
+                time.sleep(app.Config.RECONNECT_SEC)
+    except KeyboardInterrupt:
+        log.info("Остановка")
+    finally:
+        writer.stop()
+        writer.join(timeout=5)
+
+    return 0
+
+
+def _load_app_with_robust_main():
+    app = _LegacyLoadApp()
+    app.main = lambda: _robust_reader_main(app)
+    return app
+
+
+def _disable_competing_tcp_probe(reporter) -> None:
+    """Remove second-socket probe; SDK TCPConnect owns this dependency."""
+    try:
+        with reporter.lock:
+            reporter.probes.pop("rfid_tcp", None)
+        reporter.set_dependency("rfid_tcp", "unknown", detail="waiting_for_sdk_connect")
+    except Exception:
+        # Unit-test NullReporter and future reporter implementations need not
+        # expose internals; absence of a probe is then harmless.
+        pass
+
+
 def main() -> int:
-    # Preserve the mature legacy telemetry/spool instrumentation and replace
-    # only the two pieces involved in semantic recovery.
+    reporter = legacy.get_reporter()
+    _disable_competing_tcp_probe(reporter)
+
+    # Preserve legacy telemetry/spool instrumentation, replacing only recovery,
+    # SDK transport health ownership and the connection-loop failure boundary.
     legacy._BusinessFlowWatchdog = _BusinessFlowWatchdog
     legacy._LibraryProxy = _LibraryProxy
+    legacy._load_app = _load_app_with_robust_main
     return int(legacy.main() or 0)
 
 
