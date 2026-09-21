@@ -51,15 +51,17 @@ jobs:
             tests/test_observability_restore.py \
             tests/test_business_flow_selfheal.py \
             tests/test_rfid_continuous_recovery.py \
-            tests/test_rfid_transport_health.py
+            tests/test_rfid_transport_health.py \
+            tests/test_rfid_fault_lab.py
 
-      - name: Run observability and self-heal tests
+      - name: Run observability, recovery and fault-injection tests
         run: |
           python -m unittest -v \
             tests.test_observability_restore \
             tests.test_business_flow_selfheal \
             tests.test_rfid_continuous_recovery \
-            tests.test_rfid_transport_health
+            tests.test_rfid_transport_health \
+            tests.test_rfid_fault_lab
 
       - name: Run Warehouse regression tests
         run: |
