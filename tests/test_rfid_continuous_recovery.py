@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from deploy import monitored_rfid_recovery as recovery
@@ -95,41 +96,33 @@ class RfidContinuousRecoveryTests(unittest.TestCase):
             def UHFInventory(self):
                 raise RuntimeError("inventory failed")
 
-        class Config:
-            RECONNECT_SEC = 0.0
+        state = SimpleNamespace(disconnect_calls=0)
 
-        class App:
-            Config = Config
+        def disconnect(lib):
+            state.disconnect_calls += 1
 
-            def __init__(self):
-                self.disconnect_calls = 0
-
-            def disconnect(self, lib):
-                self.disconnect_calls += 1
-
-        app = App()
+        app = SimpleNamespace(
+            Config=SimpleNamespace(RECONNECT_SEC=0.0),
+            disconnect=disconnect,
+        )
         with mock.patch.object(recovery.time, "sleep", return_value=None):
             result = recovery._start_inventory_or_recover(app, Lib())
         self.assertFalse(result)
-        self.assertEqual(app.disconnect_calls, 1)
+        self.assertEqual(state.disconnect_calls, 1)
 
     def test_system_exit_from_inventory_is_not_swallowed(self) -> None:
         class Lib:
             def UHFInventory(self):
                 raise SystemExit(72)
 
-        class Config:
-            RECONNECT_SEC = 0.0
-
-        class App:
-            Config = Config
-
-            @staticmethod
-            def disconnect(lib):
-                raise AssertionError("must be handled by outer finally")
-
+        app = SimpleNamespace(
+            Config=SimpleNamespace(RECONNECT_SEC=0.0),
+            disconnect=lambda lib: (_ for _ in ()).throw(
+                AssertionError("must be handled by outer finally")
+            ),
+        )
         with self.assertRaises(SystemExit) as ctx:
-            recovery._start_inventory_or_recover(App(), Lib())
+            recovery._start_inventory_or_recover(app, Lib())
         self.assertEqual(ctx.exception.code, 72)
 
     def test_rfid_tcp_health_is_owned_by_sdk_connect_not_second_socket(self) -> None:
