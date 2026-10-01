@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import logging
+from logging.handlers import RotatingFileHandler
+import threading
 import time
 from pathlib import Path
 
@@ -62,14 +65,15 @@ class Processes:
         try:
             for name, (_, script) in SERVICES.items():
                 py = self.cfg.get("python32", self.cfg["python"]) if name == "RfidReader" else self.cfg["python"]
-                output = (logdir / (name + ".log")).open("ab", buffering=0)
-                self.logs[name] = output
                 options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
                 p = subprocess.Popen([py, "-u", str(root / "deploy/run_service.py"),
                        "--service", "Perimeter." + name, "--script", str(root / script)],
-                       cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                       cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, **options)
                 self.children[name] = p
+                thread = threading.Thread(target=self.capture, args=(p,logdir/(name+".log")), daemon=True)
+                self.logs[name] = thread
+                thread.start()
                 registry.append({"pid": p.pid, "created": psutil.Process(p.pid).create_time()})
                 atomic_json(self.registry, registry)
             self.epoch = epoch
@@ -102,10 +106,21 @@ class Processes:
                 p.wait(timeout=5)
         self.children.clear()
         self.epoch = None
-        for f in self.logs.values():
-            f.close()
+        for thread in self.logs.values():
+            thread.join(timeout=2)
         self.logs.clear()
         self.registry.unlink(missing_ok=True)
 
     def alive(self):
         return len(self.children) == 5 and all(p.poll() is None for p in self.children.values())
+
+    def capture(self, process, path):
+        handler=RotatingFileHandler(path,maxBytes=self.cfg.get("child_log_bytes",10*1024*1024),
+                                   backupCount=3,encoding="utf-8")
+        try:
+            for raw in iter(lambda:process.stdout.readline(65536),b""):
+                text=raw.decode("utf-8","replace").rstrip("\r\n")
+                handler.emit(logging.LogRecord("perimeter-child",logging.INFO,"",0,text,(),None))
+        finally:
+            process.stdout.close()
+            handler.close()

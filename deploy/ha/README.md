@@ -259,6 +259,7 @@ Sentry проекты 21–25 и Grafana остаются. Агент: 18200.
 * GET /metrics — Prometheus gauges/counters: active, ready, prepared, faulted,
   epoch, audit events/dropped. См. prometheus.example.yml.
 * Audit JSONL в state_dir: переходы, ошибки, инструменты, обновления; 10 MiB rotation.
+* Логи каждого worker ограничены 10 MiB плюс три предыдущих файла.
 * HA warnings идут в существующий Sentry Aggregator project 24.
 
 Zabbix additions описаны в zabbix-items.md. При standby остановленные пять
