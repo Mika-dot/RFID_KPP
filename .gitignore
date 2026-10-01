@@ -31,3 +31,9 @@ Thumbs.db
 *_BACKUP_*/
 RFID_KPP_OBS_BACKUP_*/
 *.download
+
+# Local HA settings and credentials
+deploy/ha/node.json
+deploy/ha/windows.json
+deploy/ha/environment
+*.local.json

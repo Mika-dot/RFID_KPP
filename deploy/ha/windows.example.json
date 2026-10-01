@@ -1,0 +1,23 @@
+{
+  "node_id": "physical",
+  "root": "D:\\Desktop\\RFID_KPP-main",
+  "state_dir": "D:\\PerimeterHA\\state",
+  "python": "D:\\Desktop\\RFID_KPP-main\\venv64\\Scripts\\python.exe",
+  "python32": "D:\\Desktop\\RFID_KPP-main\\RFID_readers\\Версия (БД)\\venv310_32\\Scripts\\python.exe",
+  "listen": "0.0.0.0",
+  "port": 18200,
+  "controller_enabled": false,
+  "startup_sec": 120,
+  "failback_stable_sec": 120,
+  "verify_sec": 60,
+  "auto_update": true,
+  "update_source": "D:\\Desktop\\RFID_KPP-main",
+  "release_dir": "D:\\PerimeterHA\\releases",
+  "lm_base_url": "http://172.31.0.153:49572/v1",
+  "nodes": [
+    {"id": "physical", "priority": 1, "url": "http://172.31.0.188:18200"},
+    {"id": "perimetr", "priority": 2, "url": "http://perimetr:18200"},
+    {"id": "comparator", "priority": 3, "url": "http://Comparator:18200"}
+  ],
+  "env": {"RFID_HEADLESS": "1"}
+}

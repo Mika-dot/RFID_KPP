@@ -259,7 +259,11 @@ END
 
 
 def load_library():
-    lib = ctypes.CDLL(Config.DLL_PATH)
+    if os.name != "nt" and os.getenv("RFID_SDK_MODE") == "wine":
+        from guardian.wine_proxy import WineLibrary
+        lib = WineLibrary(Config.DLL_PATH)
+    else:
+        lib = ctypes.CDLL(Config.DLL_PATH)
     lib.TCPConnect.argtypes = [ctypes.c_char_p, ctypes.c_uint]
     lib.TCPConnect.restype = ctypes.c_int
     lib.TCPDisconnect.argtypes = []

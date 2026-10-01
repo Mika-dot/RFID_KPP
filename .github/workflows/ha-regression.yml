@@ -1,0 +1,21 @@
+name: Perimeter HA regression
+on:
+  push:
+    branches: [main, feature/perimeter-ha-guardian]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile HA and production adapters
+        run: python -m compileall -q guardian deploy RFID_reader_v4 DB_RusGard KPP RTSP web common
+      - name: Failover, repair boundary, bridge, updates and existing regressions
+        run: python -m unittest discover -s tests -v
