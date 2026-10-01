@@ -43,7 +43,7 @@ class Node:
             result["sample_age"] = time.monotonic()-self.last_sample
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
-            if self.stop.is_set():
+            if self.stop.is_set() or self.maintenance:
                 result.update(prepared=False, healthy=False)
             return result
 
@@ -145,6 +145,7 @@ class Node:
                     times = [t for t in times if time.time()-t < 600]
                     if len(times) >= 3:
                         raise RuntimeError("RepairRateLimited")
+                    self.store.begin_repair(self.cfg["node_id"])
                     atomic_json(self.rate_path, times + [time.time()])
                     self.processes.stop()
                     self.verified_since = None

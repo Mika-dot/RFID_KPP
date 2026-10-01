@@ -85,3 +85,12 @@ class SqlIntegrationTests(unittest.TestCase):
         self.conn.execute("UPDATE dbo.KPP_HA_Lease SET ExpiresAt=DATEADD(second,-1,SYSUTCDATETIME())")
         with self.assertRaises(self.pyodbc.Error):
             writer.execute("INSERT dbo.ReelTransitions VALUES(100,1)")
+
+    def test_repair_quarantine_blocks_simultaneous_promotion(self):
+        self.store.begin_repair("perimetr")
+        with self.assertRaisesRegex(RuntimeError,"CandidateInRepair"):
+            self.store.grant("perimetr")
+        self.store.recovered("perimetr")
+        self.store.grant("perimetr")
+        with self.assertRaisesRegex(RuntimeError,"ActiveNodeRepairForbidden"):
+            self.store.begin_repair("perimetr")

@@ -54,6 +54,11 @@ WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
 """, self.token).fetchone()
             if controller is None:
                 raise RuntimeError("ControllerLeaseLost")
+            conn.execute("SELECT Id FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
+            if owner:
+                blocked = conn.execute("SELECT Faulted FROM dbo.KPP_HA_NodeState WITH(UPDLOCK,HOLDLOCK) WHERE NodeId=?", owner).fetchone()
+                if blocked and blocked[0]:
+                    raise RuntimeError("CandidateInRepair")
             conn.execute("""
 UPDATE dbo.KPP_HA_Lease WITH (UPDLOCK,HOLDLOCK)
 SET Epoch=Epoch+CASE WHEN ISNULL(Owner,'')<>ISNULL(?,'') OR
@@ -88,5 +93,20 @@ WHEN NOT MATCHED THEN INSERT(NodeId,Faulted)VALUES(s.NodeId,1);
             conn.execute("""
 UPDATE dbo.KPP_HA_NodeState SET Faulted=0,VerifiedAt=SYSUTCDATETIME()
 WHERE NodeId=? AND Faulted=1
+""", node)
+            conn.commit()
+
+    def begin_repair(self, node):
+        with self.connect() as conn:
+            lease = conn.execute("""
+SELECT Owner,CASE WHEN ExpiresAt>SYSUTCDATETIME() AND Enabled=1 THEN 1 ELSE 0 END
+FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1
+""").fetchone()
+            if lease[0] == node and lease[1]:
+                raise RuntimeError("ActiveNodeRepairForbidden")
+            conn.execute("""
+MERGE dbo.KPP_HA_NodeState WITH(HOLDLOCK) t USING(SELECT ? NodeId)s
+ON t.NodeId=s.NodeId WHEN MATCHED THEN UPDATE SET Faulted=1,VerifiedAt=NULL
+WHEN NOT MATCHED THEN INSERT(NodeId,Faulted)VALUES(s.NodeId,1);
 """, node)
             conn.commit()
