@@ -48,6 +48,7 @@ class RepairTests(unittest.TestCase):
             node.store, node.processes = Mock(), Mock()
             node.store.lease.return_value = {"owner":"perimetr", "valid":True}
             node.rate_path = Path(d)/"rate.json"
+            node.repair_path = Path(d)/"verify.json"
             node.check = Mock(return_value={"ok":True})
             result = node.repair("restart_service", "all")
             self.assertFalse(result["verified"])

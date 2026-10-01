@@ -43,9 +43,26 @@ class UpdateTests(unittest.TestCase):
         self.updates.staged={"root":"/new","sha":"b"*40}
         self.updates.activate()
         self.assertTrue(self.updates.state["pending"])
+        self.assertFalse(self.updates.state["trial_started"])
+        self.updates.begin_trial()
+        self.assertTrue(self.updates.state["trial_started"])
         self.updates.confirm()
         self.assertFalse(self.updates.state["pending"])
 
     def test_no_previous_release_refuses_rollback(self):
         with self.assertRaisesRegex(RuntimeError,"NoPreviousRelease"):
             self.updates.rollback()
+
+    @patch("guardian.update.preflight",return_value={"ok":True})
+    @patch("guardian.update.subprocess.run")
+    def test_squash_merge_checks_main_ancestry_instead_of_feature_ancestry(self, run, preflight):
+        run.return_value.returncode=0
+        self.updates.state["trusted_main_sha"]="d"*40
+        calls=[]
+        def git(*args,**kwargs):
+            calls.append(args)
+            return "b"*40 if args==("rev-parse","FETCH_HEAD") else ""
+        self.updates.git=git
+        self.updates.stage()
+        self.assertIn(("merge-base","--is-ancestor","d"*40,"b"*40),calls)
+        self.assertNotIn(("merge-base","--is-ancestor","a"*40,"b"*40),calls)

@@ -6,6 +6,7 @@ import re
 import subprocess
 import threading
 import uuid
+import time
 from pathlib import Path
 
 from guardian.config import atomic_json
@@ -34,6 +35,10 @@ class Updates:
             except Exception:
                 sha = cfg.get("release_sha", "manual")
             self.state = {"current": {"root": cfg["root"], "sha": sha, "python":cfg["python"]}, "previous": None, "pending": False}
+            try:
+                self.state["trusted_main_sha"] = self.git("rev-parse", "refs/remotes/origin/main").strip()
+            except Exception:
+                self.state["trusted_main_sha"] = None
             atomic_json(self.path, self.state)
 
     def git(self, *args, cwd=None):
@@ -61,7 +66,13 @@ class Updates:
                 return
         # Initial branch deployment may precede main; require the HA protocol to exist.
         self.git("cat-file", "-e", sha + ":guardian/__main__.py")
-        self.git("merge-base", "--is-ancestor", current, sha)
+        # Follow main ancestry, not the deployed feature commit: a squash merge
+        # legitimately creates a different commit than the initial installation.
+        trusted = self.state.get("trusted_main_sha")
+        if trusted:
+            self.git("merge-base", "--is-ancestor", trusted, sha)
+        else:
+            self.git("merge-base", current, sha)
         target = Path(self.cfg["release_dir"]) / sha
         if not target.exists():
             self.git("worktree", "add", "--detach", str(target), sha)
@@ -78,6 +89,8 @@ class Updates:
         with self.lock:
             self.main_sha = sha
             self.staged = {"root": str(target), "sha": sha, "python": self.cfg["python"]}
+            self.state["trusted_main_sha"] = sha
+            atomic_json(self.path, self.state)
         self.telemetry.event("update_staged", sha=sha)
 
     def activate(self):
@@ -89,6 +102,8 @@ class Updates:
             self.state["previous"] = self.state["current"]
             self.state["current"] = self.staged
             self.state["pending"] = True
+            self.state["trial_started"] = False
+            self.state["activated_at"] = time.time()
             self.staged = None
             self.state["rejected"] = sorted(self.quarantined)
             atomic_json(self.path, self.state)
@@ -105,6 +120,12 @@ class Updates:
                 atomic_json(self.path, self.state)
                 self.telemetry.event("update_confirmed", sha=self.state["current"]["sha"])
 
+    def begin_trial(self):
+        with self.lock:
+            if self.state.get("pending"):
+                self.state["trial_started"] = True
+                atomic_json(self.path, self.state)
+
     def rollback(self):
         with self.lock:
             if not self.state.get("previous"):
@@ -113,6 +134,7 @@ class Updates:
             self.quarantined.add(rejected)
             self.state["current"], self.state["previous"] = self.state["previous"], None
             self.state["pending"] = False
+            self.state["trial_started"] = False
             self.state["rejected"] = sorted(self.quarantined)
             atomic_json(self.path, self.state)
             self.cfg["root"] = self.state["current"]["root"]
@@ -148,7 +170,8 @@ class Updates:
         if result.returncode:
             raise RuntimeError("RepairedEnvironmentTestsFailed")
         with self.lock:
-            self.state.update(previous=old, current=dict(old, python=str(python)), pending=True)
+            self.state.update(previous=old, current=dict(old, python=str(python)), pending=True,
+                              trial_started=False, activated_at=time.time())
             self.cfg["python"] = str(python)
             atomic_json(self.path, self.state)
         self.telemetry.event("python_environment_rebuilt")

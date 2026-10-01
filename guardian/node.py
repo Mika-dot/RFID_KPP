@@ -32,7 +32,9 @@ class Node:
         self.preflight_result = {"ok": False, "checks": {"starting": False}}
         self.verified_since = None
         self.healthy_since = None
-        self.repair_attempted = False
+        self.repair_path = Path(cfg["state_dir"]) / "repair-verification.json"
+        self.repair_attempted = (json.loads(self.repair_path.read_text()).get("required", False)
+                                 if self.repair_path.exists() else False)
         self.status = {"node": cfg["node_id"], "active": False, "healthy": False,
                        "prepared": False, "epoch": 0, "faulted": False}
         self.rate_path = Path(cfg["state_dir"]) / "repair-rate.json"
@@ -71,7 +73,10 @@ class Node:
                 if self.processes.children:
                     self.processes.stop()
                     self.telemetry.event("demoted", epoch=lease["epoch"])
-                if self.updates.state.get("pending") and state["faulted"]:
+                trial_failed = self.updates.state.get("trial_started") and state["faulted"]
+                preparation_failed = (not self.preflight_result["ok"] and
+                    time.time()-self.updates.state.get("activated_at", time.time()) > 120)
+                if self.updates.state.get("pending") and (trial_failed or preparation_failed):
                     self.updates.rollback()
                     self.restart_requested = True
                     self.stop.set()
@@ -80,6 +85,7 @@ class Node:
                     self.stop.set()
             elif self.processes.epoch != lease["epoch"]:
                 self.processes.start(lease["epoch"])
+                self.updates.begin_trial()
                 self.healthy_since = None
                 self.telemetry.event("promoted", epoch=lease["epoch"])
         health = services_health() if owned and self.processes.children else {}
@@ -103,6 +109,7 @@ class Node:
                 if now-self.verified_since >= self.cfg.get("verify_sec", 60):
                     self.store.recovered(self.cfg["node_id"])
                     self.repair_attempted = False
+                    atomic_json(self.repair_path, {"required":False})
                     self.telemetry.event("repair_verified")
             else:
                 self.verified_since = None
@@ -150,6 +157,7 @@ class Node:
                     self.processes.stop()
                     self.verified_since = None
                     self.repair_attempted = True
+                    atomic_json(self.repair_path, {"required":True})
                 if action == "rollback_release":
                     self.updates.rollback()
                     self.restart_requested = True
