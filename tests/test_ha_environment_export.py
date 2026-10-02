@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,7 +112,19 @@ class EnvironmentExportTests(unittest.TestCase):
             root = Path(folder)
             config = root / "deploy" / "config_v3.cmd"
             config.parent.mkdir()
-            private = tool.private_directory(root / "private")
+            native_run = subprocess.run
+            def acl_diagnostic_run(*args, **kwargs):
+                # These are fixture ACLs, not a production config. Make failures
+                # actionable in CI without exposing config capture output.
+                if isinstance(args[0], list) and args[0][0] == "powershell.exe":
+                    kwargs["stderr"] = subprocess.PIPE
+                    result = native_run(*args, **kwargs)
+                    if result.returncode:
+                        self.fail(result.stderr.decode("utf-8", errors="replace"))
+                    return result
+                return native_run(*args, **kwargs)
+            with patch.object(tool.subprocess, "run", side_effect=acl_diagnostic_run):
+                private = tool.private_directory(root / "private")
             config.write_bytes((
                 '@echo off\r\nset "SQL_CONN=DRIVER={test};PWD=p!$&private;"\r\n'
                 'set "KPP_CONN_STR=%SQL_CONN%"\r\n'
