@@ -238,6 +238,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 2
 
     _disable_windows_crash_dialogs()
+    from guardian.fencing import install as install_ha_fencing
+    install_ha_fencing()
     reporter = init_observability(
         args.service,
         root=ROOT,

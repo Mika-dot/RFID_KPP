@@ -1,0 +1,8 @@
+pyodbc>=5.1,<6
+psutil>=6,<8
+sentry-sdk>=2,<3
+flask>=3,<4
+waitress>=3,<4
+numpy>=1.26,<3
+opencv-python-headless>=4.10,<5
+ultralytics>=8.3,<9
