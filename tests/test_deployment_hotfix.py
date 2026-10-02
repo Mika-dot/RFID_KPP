@@ -108,9 +108,9 @@ class DeploymentHotfixTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         assert spec and spec.loader
         spec.loader.exec_module(module)
-        command = module.build_command(r"C:\\Windows\\System32\\cmd.exe", Path(r"D:\\RFID KPP\\deploy\\RUN_WEB_V3.cmd"))
-        self.assertEqual(command[:4], [r"C:\\Windows\\System32\\cmd.exe", "/D", "/K", "call"])
-        self.assertEqual(command[4], r"D:\\RFID KPP\\deploy\\RUN_WEB_V3.cmd")
+        command = module.build_command(r"C:\Windows\System32\cmd.exe", Path(r"D:\RFID KPP\deploy\RUN_WEB_V3.cmd"))
+        self.assertEqual(command[:4], [r"C:\Windows\System32\cmd.exe", "/D", "/K", "call"])
+        self.assertEqual(command[4], r"D:\RFID KPP\deploy\RUN_WEB_V3.cmd")
 
     def test_rtsp_driver_setting_is_disabled_by_default(self) -> None:
         config = (ROOT / "deploy" / "config_v3.example.cmd").read_text(encoding="ascii")

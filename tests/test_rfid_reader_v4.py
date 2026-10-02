@@ -4,6 +4,7 @@ import importlib.util
 import tempfile
 import unittest
 import sys
+import sqlite3
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "RFID_reader_v4" / "rfid_to_sql_v4.py"
@@ -15,6 +16,22 @@ spec.loader.exec_module(reader)
 
 
 class RfidSpoolTests(unittest.TestCase):
+    def test_connection_closes_and_failed_transaction_rolls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = reader.Spool(str(Path(tmp) / "spool.sqlite"))
+            with spool.connect() as conn:
+                conn.execute("CREATE TABLE transaction_probe (value INTEGER)")
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+            with self.assertRaisesRegex(RuntimeError, "abort"):
+                with spool.connect() as conn:
+                    conn.execute("INSERT INTO transaction_probe VALUES(1)")
+                    raise RuntimeError("abort")
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+            with spool.connect() as conn:
+                self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM transaction_probe").fetchone()[0])
+
     def test_maintenance_never_deletes_pending_reads(self):
         with tempfile.TemporaryDirectory() as tmp:
             spool = reader.Spool(str(Path(tmp) / "spool.sqlite"))
