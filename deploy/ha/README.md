@@ -186,6 +186,37 @@ Ultralytics. Ремонт Linux-окружения с RFID_YOLO_DEVICE=cpu ис�
 Microsoft EULA принимается установщиком. Время capture совместимо с Windows:
 Linux timezone Europe/Moscow, NTP синхронизирован.
 
+### Перенос локальных настроек с физического узла
+
+`environment_tool.py` работает в нативном Windows Python и отдельно вызывает
+доверенный локальный `deploy/config_v3.cmd` или
+`autostart/kpp_env_config_FINAL.cmd`. Родительское окружение не меняется,
+вывод CMD подавляется. Режим `profiles` показывает только наличие обязательных
+полей и имена отличающихся переменных. Дата файла не определяет активный профиль;
+выбирать его нужно по фактически используемым launchers/entrypoints.
+
+```powershell
+& 'D:\Desktop\RFID_KPP-main\venv64\Scripts\python.exe' 'D:\PerimeterHA\environment-tool.py' profiles --root 'D:\Desktop\RFID_KPP-main' --private-dir 'D:\PerimeterHA\transfer-private'
+```
+
+После подтверждения используемого профиля:
+
+```powershell
+& 'D:\Desktop\RFID_KPP-main\venv64\Scripts\python.exe' 'D:\PerimeterHA\environment-tool.py' export --config 'D:\Desktop\RFID_KPP-main\deploy\config_v3.cmd' --output 'D:\PerimeterHA\transfer-private\environment.local.json'
+```
+
+Для legacy указать `autostart\kpp_env_config_FINAL.cmd`. Экспорт содержит секреты:
+каталог получает отдельный DACL для текущего пользователя, SYSTEM и локальных
+администраторов. JSON не выводится в консоль и не предназначен для Git или чата.
+Общий HA-токен создаётся при первом экспорте и сохраняется при повторном. При
+ошибке старый bundle остаётся целым. `COMMON_DB_CONN`/`SQL_CONN` разрешаются
+через CMD, затем дополняют отсутствующие подключения RFID/KPP/Web.
+
+Bundle фиксирует Windows-параметры, не устанавливает Linux EnvironmentFile,
+не меняет ODBC-драйверы или пути моделей. При переносе на VM использовать
+ODBC Driver 18 и собственные Linux-пути JSON env, дополнить web authentication,
+проверить SQL-права отдельно и провести doctor перед запуском.
+
 ## Windows и SQL cutover
 
 Работать в отдельной установленной копии этой ветки, сохранив исходный каталог
