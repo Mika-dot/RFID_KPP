@@ -202,7 +202,7 @@ Linux timezone Europe/Moscow, NTP синхронизирован.
 После подтверждения используемого профиля:
 
 ```powershell
-& 'D:\Desktop\RFID_KPP-main\venv64\Scripts\python.exe' 'D:\PerimeterHA\environment-tool.py' export --config 'D:\Desktop\RFID_KPP-main\deploy\config_v3.cmd' --output 'D:\PerimeterHA\transfer-private\environment.local.json'
+& 'D:\Desktop\RFID_KPP-main\venv64\Scripts\python.exe' 'D:\PerimeterHA\environment-tool.py' export --config 'D:\Desktop\RFID_KPP-main\deploy\config_v3.cmd' --output 'D:\PerimeterHA\transfer-private\environment.local.json' --web-auth
 ```
 
 Для legacy указать `autostart\kpp_env_config_FINAL.cmd`. Экспорт содержит секреты:
@@ -212,10 +212,43 @@ Linux timezone Europe/Moscow, NTP синхронизирован.
 ошибке старый bundle остаётся целым. `COMMON_DB_CONN`/`SQL_CONN` разрешаются
 через CMD, затем дополняют отсутствующие подключения RFID/KPP/Web.
 
-Bundle фиксирует Windows-параметры, не устанавливает Linux EnvironmentFile,
-не меняет ODBC-драйверы или пути моделей. При переносе на VM использовать
-ODBC Driver 18 и собственные Linux-пути JSON env, дополнить web authentication,
-проверить SQL-права отдельно и провести doctor перед запуском.
+`--web-auth` запрашивает недостающий логин и пароль веб-интерфейса локально;
+пароль вводится дважды без отображения. При повторном экспорте введённые данные
+сохраняются. Production CMD остаётся без изменений.
+
+Перед SCP создать на каждой VM закрытый каталог под SSH-пользователем:
+
+```bash
+umask 077
+mkdir -p ~/perimeter-transfer
+chmod 700 ~/perimeter-transfer
+```
+
+Скопировать один и тот же bundle на обе VM по SSH. После обновления source
+до проверенной версии ветки выполнить на каждой VM:
+
+```bash
+chmod 600 ~/perimeter-transfer/environment.local.json
+sudo /opt/perimeter/venv/bin/python /opt/perimeter/source/deploy/ha/environment_tool.py install --bundle "$HOME/perimeter-transfer/environment.local.json"
+sudo -H -u perimeter /opt/perimeter/venv/bin/python /opt/perimeter/source/deploy/ha/environment_tool.py doctor
+```
+
+Импорт проверяет VM node_id, Wine/CPU и наличие обязательных полей. Он заменяет
+только реальное поле DRIVER в ODBC строках на ODBC Driver 18, сохраняя braced
+passwords, и применяет Linux-пути JSON env. Стандартный non_reel_tags.txt
+привязывается к Linux source; нестандартные Windows-пути требуют явной настройки.
+Файл EnvironmentFile записывается атомарно с owner/group perimeter и mode 600;
+первый предыдущий вариант сохраняется как `/etc/perimeter/environment.pre-import`.
+При активном VM guardian импорт запрещён. Установщик не запускает службы и
+не включает SQL fencing. После переноса временную VM-копию bundle можно удалить;
+закрытый Windows-экспорт сохранить для остальных узлов.
+
+Для начальной настройки HA SQL использует выходное KPP-подключение. SQL-права
+контроллера и migration login проверить отдельно перед включением HA. `doctor`
+загружает сгенерированный файл без shell expansion и не передаёт секреты в argv.
+До установки migration 003 ожидается sql_fencing=false. Model/masks/DLL должны
+соответствовать production assets; наличие файлов и импорт пакетов не заменяют
+нагрузочную проверку и испытание аппаратного переключения.
 
 ## Windows и SQL cutover
 
