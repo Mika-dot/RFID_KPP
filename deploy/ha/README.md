@@ -252,24 +252,34 @@ passwords, и применяет Linux-пути JSON env. Стандартный
 
 ## Windows и SQL cutover
 
-Работать в отдельной установленной копии этой ветки, сохранив исходный каталог
-и его spools/config. `windows.example.json` рассчитан на подтверждённый путь;
-пути при другой копии изменить, включая run-windows.cmd.
+Работать в отдельном Git checkout этой ветки `D:\PerimeterHA\source`, сохранив
+исходный каталог `D:\Desktop\RFID_KPP-main` и его spools/config. Checkout фиксируется
+на проверенном SHA. Установщик использует свою папку исходников, а интерпретаторы
+и пути к рабочим данным остаются в исходном production-каталоге.
 
-1. Скопировать пример Windows JSON в `D:\PerimeterHA\node.json` и заполнить VM URLs.
-2. Создать `D:\PerimeterHA\secrets.local.cmd` из secrets.example.cmd: общий token,
-   HA SQL login. Production config остаётся локальным.
-3. В защищённом CMD вызвать production config и secrets.local.cmd. Под migration
-   login применить `python -m guardian --config ... migrate` **без --enable**.
+1. Экспортировать рабочий v3 профиль с `environment_tool.py export --web-auth`
+   в `D:\PerimeterHA\transfer-private\environment.local.json`, как описано выше.
+   Один и тот же bundle задаёт HA token, выходную БД и веб-авторизацию для трёх узлов.
+2. Из нового checkout выполнить native Windows Python:
+   `deploy/ha/windows_tool.py prepare --production-root D:\Desktop\RFID_KPP-main`.
+   Команда создаёт закрытый node.json с подтверждёнными IP и отдельные state/releases,
+   проверяет пути к обоим Python. Существующий node.json сохраняется с ошибкой;
+   launcher, пакеты, службы и процессы команда не меняет.
+3. С остановленной Ubuntu VM применить migration 003 под migration login **без --enable**.
    Не применять старую migration 001 повторно после включения HA.
-4. Запустить doctor на обеих VM и Windows. Полный независимый Windows doctor
+4. Запустить doctor на обеих VM; на Windows выполнить `windows_tool.py doctor`.
+   Windows starter загружает JSON напрямую в окружение дочернего процесса: пароли
+   не проходят через CMD, аргументы процессов или файлы secrets.local.cmd.
+   Полный независимый Windows doctor
    требует остановленных бизнес-процессов, чтобы доказать свободные порты;
    предварительно можно проверить все существующие health/ready и подготовку VM.
-5. Зарегистрировать scheduled task через install-windows.ps1. Он не начинает
-   переключение сам. Если исходная папка получена ZIP-архивом и не имеет .git,
-   установщик создаёт git clone в D:\PerimeterHA\source и меняет только root /
-   update_source в HA JSON. Config, venv и spools остаются в прежних местах.
-   Для этого нужен Git for Windows. Доступ порта 18200 разрешать только заводским узлам.
+5. В повышенном PowerShell зарегистрировать scheduled task через install-windows.ps1
+   из нового checkout. Установщик проверяет psutil 6/7 в существующем Python,
+   сохраняет работающую задачу и не устанавливает пакеты, не запускает и не
+   останавливает процессы. Firewall для 18200 разрешает только две VM.
+   Конфиги, venv и spools остаются в прежних местах. Нужен Git for Windows.
+   PowerShell supervisor перезапускает завершившегося агента через 3 секунды;
+   незавершённую смену версии проверяет стабильный guardian/boot.py.
 6. В окно переключения отключить старые автозапуски RUN_RFID_KPP_FINAL/ProcessHost
    и закрыть **все CMD supervisor loops**, иначе они снова запускают workers.
    Остановить только процессы этого проекта, сохранить SQLite spools.

@@ -1,6 +1,10 @@
-param([string]$Config='D:\PerimeterHA\node.json', [string]$ProductionRoot='D:\Desktop\RFID_KPP-main')
+param(
+    [string]$Config='D:\PerimeterHA\node.json',
+    [string]$Bundle='D:\PerimeterHA\transfer-private\environment.local.json'
+)
 $ErrorActionPreference='Stop'
-$env:PERIMETER_HA_CONFIG=$Config
-$env:PERIMETER_HA_PRODUCTION_ROOT=$ProductionRoot
-& cmd.exe /c ('"{0}\run-windows.cmd"' -f $PSScriptRoot)
-exit $LASTEXITCODE
+$node=Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
+while ($true) {
+    & $node.python (Join-Path $PSScriptRoot 'windows_tool.py') serve --config $Config --bundle $Bundle
+    Start-Sleep -Seconds 3
+}
