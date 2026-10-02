@@ -21,6 +21,8 @@ if ! odbcinst -q -d 2>/dev/null | grep -q 'ODBC Driver 18 for SQL Server'; then
 fi
 id "$task_user" >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/perimeter --shell /usr/sbin/nologin "$task_user"
 install -d -o "$task_user" -g "$task_user" "$task_root" /var/lib/perimeter /etc/perimeter "$task_root/releases"
+install -d -m 750 -o "$task_user" -g "$task_user" \
+  /var/lib/perimeter/.config /var/lib/perimeter/.config/Ultralytics
 if ! test -d "$task_root/source/.git"; then
   runuser -u "$task_user" -- git clone --branch feature/perimeter-ha-guardian https://github.com/Mika-dot/RFID_KPP.git "$task_root/source"
 fi

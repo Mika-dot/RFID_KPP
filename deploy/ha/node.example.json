@@ -37,6 +37,7 @@
     "RFID_MASK_0": "/opt/perimeter/source/RTSP/Mask_0.jpg",
     "RFID_MASK_1": "/opt/perimeter/source/RTSP/Mask_1.jpg",
     "RFID_HEADLESS": "1",
+    "YOLO_CONFIG_DIR": "/var/lib/perimeter/.config/Ultralytics",
     "RFID_YOLO_DEVICE": "cpu",
     "KPP_WEB_HOST": "0.0.0.0",
     "KPP_WEB_PORT": "5050",
