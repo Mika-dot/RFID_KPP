@@ -66,13 +66,13 @@ class WindowsDeploymentTests(unittest.TestCase):
             with patch.object(tool.subprocess, "call") as call:
                 result = tool.prepare(config, transfer, original)
             call.assert_not_called()
-            node = json.loads(config.read_text())
+            node = json.loads(config.read_text(encoding="utf-8"))
             self.assertEqual(str(ROOT), node["root"])
             self.assertEqual(str(py32), node["python32"])
             self.assertFalse(node["controller_enabled"])
             self.assertEqual("http://172.31.0.134:18200", node["nodes"][1]["url"])
             self.assertEqual(b"existing-production-data", sentinel.read_bytes())
-            self.assertNotIn("fixture-user", config.read_text())
+            self.assertNotIn("fixture-user", config.read_text(encoding="utf-8"))
             self.assertFalse(result["service_started"])
             before = config.read_bytes()
             with self.assertRaises(tool.TransferError):
@@ -113,9 +113,9 @@ class WindowsDeploymentTests(unittest.TestCase):
     def test_physical_controller_is_rejected_before_start(self):
         with tempfile.TemporaryDirectory() as folder:
             config, transfer = self.write_fixture(folder)
-            node = json.loads(config.read_text())
+            node = json.loads(config.read_text(encoding="utf-8"))
             node["controller_enabled"] = True
-            config.write_text(json.dumps(node))
+            config.write_text(json.dumps(node), encoding="utf-8")
             with patch.object(tool.subprocess, "call") as call:
                 with self.assertRaises(tool.TransferError):
                     tool.launch(config, transfer, "serve")
@@ -137,7 +137,7 @@ class WindowsDeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="installer test ") as folder:
             root = Path(folder)
             config, transfer = self.write_fixture(folder)
-            node = json.loads(config.read_text())
+            node = json.loads(config.read_text(encoding="utf-8"))
             node["root"] = str(ROOT)
             config.write_text(json.dumps(node), encoding="utf-8")
             script = root / "fixture.ps1"
@@ -163,7 +163,7 @@ if (-not $global:HA_TEST_REGISTERED) { throw 'Task was not registered' }
             env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
             env.update(TEST_INSTALLER=str(HA / "install-windows.ps1"), TEST_NODE=str(config),
                        TEST_BUNDLE=str(transfer), TEST_PRODUCTION=str(root / "old-production"))
-            env["PSModulePath"] = str(Path(env["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/Modules")
+            env["PSModulePath"] = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/Modules")
             result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                                      "-File", str(script)], env=env, capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
