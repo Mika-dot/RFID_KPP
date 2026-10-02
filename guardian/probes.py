@@ -60,18 +60,27 @@ SELECT COUNT(*) FROM sys.triggers WHERE name IN
         import pyodbc
         env = os.environ.copy()
         env.update(cfg.get("env", {}))
+        env.update(PERIMETER_HA_NODE=cfg["node_id"], PERIMETER_HA_STATE_DIR=cfg["state_dir"])
         checks["same_output_database"] = True
-        for key in ("RFID_DB_CONNECTION", "KPP_CONN_STR", "KPP_WEB_DB_CONNECTION"):
-            candidate = pyodbc.connect(env.get(key, ""), timeout=3, autocommit=True)
+        connections = [env.get(key, "") for key in (
+            "RFID_DB_CONNECTION", "KPP_CONN_STR", "KPP_WEB_DB_CONNECTION")]
+        def odbc_value(value):
+            return "{" + value.replace("}", "}}") + "}"
+        # Use the same DST connection definition as DB_RusGard/db_sync_v2.py.
+        connections.append("DRIVER=%s;SERVER=%s;DATABASE=%s;UID=%s;PWD=%s;Encrypt=yes;TrustServerCertificate=yes;" %
+            tuple(odbc_value(env.get(key, default)) for key, default in (
+                ("DST_DRIVER", "ODBC Driver 18 for SQL Server"), ("DST_SERVER", ""),
+                ("DST_DATABASE", ""), ("DST_USERNAME", ""), ("DST_PASSWORD", ""))))
+        for connection in connections:
+            candidate = pyodbc.connect(connection, timeout=3, autocommit=True)
             try:
+                candidate.timeout = 3
                 found = candidate.execute("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')),DB_NAME()").fetchone()
                 if tuple(identity) != tuple(found):
                     checks["same_output_database"] = False
             finally:
                 candidate.close()
         checks["entrypoints"] = all((root / script).is_file() for _, script in SERVICES.values())
-        env = os.environ.copy()
-        env.update(cfg.get("env", {}))
         checks["configuration"] = all(env.get(k) for k in (
             "RFID_DB_CONNECTION", "KPP_CONN_STR", "RFID_READER_IP", "RFID_DLL_PATH",
             "SRC_SERVER", "SRC_DATABASE", "SRC_USERNAME", "SRC_PASSWORD",

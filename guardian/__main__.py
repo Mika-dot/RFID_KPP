@@ -69,15 +69,18 @@ def main(argv=None):
     threads = [threading.Thread(target=f, daemon=True) for f in functions]
     for thread in threads:
         thread.start()
+    critical_failed = False
     while not stop.wait(1):
-        # Critical node monitor must not silently die while its children remain alive.
-        if not threads[1].is_alive():
+        # A failed probe/election thread must restart the agent rather than leave
+        # it reporting stale readiness or holding a controller role indefinitely.
+        if any(not thread.is_alive() for thread in threads):
+            critical_failed = True
             stop.set()
     server.shutdown()
     threads[1].join(timeout=15)
     node.processes.stop()
     instance.close()
-    return 75 if node.restart_requested else 0
+    return 75 if node.restart_requested else (2 if critical_failed else 0)
 
 
 if __name__ == "__main__":

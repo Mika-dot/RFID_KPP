@@ -46,6 +46,14 @@ FROM dbo.KPP_HA_Lease WHERE Id=1
             return {"owner": row[0], "epoch": int(row[1]), "valid": bool(row[2]),
                     "age": int(row[3]), "enabled": bool(row[4])}
 
+    def controller_owned(self):
+        # Repair must observe ownership, never renew it on behalf of election.
+        with self.connect() as conn:
+            return conn.execute("""
+SELECT Id FROM dbo.KPP_HA_Controller
+WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
+""", self.token).fetchone() is not None
+
     def grant(self, owner, ttl=15):
         with self.connect() as conn:
             controller = conn.execute("""

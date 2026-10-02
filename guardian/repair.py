@@ -73,7 +73,8 @@ class LmRepair:
     def rescue(self, node):
         # Host/user/command come from operator configuration, NEVER from the LLM.
         argv = node.get("rescue_argv")
-        if not argv or self.store.lease().get("owner") == node["id"]:
+        if (not argv or not self.store.controller_owned()
+                or self.store.lease().get("owner") == node["id"]):
             return
         result = subprocess.run(argv, shell=False, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
@@ -81,7 +82,7 @@ class LmRepair:
 
     def repair_node(self, node):
         nid = node["id"]
-        if nid == self.store.lease().get("owner"):
+        if not self.store.controller_owned() or nid == self.store.lease().get("owner"):
             return
         token = os.environ["PERIMETER_HA_TOKEN"]
         base = node["url"].rstrip("/")
@@ -93,15 +94,21 @@ class LmRepair:
             self.rescue(node)
             return
         # Deterministic first repair works even with LM Studio down.
+        if not self.store.controller_owned():
+            return
         code, result = get_json(base + "/repair", token, timeout=120,
                                body={"action": "restart_service", "service": "all"})
         evidence = {"node": nid, "result": result}
         for _ in range(6):
-            if self.stop.is_set() or nid == self.store.lease().get("owner"):
+            if (self.stop.is_set() or not self.store.controller_owned()
+                    or nid == self.store.lease().get("owner")):
                 return
             if self.store.node_state(nid)["faulted"] is False:
                 return
             step = self.step(evidence)
+            # Inference can outlive a lease; discard a delayed model response.
+            if not self.store.controller_owned() or self.stop.is_set():
+                return
             if step["action"] == "wait":
                 return
             self.telemetry.event("repair_step", target=nid, action=step["action"], service=step["service"])
@@ -115,7 +122,7 @@ class LmRepair:
         while not self.stop.wait(5):
             try:
                 # Only the current controller performs repair; shadow stays passive.
-                if not self.store.claim_controller():
+                if not self.store.controller_owned():
                     continue
                 for node in sorted(self.cfg["nodes"], key=lambda n: n["priority"]):
                     nid = node["id"]

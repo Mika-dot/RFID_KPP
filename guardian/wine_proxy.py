@@ -10,6 +10,8 @@ import subprocess
 import threading
 from pathlib import Path
 
+from guardian.config import atomic_json
+
 
 def wine_path(path):
     return "Z:" + str(Path(path).resolve()).replace("/", "\\")
@@ -27,7 +29,8 @@ class Function:
         data = {}
         if self.name == "TCPConnect":
             ip = args[0].value if hasattr(args[0], "value") else args[0]
-            data = {"ip": ip.decode("ascii"), "port": int(args[1])}
+            port = args[1].value if hasattr(args[1], "value") else args[1]
+            data = {"ip": ip.decode("ascii"), "port": int(port)}
         response = self.library.call(self.name, data)
         if self.name == "UHF_GetReceived_EX":
             length, buf = response["length"], response["data"]
@@ -58,6 +61,18 @@ class WineLibrary:
         self.process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.DEVNULL, text=True, bufsize=1,
                                         env=env, start_new_session=True)
+        self.registry = None
+        try:
+            if env.get("PERIMETER_HA_STATE_DIR"):
+                import psutil
+                self.registry = (Path(env["PERIMETER_HA_STATE_DIR"]) / "wine-bridges"
+                                 / (str(self.process.pid) + ".json"))
+                atomic_json(self.registry, {"pid":self.process.pid,
+                    "created":psutil.Process(self.process.pid).create_time(),
+                    "parent_pid":os.getpid(), "parent_created":psutil.Process().create_time()})
+        except BaseException:
+            self.close()
+            raise
         threading.Thread(target=self._read, daemon=True).start()
         atexit.register(self.close)
         try:
@@ -106,6 +121,8 @@ class WineLibrary:
         for f in (self.process.stdin, self.process.stdout):
             if f:
                 f.close()
+        if self.registry is not None:
+            self.registry.unlink(missing_ok=True)
 
     def __del__(self):
         if hasattr(self, "process"):

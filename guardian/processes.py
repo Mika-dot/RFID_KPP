@@ -25,6 +25,7 @@ class Processes:
     def reap_orphans(self):
         import json
         import psutil
+        self.reap_bridges()
         if not self.registry.exists():
             return
         rows = json.loads(self.registry.read_text(encoding="utf-8"))
@@ -49,6 +50,43 @@ class Processes:
                 pass
         self.registry.unlink(missing_ok=True)
 
+    def reap_bridges(self, orphaned_only=False):
+        """Wine has a separate process group; it must also be fenced on demotion."""
+        import json
+        import psutil
+        for path in (Path(self.cfg["state_dir"]) / "wine-bridges").glob("*.json"):
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+                if orphaned_only:
+                    if "parent_pid" not in row:
+                        continue
+                    try:
+                        parent = psutil.Process(row["parent_pid"])
+                        if (abs(parent.create_time()-row["parent_created"]) <= .01
+                                and parent.status() != psutil.STATUS_ZOMBIE):
+                            continue
+                    except psutil.NoSuchProcess:
+                        pass
+                p = psutil.Process(row["pid"])
+                if (abs(p.create_time()-row["created"]) > .01
+                        or p.environ().get("PERIMETER_HA_NODE") != self.cfg["node_id"]
+                        or not any("wine_worker.py" in arg for arg in p.cmdline())):
+                    path.unlink(missing_ok=True)
+                    continue
+                targets = p.children(recursive=True) + [p]
+                for item in reversed(targets):
+                    try:
+                        item.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                psutil.wait_procs(targets, timeout=5)
+            except psutil.NoSuchProcess:
+                pass
+            except FileNotFoundError:
+                # The owning bridge can finish and remove its record concurrently.
+                continue
+            path.unlink(missing_ok=True)
+
     def start(self, epoch):
         if self.epoch == epoch and self.children:
             return
@@ -60,6 +98,7 @@ class Processes:
         env = os.environ.copy()
         env.update(self.cfg.get("env", {}))
         env.update(PERIMETER_HA_NODE=self.cfg["node_id"], PERIMETER_HA_EPOCH=str(epoch),
+                   PERIMETER_HA_STATE_DIR=self.cfg["state_dir"],
                    PERIMETER_HEALTH_HOST="127.0.0.1", RFID_HEADLESS="1")
         registry = []
         try:
@@ -104,6 +143,7 @@ class Processes:
                 else:
                     p.kill()
                 p.wait(timeout=5)
+        self.reap_bridges()
         self.children.clear()
         self.epoch = None
         for thread in self.logs.values():

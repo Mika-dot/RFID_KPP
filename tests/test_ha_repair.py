@@ -78,3 +78,36 @@ class RepairTests(unittest.TestCase):
                            (200,{"choices":[{"finish_reason":"stop", "message":{"content":json.dumps(
                                {"action":"wait", "service":"all", "reason":"need logs"})}}]})]
         self.assertEqual("wait", LmRepair({}, Mock(), Mock(), threading.Event()).step({})["action"])
+
+    def test_repair_loop_never_claims_or_renews_controller_lease(self):
+        store, stop = Mock(), Mock()
+        store.controller_owned.return_value = False
+        stop.wait.side_effect = [False, True]
+        LmRepair({}, store, Mock(), stop).run()
+        store.controller_owned.assert_called_once()
+        store.claim_controller.assert_not_called()
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.repair.get_json")
+    def test_late_model_response_discarded_after_controller_handoff(self, get):
+        store = Mock()
+        store.lease.return_value = {"owner":"perimetr", "valid":True}
+        store.node_state.return_value = {"faulted":True}
+        store.controller_owned.return_value = True
+        get.side_effect = [(200, {"active":False}), (200, {"preflight":{"ok":False}})]
+        worker = LmRepair({}, store, Mock(), threading.Event())
+        def delayed(evidence):
+            store.controller_owned.return_value = False
+            return {"action":"repair_dependencies", "service":"all", "reason":"fix"}
+        worker.step = delayed
+        worker.repair_node({"id":"physical", "url":"http://physical"})
+        self.assertEqual(2, get.call_count)
+        store.claim_controller.assert_not_called()
+
+    @patch("guardian.repair.subprocess.run")
+    def test_expired_controller_cannot_start_host_rescue(self, run):
+        store = Mock()
+        store.controller_owned.return_value = False
+        worker = LmRepair({}, store, Mock(), threading.Event())
+        worker.rescue({"id":"physical", "rescue_argv":["ssh", "fixed-host", "fixed-command"]})
+        run.assert_not_called()

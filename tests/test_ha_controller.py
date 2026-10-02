@@ -49,3 +49,12 @@ class ControllerTests(unittest.TestCase):
         controller.poll=lambda node:(node["id"],{})
         controller.tick()
         store.grant.assert_not_called()
+
+    def test_old_epoch_readiness_cannot_end_new_startup_grace(self):
+        controller, store = self.build()
+        store.lease.return_value.update(age=1, epoch=2)
+        controller.poll = lambda node: (node["id"], {
+            "prepared":True, "healthy":node["id"]=="physical", "active":node["id"]=="physical", "epoch":1})
+        controller.tick()
+        self.assertNotIn("physical", controller.policy.proven)
+        store.grant.assert_called_once_with("physical")

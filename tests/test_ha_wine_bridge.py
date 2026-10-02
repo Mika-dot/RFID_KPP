@@ -1,4 +1,5 @@
 import ctypes
+import os
 import unittest
 from unittest.mock import Mock
 
@@ -33,5 +34,12 @@ class WineBridgeTests(unittest.TestCase):
         self.assertEqual(1,Function(lib,"TCPConnect")(b"172.31.128.170",8888))
         lib.call.assert_called_once_with("TCPConnect", {"ip":"172.31.128.170","port":8888})
 
+    @unittest.skipIf(os.name == "nt", "Z: path conversion belongs to the Linux Wine host")
     def test_windows_z_drive_mapping(self):
         self.assertEqual("Z:\\opt\\perimeter\\UHFAPI.dll",wine_path("/opt/perimeter/UHFAPI.dll"))
+
+    def test_tcp_connect_accepts_ctypes_port(self):
+        lib = Mock()
+        lib.call.return_value = {"rc":1}
+        Function(lib,"TCPConnect")(ctypes.c_char_p(b"reader"), ctypes.c_ushort(8888))
+        lib.call.assert_called_once_with("TCPConnect", {"ip":"reader", "port":8888})

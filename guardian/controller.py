@@ -29,6 +29,7 @@ class Controller:
                 owned = self.store.claim_controller()
                 if owned != self.is_owner:
                     self.policy.stable.clear()
+                    self.policy.proven.clear()
                     self.telemetry.event("controller_role", active=owned)
                     self.is_owner = owned
                 if owned:
@@ -48,7 +49,9 @@ class Controller:
             nid = node["id"]
             s = snapshots[nid]
             state = self.store.node_state(nid)
-            observations[nid] = Observation(bool(s.get("prepared")), bool(s.get("healthy")),
+            healthy = (s.get("healthy") and s.get("active") and lease["valid"]
+                       and lease["owner"] == nid and s.get("epoch") == lease["epoch"])
+            observations[nid] = Observation(bool(s.get("prepared")), bool(healthy),
                                              state["faulted"], bool(s))
         chosen = self.policy.choose(lease, observations, time.monotonic())
         previous = lease["owner"] if lease["valid"] else None

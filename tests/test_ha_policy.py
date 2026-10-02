@@ -73,3 +73,9 @@ class PolicyTests(unittest.TestCase):
     def test_quiet_rfid_is_not_a_failure_signal(self):
         # Election accepts readiness, never an RFID read count.
         self.assertEqual("physical", self.policy.choose(self.lease, self.obs, 0))
+
+    def test_new_epoch_has_its_own_startup_grace(self):
+        self.policy.choose(dict(self.lease, epoch=1), self.obs, 0)
+        self.obs["physical"] = STANDBY
+        self.assertEqual("physical", self.policy.choose(dict(self.lease, age=1, epoch=2), self.obs, 1))
+        self.assertEqual("perimetr", self.policy.choose(dict(self.lease, age=31, epoch=2), self.obs, 31))

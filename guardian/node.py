@@ -54,14 +54,21 @@ class Node:
             cfg = dict(self.cfg)
             active = bool(self.processes.children)
         result = preflight(cfg, self.store, active)
-        with self.lock:
-            self.preflight_result = result
-            self.preflight_at = time.monotonic()
+        with self.mutation:
+            # A slow DLL probe must not certify a different release/interpreter
+            # or overwrite readiness after a role change.
+            if cfg != self.cfg or active != bool(self.processes.children):
+                return {"ok":False, "checks":{"configuration_changed":False}}
+            with self.lock:
+                self.preflight_result = result
+                self.preflight_at = time.monotonic()
         return result
 
     def probe_loop(self):
         while not self.stop.is_set():
             self.check()
+            # Also clean a timed-out passive DLL probe without stopping a live bridge.
+            self.processes.reap_bridges(orphaned_only=True)
             self.stop.wait(30)
 
     def tick(self):

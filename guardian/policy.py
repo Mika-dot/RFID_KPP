@@ -19,8 +19,14 @@ class Policy:
         self.recovery_seconds = recovery_seconds
         self.startup_seconds = startup_seconds
         self.stable = {}
+        self.proven = set()
+        self.lease_identity = None
 
     def choose(self, lease, observations, now):
+        identity = (lease.get("owner"), lease.get("epoch")) if lease.get("valid") else None
+        if identity != self.lease_identity:
+            self.proven.clear()
+            self.lease_identity = identity
         for n in self.nodes:
             nid = n["id"]
             obs = observations.get(nid, Observation())
@@ -36,11 +42,9 @@ class Policy:
             elif not obs.healthy and lease["age"] >= self.startup_seconds:
                 current = None
             # Once an active stack has been healthy, ANY degraded sample faults it.
-            elif not obs.healthy and current in getattr(self, "proven", set()):
+            elif not obs.healthy and current in self.proven:
                 current = None
             if obs.healthy:
-                if not hasattr(self, "proven"):
-                    self.proven = set()
                 self.proven.add(lease["owner"])
         candidates = [n["id"] for n in self.nodes if n["id"] in self.stable]
         if current is None:
@@ -52,7 +56,6 @@ class Policy:
         rank = {n["id"]: n["priority"] for n in self.nodes}
         for nid in candidates:
             if rank[nid] < rank[current] and now - self.stable[nid] >= self.recovery_seconds:
-                if hasattr(self, "proven"):
-                    self.proven.discard(nid)
+                self.proven.discard(nid)
                 return nid
         return current

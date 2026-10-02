@@ -3,7 +3,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from guardian.node import Node
 
@@ -47,3 +47,15 @@ class NodeRecoveryTests(unittest.TestCase):
             node.tick()
             node.updates.rollback.assert_called_once()
             self.assertTrue(node.stop.is_set())
+
+    def test_slow_probe_cannot_certify_a_different_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            node = self.fixture(folder, False)
+            node.cfg["root"] = "/old"
+            original = node.preflight_result
+            def changed(cfg, store, active):
+                node.cfg["root"] = "/new"
+                return {"ok":True}
+            with patch("guardian.node.preflight", side_effect=changed):
+                self.assertFalse(node.check()["ok"])
+            self.assertIs(original, node.preflight_result)
