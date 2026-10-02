@@ -94,7 +94,12 @@ def private_directory(path):
         "$acl.AddAccessRule($rule)};"
         "Set-Acl -LiteralPath $env:PERIMETER_CAPTURE_PRIVATE_DIR -AclObject $acl"
     )
-    child_env = os.environ.copy()
+    # A caller running PowerShell 7 can export its PSModulePath to Python.
+    # Windows PowerShell 5.1 cannot load those modules; use its own built-ins.
+    child_env = {key: value for key, value in os.environ.items()
+                 if key.upper() != "PSMODULEPATH"}
+    child_env["PSModulePath"] = str(Path(os.environ["SystemRoot"]) /
+                                   "System32/WindowsPowerShell/v1.0/Modules")
     child_env["PERIMETER_CAPTURE_PRIVATE_DIR"] = str(path)
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
