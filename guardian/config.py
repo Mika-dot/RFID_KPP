@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 SERVICES = {
@@ -12,6 +14,8 @@ SERVICES = {
     "Aggregator": (18104, "deploy/monitored_aggregator.py"),
     "WebDashboard": (18105, "web/kpp_reel_dashboard_v3_fixed.py"),
 }
+
+_JSON_REPLACE_LOCK = threading.Lock()
 
 
 def read_config(path):
@@ -46,7 +50,17 @@ def atomic_json(path, value):
             json.dump(value, f, ensure_ascii=False, sort_keys=True)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        # Windows can reject concurrent replacements or a short-lived reader's
+        # handle. Keep the old complete record and retry only sharing/access errors.
+        with _JSON_REPLACE_LOCK:
+            for attempt in range(10):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError as exc:
+                    if getattr(exc, "winerror", None) not in (5, 32, 33) or attempt == 9:
+                        raise
+                    time.sleep(.05)
     finally:
         if tmp is not None:
             tmp.unlink(missing_ok=True)

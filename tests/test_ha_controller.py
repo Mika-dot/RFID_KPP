@@ -58,3 +58,23 @@ class ControllerTests(unittest.TestCase):
         controller.tick()
         self.assertNotIn("physical", controller.policy.proven)
         store.grant.assert_called_once_with("physical")
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_expired_failed_owner_is_quarantined_before_reserve_activation(self, get):
+        controller, store = self.build()
+        store.lease.return_value["valid"] = False
+        controller.poll = lambda node:(node["id"], {} if node["id"]=="physical" else {"prepared":True})
+        controller.tick()
+        store.fault.assert_called_once_with("physical")
+        self.assertEqual([None,"perimetr"], [c.args[0] for c in store.grant.call_args_list])
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_expired_failed_owner_enters_repair_even_with_all_reserves_down(self, get):
+        controller, store = self.build()
+        store.lease.return_value["valid"] = False
+        controller.poll = lambda node:(node["id"], {})
+        controller.tick()
+        store.fault.assert_called_once_with("physical")
+        store.grant.assert_called_once_with(None)

@@ -54,7 +54,10 @@ class Controller:
             observations[nid] = Observation(bool(s.get("prepared")), bool(healthy),
                                              state["faulted"], bool(s))
         chosen = self.policy.choose(lease, observations, time.monotonic())
-        previous = lease["owner"] if lease["valid"] else None
+        # Expiry fences writes but does not erase the previous node's identity.
+        # Retain it so an unreachable former owner is quarantined and repaired,
+        # including when no reserve is currently prepared.
+        previous = lease["owner"]
         # Roll an automatic main update through a validated reserve first.
         updating = False
         if chosen == previous and previous and observations[previous].healthy:
