@@ -161,6 +161,11 @@ class Updates:
         subprocess.run([self.cfg["python"], "-m", "venv", str(target)], check=True, timeout=90,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        device = self.cfg.get("env", {}).get("RFID_YOLO_DEVICE", os.getenv("RFID_YOLO_DEVICE", "cpu"))
+        if os.name != "nt" and device == "cpu":
+            subprocess.run([str(python), "-m", "pip", "install", "torch", "torchvision",
+                            "--index-url", "https://download.pytorch.org/whl/cpu"],
+                           check=True, timeout=600, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run([str(python), "-m", "pip", "install", "-r",
                         str(Path(self.cfg["root"]) / "guardian/requirements.txt")],
                        check=True, timeout=600, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

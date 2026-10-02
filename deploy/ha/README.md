@@ -181,6 +181,8 @@ cd /opt/perimeter/source
 
 Установщик оставляет существующие конфиги нетронутыми, не запускает стек
 автоматически до заполнения параметров. ODBC Driver 18 ставится нативно;
+PyTorch/torchvision устанавливаются из официального CPU wheel index перед
+Ultralytics. Ремонт Linux-окружения с RFID_YOLO_DEVICE=cpu использует тот же index.
 Microsoft EULA принимается установщиком. Время capture совместимо с Windows:
 Linux timezone Europe/Moscow, NTP синхронизирован.
 

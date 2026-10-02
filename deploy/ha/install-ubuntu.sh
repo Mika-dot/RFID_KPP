@@ -25,6 +25,9 @@ if ! test -d "$task_root/source/.git"; then
   runuser -u "$task_user" -- git clone --branch feature/perimeter-ha-guardian https://github.com/Mika-dot/RFID_KPP.git "$task_root/source"
 fi
 python3 -m venv "$task_root/venv"
+# Both Ubuntu reserves run YOLO on CPU. Install its matching CPU wheels before
+# Ultralytics resolves dependencies, avoiding the default Linux CUDA packages.
+"$task_root/venv/bin/python" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 "$task_root/venv/bin/python" -m pip install -r "$task_root/source/guardian/requirements.txt"
 install -d -o "$task_user" -g "$task_user" "$task_root/python32"
 if ! test -f "$task_root/python32/python.exe"; then

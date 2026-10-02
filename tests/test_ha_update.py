@@ -1,4 +1,5 @@
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -52,6 +53,18 @@ class UpdateTests(unittest.TestCase):
     def test_no_previous_release_refuses_rollback(self):
         with self.assertRaisesRegex(RuntimeError,"NoPreviousRelease"):
             self.updates.rollback()
+
+    @unittest.skipIf(os.name == "nt", "Ubuntu reserves use the CPU wheel index")
+    @patch("guardian.update.subprocess.run")
+    def test_cpu_environment_repair_installs_cpu_torch_before_requirements(self, run):
+        run.return_value.returncode = 0
+        self.updates.repair_dependencies()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("--index-url", commands[1])
+        self.assertEqual("https://download.pytorch.org/whl/cpu", commands[1][-1])
+        self.assertIn("-r", commands[2])
+        self.assertTrue(self.updates.state["pending"])
+        self.assertFalse(self.updates.state["trial_started"])
 
     @patch("guardian.update.preflight",return_value={"ok":True})
     @patch("guardian.update.subprocess.run")
