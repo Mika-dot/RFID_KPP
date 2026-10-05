@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+from guardian.resources import EXHAUSTED_ERRNOS
+
 
 class Telemetry:
     def __init__(self, cfg):
@@ -14,6 +16,7 @@ class Telemetry:
         self.queue = queue.Queue(maxsize=1000)
         self.events = 0
         self.dropped = 0
+        self.resource_exhausted = threading.Event()
         threading.Thread(target=self._writer, daemon=True).start()
 
     def event(self, kind, **fields):
@@ -40,14 +43,16 @@ class Telemetry:
                     path.replace(path.with_suffix(".previous.jsonl"))
                 with path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                if sentry and record["kind"] in ("failover", "repair_failed", "controller_error", "update_rejected"):
+                if sentry and record["kind"] in ("failover", "repair_failed", "controller_error", "update_rejected", "agent_resource_exhausted"):
                     import sentry_sdk
                     with sentry_sdk.push_scope() as scope:
                         scope.set_tag("ha_node", self.cfg["node_id"])
                         scope.set_context("ha_event", record)
                         sentry_sdk.capture_message("Perimeter HA: " + record["kind"], level="warning")
             except Exception as e:
-                logging.error("Audit writer: %s", type(e).__name__)
+                if isinstance(e, OSError) and e.errno in EXHAUSTED_ERRNOS:
+                    self.resource_exhausted.set()
+                logging.error("Audit writer: %s errno=%s", type(e).__name__, getattr(e, "errno", None))
             finally:
                 self.queue.task_done()
 
@@ -62,4 +67,9 @@ class Telemetry:
             "perimeter_ha_events_total": self.events,
             "perimeter_ha_audit_dropped_total": self.dropped,
         }
+        resources = status.get("resources", {})
+        for key in ("open_fds", "fd_limit", "open_handles"):
+            if resources.get(key) is not None:
+                rows["perimeter_ha_" + key] = resources[key]
+        rows["perimeter_ha_resource_restart_required"] = int(resources.get("restart_required", False))
         return "\n".join('%s{node=%s} %s' % (key,node,value) for key,value in rows.items()) + "\n"

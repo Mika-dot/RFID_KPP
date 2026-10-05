@@ -14,6 +14,24 @@ from guardian.config import read_config
 from guardian.sql import SqlStore
 
 
+def supervise(stop, node, threads, telemetry, resource_guard):
+    while not stop.wait(1):
+        resources = resource_guard.sample()
+        resources["restart_required"] |= telemetry.resource_exhausted.is_set()
+        with node.lock:
+            node.resources = resources
+        if resources["restart_required"]:
+            telemetry.event("agent_resource_exhausted", **resources)
+            stop.set()
+            return True
+        # A live HTTP loop can still be unable to accept sockets. This check
+        # runs independently of both HTTP requests and SQL connections.
+        if any(not thread.is_alive() for thread in threads):
+            stop.set()
+            return True
+    return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -69,14 +87,11 @@ def main(argv=None):
     threads = [threading.Thread(target=f, daemon=True) for f in functions]
     for thread in threads:
         thread.start()
-    critical_failed = False
-    while not stop.wait(1):
-        # A failed probe/election thread must restart the agent rather than leave
-        # it reporting stale readiness or holding a controller role indefinitely.
-        if any(not thread.is_alive() for thread in threads):
-            critical_failed = True
-            stop.set()
-    server.shutdown()
+    from guardian.resources import ResourceGuard
+    critical_failed = supervise(stop, node, threads, telemetry, ResourceGuard())
+    if threads[0].is_alive():
+        server.shutdown()
+    server.server_close()
     threads[1].join(timeout=15)
     node.processes.stop()
     instance.close()

@@ -28,6 +28,7 @@ class Node:
         self.maintenance = False
         self.restart_requested = False
         self.last_sample = 0
+        self.resources = {}
         self.preflight_at = 0
         self.preflight_result = {"ok": False, "checks": {"starting": False}}
         self.verified_since = None
@@ -45,6 +46,7 @@ class Node:
             result["sample_age"] = time.monotonic()-self.last_sample
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
+            result["resources"] = dict(getattr(self, "resources", {}))
             if self.stop.is_set() or self.maintenance:
                 result.update(prepared=False, healthy=False)
             return result

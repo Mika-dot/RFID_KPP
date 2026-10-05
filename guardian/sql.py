@@ -16,9 +16,9 @@ class SqlStore:
     def connect(self):
         import pyodbc
         conn = pyodbc.connect(os.environ["PERIMETER_HA_SQL"], timeout=3, autocommit=False)
-        conn.timeout = 3
-        conn.execute("SET LOCK_TIMEOUT 2500; SET XACT_ABORT ON;")
         try:
+            conn.timeout = 3
+            conn.execute("SET LOCK_TIMEOUT 2500; SET XACT_ABORT ON;")
             yield conn
         finally:
             conn.close()
