@@ -4,6 +4,22 @@ import os
 import uuid
 from contextlib import contextmanager
 
+FENCING_PROTOCOL = 2
+EPOCH_BARRIER = "Perimeter.HA.Epoch"
+
+
+def epoch_barrier(conn, mode="Exclusive", timeout=2500):
+    """Serialize epoch changes with complete writer transactions, not renewals."""
+    row = conn.execute("""
+IF @@TRANCOUNT=0 BEGIN TRANSACTION;
+DECLARE @result int;
+EXEC @result=sys.sp_getapplock @Resource=?, @LockMode=?,
+ @LockOwner=N'Transaction', @LockTimeout=?;
+SELECT @result;
+""", EPOCH_BARRIER, mode, timeout).fetchone()
+    if row is None or int(row[0]) < 0:
+        raise RuntimeError("EpochBarrierUnavailable")
+
 
 def control_odbc():
     """Configure the Guardian process before pyodbc allocates its first HENV.
@@ -67,18 +83,30 @@ WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
 """, self.token).fetchone() is not None
 
     def grant(self, owner, ttl=15):
+        # A renewal cannot change Enabled, Owner, Epoch or StartedAt. It needs
+        # only a brief row update; taking the epoch barrier would starve it behind
+        # a long business transaction and expire an otherwise healthy stack.
+        if owner:
+            with self.connect() as conn:
+                self._grant_authority(conn, owner)
+                conn.execute("SELECT Id FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
+                self._candidate_allowed(conn, owner)
+                row = conn.execute("""
+UPDATE dbo.KPP_HA_Lease
+SET ExpiresAt=DATEADD(second,?,SYSUTCDATETIME())
+OUTPUT inserted.Epoch
+WHERE Id=1 AND Enabled=1 AND Owner=? AND ExpiresAt>SYSUTCDATETIME()
+""", ttl, owner).fetchone()
+                if row is not None:
+                    conn.commit()
+                    return
+            # Close the unsuccessful renewal transaction before acquiring the
+            # barrier. Writers acquire the barrier before reading the lease.
         with self.connect() as conn:
-            controller = conn.execute("""
-SELECT Token FROM dbo.KPP_HA_Controller WITH (UPDLOCK,HOLDLOCK)
-WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
-""", self.token).fetchone()
-            if controller is None:
-                raise RuntimeError("ControllerLeaseLost")
+            epoch_barrier(conn)
+            self._grant_authority(conn, owner)
             conn.execute("SELECT Id FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
-            if owner:
-                blocked = conn.execute("SELECT Faulted FROM dbo.KPP_HA_NodeState WITH(UPDLOCK,HOLDLOCK) WHERE NodeId=?", owner).fetchone()
-                if blocked and blocked[0]:
-                    raise RuntimeError("CandidateInRepair")
+            self._candidate_allowed(conn, owner)
             conn.execute("""
 UPDATE dbo.KPP_HA_Lease WITH (UPDLOCK,HOLDLOCK)
 SET Epoch=Epoch+CASE WHEN ISNULL(Owner,'')<>ISNULL(?,'') OR
@@ -89,6 +117,20 @@ Owner=?,ExpiresAt=DATEADD(second,?,SYSUTCDATETIME())
 WHERE Id=1 AND Enabled=1
 """, owner, owner, owner, ttl if owner else 0)
             conn.commit()
+
+    def _grant_authority(self, conn, owner):
+        controller = conn.execute("""
+SELECT Token FROM dbo.KPP_HA_Controller WITH (UPDLOCK,HOLDLOCK)
+WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
+""", self.token).fetchone()
+        if controller is None:
+            raise RuntimeError("ControllerLeaseLost")
+
+    def _candidate_allowed(self, conn, owner):
+        if owner:
+            blocked = conn.execute("SELECT Faulted FROM dbo.KPP_HA_NodeState WITH(UPDLOCK,HOLDLOCK) WHERE NodeId=?", owner).fetchone()
+            if blocked and blocked[0]:
+                raise RuntimeError("CandidateInRepair")
 
     def node_state(self, node):
         with self.connect() as conn:

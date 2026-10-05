@@ -54,6 +54,20 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"NoPreviousRelease"):
             self.updates.rollback()
 
+    @patch("guardian.update.subprocess.run")
+    def test_protocol_two_deployment_rejects_main_without_epoch_barrier_before_running_candidate(self, run):
+        self.updates.state["fencing_protocol_min"] = 2
+        def git(*args, **kwargs):
+            if args == ("rev-parse", "FETCH_HEAD"):
+                return "b" * 40
+            if args == ("show", "b" * 40 + ":guardian/sql.py"):
+                return "FENCING_PROTOCOL = 1\n"
+            return ""
+        self.updates.git = git
+        with self.assertRaisesRegex(RuntimeError, "CandidateFencingProtocolIncompatible"):
+            self.updates.stage()
+        run.assert_not_called()
+
     @unittest.skipIf(os.name == "nt", "Ubuntu reserves use the CPU wheel index")
     @patch("guardian.update.subprocess.run")
     def test_cpu_environment_repair_installs_cpu_torch_before_requirements(self, run):

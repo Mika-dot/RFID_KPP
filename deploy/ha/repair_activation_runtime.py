@@ -1,4 +1,4 @@
-"""Apply a tested runtime hotfix to one installed initial HA node, with fencing kept enabled."""
+"""Stage the runtime on each node, then migrate the epoch barrier and verify HA."""
 from __future__ import annotations
 
 import argparse
@@ -11,11 +11,16 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from pathlib import Path
 
 BASE = "0c573bc708f2906c240af64a23e0f6042006a669"
+BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38")
 PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
+OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
+                 "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
+                 "KPP_EventVideoLinks", "KPP_EventSkudLinks")
 
 
 class Abort(RuntimeError):
@@ -100,7 +105,188 @@ def summarize(status):
     result = {key: status.get(key) for key in (
         "node", "active", "healthy", "prepared", "faulted", "sample_age", "release_sha")}
     result["services"] = {name: item.get("ok") for name, item in status.get("services", {}).items()}
+    result["fencing_protocol"] = status.get("fencing_protocol")
+    result["operator_maintenance"] = status.get("operator_maintenance")
     return result
+
+
+def staged_status(code, status, node, release):
+    return (code == 200 and status.get("node") == node
+            and status.get("release_sha") == release and status.get("fencing_protocol") == 2
+            and status.get("sample_age", 999) < 10 and status.get("active") is False
+            and status.get("operator_maintenance") is True)
+
+
+def wait_staged(get_json, token, node, release):
+    deadline = time.monotonic() + 45
+    while True:
+        try:
+            code, status = get_json("http://127.0.0.1:18200/status", token, timeout=5)
+            if staged_status(code, status, node, release):
+                print("RUNTIME_STAGED", node, release, flush=True)
+                return
+        except (OSError, ValueError):
+            pass
+        require(time.monotonic() < deadline, "New agent did not confirm staging")
+        time.sleep(2)
+
+
+def report_errors(cfg, get_json, token):
+    for peer in cfg["nodes"]:
+        try:
+            code, data = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=8)
+            print("DIAGNOSTICS", peer["id"], json.dumps(data, ensure_ascii=False), flush=True)
+        except Exception as exc:
+            print("DIAGNOSTICS_UNAVAILABLE", peer["id"], type(exc).__name__, flush=True)
+
+
+def migration_connection(store):
+    """Find an already configured migration login, before stopping any agent."""
+    from guardian.sql import control_odbc
+    driver = control_odbc()
+    with store.connect() as control:
+        target = tuple(control.execute("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')),DB_NAME()").fetchone())
+    candidates = dict.fromkeys(filter(None, (
+        os.getenv("KPP_MIGRATION_TRUSTED_CONN"), os.getenv("KPP_CONN_STR"),
+        os.getenv("PERIMETER_HA_SQL"))))
+    for candidate in candidates:
+        conn = None
+        try:
+            conn = driver.connect(candidate, timeout=5, autocommit=False)
+            conn.timeout = 5
+            found = tuple(conn.execute("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')),DB_NAME()").fetchone())
+            if found != target:
+                continue
+            if all(conn.execute("SELECT HAS_PERMS_BY_NAME(?, 'OBJECT', 'ALTER')", "dbo." + table).fetchone()[0] == 1
+                   for table in OUTPUT_TABLES):
+                print("SQL_MIGRATION_PERMISSION_OK", flush=True)
+                return candidate
+        except Exception:
+            pass
+        finally:
+            if conn is not None:
+                conn.close()
+    raise Abort("No configured login can ALTER the nine HA triggers; SQL migration permission is required")
+
+
+def check_database_barrier(store):
+    """Exercise actual lock compatibility without inserting business data."""
+    from guardian.sql import epoch_barrier
+    with store.connect() as writer:
+        epoch_barrier(writer, "Shared", 0)
+        writer.execute("SELECT Epoch FROM dbo.KPP_HA_Lease WITH(READCOMMITTEDLOCK) WHERE Id=1").fetchone()
+        with store.connect() as renewal:
+            # Preserve the exact expiry and identity; prove that a row renewal
+            # can acquire its locks while the writer transaction remains open.
+            renewal.execute("UPDATE dbo.KPP_HA_Lease SET ExpiresAt=ExpiresAt WHERE Id=1")
+            renewal.commit()
+        with store.connect() as transfer:
+            try:
+                epoch_barrier(transfer, "Exclusive", 0)
+            except RuntimeError as exc:
+                require(str(exc) == "EpochBarrierUnavailable", "Unexpected SQL barrier error")
+            else:
+                raise Abort("SQL accepted an epoch change while a writer barrier was held")
+        writer.rollback()
+    with store.connect() as transfer:
+        epoch_barrier(transfer, "Exclusive", 0)
+        transfer.rollback()
+    print("SQL_EPOCH_BARRIER_CHECK_OK", flush=True)
+
+
+def finalize(cfg, store, get_json, token, release, source):
+    """An atomic migration is permitted only after all three new agents are paused."""
+    from guardian.sql import control_odbc, epoch_barrier
+    from guardian.config import atomic_json
+    from guardian.repair import redact
+    snapshots = []
+    for peer in cfg["nodes"]:
+        code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
+        require(code == 200 and status.get("node") == peer["id"] and status.get("release_sha") == release
+                and status.get("sample_age", 999) < 10 and status.get("fencing_protocol") == 2,
+                "Stage the new release on all three nodes first: " + peer["id"])
+        snapshots.append((peer, status))
+    if not all(status.get("operator_maintenance") is True for _, status in snapshots):
+        # Resume a previously committed migration after an interrupted release
+        # or repeat verification after an operational readiness failure.
+        with store.connect() as control:
+            definitions = [control.execute("SELECT OBJECT_DEFINITION(OBJECT_ID(?))",
+                           "dbo.HA_" + table).fetchone()[0] for table in OUTPUT_TABLES]
+        require(all(definition and "Perimeter.HA.Epoch" in definition and "READCOMMITTEDLOCK" in definition
+                    and "UPDLOCK" not in definition for definition in definitions),
+                "All three agents must be staged before the first SQL migration")
+        print("SQL_EPOCH_BARRIER_ALREADY_INSTALLED", flush=True)
+        for peer, status in snapshots:
+            if status.get("operator_maintenance"):
+                code, data = get_json(peer["url"].rstrip("/") + "/maintenance", token, timeout=10,
+                                     body={"enabled": False, "release": release})
+                require(code == 200 and data.get("operator_maintenance") is False,
+                        "Could not resume: " + peer["id"])
+        try:
+            wait_cluster(cfg, store, get_json, token, release)
+        except Exception:
+            report_errors(cfg, get_json, token)
+            raise
+        return
+    for peer, status in snapshots:
+        require(staged_status(200, status, peer["id"], release), "A staged worker is still active")
+        code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
+        require(code == 200 and diag.get("workers") == {}, "Workers were not stopped: " + peer["id"])
+    text = migration_connection(store)
+    deadline = time.monotonic() + 45
+    while True:
+        lease = store.lease()
+        require(lease["enabled"], "HA must remain enabled")
+        if not lease["valid"]:
+            break
+        require(time.monotonic() < deadline, "Stopped executor lease did not expire")
+        time.sleep(2)
+    conn = control_odbc().connect(text, timeout=5, autocommit=False)
+    backup = Path(cfg["state_dir"]) / "upgrade-backups" / ("sql-epoch-" + uuid.uuid4().hex)
+    backup.mkdir(parents=True, mode=0o700)
+    try:
+        conn.timeout = 10
+        conn.execute("SET LOCK_TIMEOUT 5000; SET XACT_ABORT ON;")
+        epoch_barrier(conn)
+        row = conn.execute("SELECT Enabled,Owner,CASE WHEN ExpiresAt>SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                           "FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
+        require(row and row[0] and not row[2], "Lease changed before migration")
+        originals = {}
+        for table in OUTPUT_TABLES:
+            row = conn.execute("SELECT OBJECT_DEFINITION(OBJECT_ID(?))", "dbo.HA_" + table).fetchone()
+            require(row and row[0], "Existing HA trigger is missing: " + table)
+            originals[table] = row[0]
+        atomic_json(backup / "triggers.json", originals)
+        (backup / "triggers.json").chmod(0o600)
+        sql = (source / "migrations/004_perimeter_ha_epoch_barrier.sql").read_text(encoding="utf-8-sig")
+        cursor = conn.execute(sql)
+        while cursor.nextset():
+            pass
+        for table in OUTPUT_TABLES:
+            definition = conn.execute("SELECT OBJECT_DEFINITION(OBJECT_ID(?))", "dbo.HA_" + table).fetchone()[0]
+            require("Perimeter.HA.Epoch" in definition and "READCOMMITTEDLOCK" in definition
+                    and "UPDLOCK" not in definition,
+                    "New HA trigger was not verified: " + table)
+        conn.commit()
+        print("SQL_EPOCH_BARRIER_INSTALLED", "backup=" + str(backup), flush=True)
+    except Exception as exc:
+        conn.rollback()
+        print("SQL_MIGRATION_ROLLED_BACK", redact(str(exc)), flush=True)
+        raise
+    finally:
+        conn.close()
+    check_database_barrier(store)
+    # Epoch identities remain faulted until independent preflight has passed.
+    for peer in sorted(cfg["nodes"], key=lambda n: n["priority"]):
+        code, data = get_json(peer["url"].rstrip("/") + "/maintenance", token, timeout=10,
+                             body={"enabled": False, "release": release})
+        require(code == 200 and data.get("operator_maintenance") is False,
+                "Could not resume independent verification: " + peer["id"])
+    try:
+        wait_cluster(cfg, store, get_json, token, release)
+    except Exception:
+        report_errors(cfg, get_json, token)
+        raise
 
 
 def wait_local(get_json, token, node, release):
@@ -128,7 +314,7 @@ def wait_local(get_json, token, node, release):
 
 
 def wait_cluster(cfg, store, get_json, token, release):
-    deadline, streak, identity = time.monotonic() + 300, 0, None
+    deadline, streak, identity = time.monotonic() + 600, 0, None
     while True:
         lease = store.lease()
         rows = []
@@ -160,7 +346,7 @@ def wait_cluster(cfg, store, get_json, token, release):
         identity = current
         print("CLUSTER_WAIT", json.dumps({"lease": lease, "controller": controller,
                                            "healthy_samples": streak, "nodes": rows}), flush=True)
-        if streak >= 3:
+        if streak >= 7:
             print("HA_ACTIVE_PHYSICAL_RESERVES_READY", flush=True)
             return
         require(time.monotonic() < deadline, "Full cluster operation has not been confirmed; send this output")
@@ -168,10 +354,16 @@ def wait_cluster(cfg, store, get_json, token, release):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", required=True)
     parser.add_argument("--node", required=True, choices=("physical", "perimetr", "comparator"))
-    parser.add_argument("--wait-cluster", action="store_true")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--stage", action="store_true")
+    mode.add_argument("--finalize", action="store_true")
+    mode.add_argument("--diagnose", action="store_true")
     args = parser.parse_args(argv)
     require(bool(re.fullmatch(r"[0-9a-f]{40}", args.release)), "An exact release SHA is required")
     windows = os.name == "nt"
@@ -201,6 +393,9 @@ def main(argv=None):
     require(cfg["node_id"] == args.node, "Unexpected configured node identity")
     require(sorted([(n["id"], n["priority"]) for n in cfg["nodes"]], key=lambda n: n[1]) == PRIORITY,
             "Unexpected executor priorities")
+    if args.diagnose:
+        report_errors(cfg, get_json, token)
+        return 0
     record = Path(cfg["state_dir"]) / "release.json"
 
     def git(*arguments):
@@ -220,12 +415,16 @@ def main(argv=None):
         return state
 
     state = initial_state()
-    if state["current"]["sha"] == args.release:
-        wait_local(get_json, token, args.node, args.release)
-        if args.wait_cluster:
-            wait_cluster(cfg, store, get_json, token, args.release)
+    if args.finalize:
+        require(state["current"]["sha"] == args.release, "Stage this node first")
+        finalize(cfg, store, get_json, token, args.release, source)
         return 0
-    require(state["current"]["sha"] == BASE, "Expected the initial runtime release")
+    if windows:
+        migration_connection(store)  # Detect missing DDL permissions BEFORE a rollout.
+    if state["current"]["sha"] == args.release:
+        wait_staged(get_json, token, args.node, args.release)
+        return 0
+    require(state["current"]["sha"] in BASES, "Unexpected runtime release; nothing was stopped")
     require(git("remote", "get-url", "origin").decode().strip().removesuffix(".git") ==
             "https://github.com/Mika-dot/RFID_KPP", "Unexpected source repository")
     git("fetch", "origin", args.release)
@@ -273,15 +472,15 @@ def main(argv=None):
                     os.chown(path, info.st_uid, info.st_gid)
                     path.chmod(0o600)
             state["current"]["sha"] = args.release
+            state["fencing_protocol_min"] = 2
             write_record(record, state)
             write_record(Path(cfg["state_dir"]) / "repair-verification.json", {"required": True})
+            write_record(Path(cfg["state_dir"]) / "operator-maintenance.json", {"enabled": True})
             print("HOTFIX_INSTALLED", args.node, args.release, flush=True)
     finally:
         if restart:
             start_guardian(windows)
-    wait_local(get_json, token, args.node, args.release)
-    if args.wait_cluster:
-        wait_cluster(cfg, store, get_json, token, args.release)
+    wait_staged(get_json, token, args.node, args.release)
     return 0
 
 
@@ -290,5 +489,14 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print("HOTFIX_FAILED", str(exc) if isinstance(exc, Abort) else type(exc).__name__, flush=True)
+        evidence = str(exc) if isinstance(exc, Abort) else traceback.format_exc()
+        for key, value in os.environ.items():
+            if any(part in key.upper() for part in ("PASSWORD", "TOKEN", "CONNECTION", "CONN_STR", "USERNAME")) and len(value) >= 4:
+                evidence = evidence.replace(value, "REDACTED")
+        try:
+            from guardian.repair import redact
+            evidence = redact(evidence)
+        except ImportError:
+            pass
+        print("HOTFIX_FAILED", type(exc).__name__, evidence, flush=True)
         raise SystemExit(2)

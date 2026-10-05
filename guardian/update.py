@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -66,6 +67,18 @@ class Updates:
                 return
         # Initial branch deployment may precede main; require the HA protocol to exist.
         self.git("cat-file", "-e", sha + ":guardian/__main__.py")
+        if self.state.get("fencing_protocol_min", 0) >= 2:
+            # SQL protocol 2 requires every future controller and rollback
+            # candidate to use the same transaction barrier for epoch changes.
+            tree = ast.parse(self.git("show", sha + ":guardian/sql.py"))
+            constants = {}
+            for statement in tree.body:
+                if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Constant):
+                    for target_name in statement.targets:
+                        if isinstance(target_name, ast.Name):
+                            constants[target_name.id] = statement.value.value
+            if constants.get("FENCING_PROTOCOL", 0) != self.state["fencing_protocol_min"] or constants.get("EPOCH_BARRIER") != "Perimeter.HA.Epoch":
+                raise RuntimeError("CandidateFencingProtocolIncompatible")
         # Follow main ancestry, not the deployed feature commit: a squash merge
         # legitimately creates a different commit than the initial installation.
         trusted = self.state.get("trusted_main_sha")

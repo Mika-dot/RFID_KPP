@@ -13,6 +13,7 @@ from guardian.probes import preflight, services_health
 from guardian.processes import Processes
 from guardian.repair import redact
 from guardian.repair import ACTIONS
+from guardian.sql import FENCING_PROTOCOL
 from guardian.update import Updates
 
 
@@ -26,6 +27,9 @@ class Node:
         self.mutation = threading.RLock()
         self.lock = threading.RLock()
         self.maintenance = False
+        self.operator_path = Path(cfg["state_dir"]) / "operator-maintenance.json"
+        self.operator_maintenance = (json.loads(self.operator_path.read_text()).get("enabled", False)
+                                     if self.operator_path.exists() else False)
         self.restart_requested = False
         self.last_sample = 0
         self.resources = {}
@@ -47,9 +51,52 @@ class Node:
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
             result["resources"] = dict(getattr(self, "resources", {}))
-            if self.stop.is_set() or self.maintenance:
+            result["fencing_protocol"] = FENCING_PROTOCOL
+            result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
+            if self.stop.is_set() or self.maintenance or result["operator_maintenance"]:
                 result.update(prepared=False, healthy=False)
             return result
+
+    def diagnostics(self):
+        # A read-only endpoint must remain available on the active executor.
+        # In particular, diagnosing it must not set maintenance or stop workers.
+        with self.mutation:
+            workers = {name: {"running": p.poll() is None, "exit_code": p.poll()}
+                       for name, p in self.processes.children.items()}
+        logs = {}
+        for name in SERVICES:
+            path = Path(self.cfg["state_dir"]) / "logs" / (name + ".log")
+            try:
+                with path.open("rb") as f:
+                    f.seek(max(0, path.stat().st_size - 8192))
+                    tail = f.read(8192).decode("utf-8", "replace")
+                for key, value in os.environ.items():
+                    if any(word in key.upper() for word in ("PASSWORD", "TOKEN", "CONNECTION", "CONN_STR")) and len(value) >= 4:
+                        tail = tail.replace(value, "REDACTED")
+                logs[name] = redact(tail)
+            except FileNotFoundError:
+                logs[name] = ""
+        return {"status": self.snapshot(), "workers": workers, "logs": logs}
+
+    def set_operator_maintenance(self, enabled, release):
+        if not isinstance(enabled, bool) or release != self.updates.state["current"]["sha"]:
+            raise ValueError("UnexpectedMaintenanceRelease")
+        with self.mutation:
+            lease = self.store.lease()
+            if lease["valid"] and lease["owner"] == self.cfg["node_id"]:
+                raise RuntimeError("ActiveNodeRepairForbidden")
+            if enabled:
+                self.store.begin_repair(self.cfg["node_id"])
+                self.processes.stop()
+            atomic_json(self.operator_path, {"enabled": enabled})
+            self.operator_maintenance = enabled
+            self.verified_since = None
+            if not enabled:
+                # Release is not a claim of recovery. The node must still pass
+                # independent preflight continuously for verify_sec.
+                self.repair_attempted = True
+                atomic_json(self.repair_path, {"required": True})
+            return {"operator_maintenance": enabled, "stopped": not bool(self.processes.children)}
 
     def check(self):
         with self.mutation:
@@ -78,18 +125,18 @@ class Node:
         state = self.store.node_state(self.cfg["node_id"])
         owned = lease["valid"] and lease["owner"] == self.cfg["node_id"]
         with self.mutation:
-            if not owned or self.maintenance:
+            if not owned or self.maintenance or getattr(self, "operator_maintenance", False):
                 if self.processes.children:
                     self.processes.stop()
                     self.telemetry.event("demoted", epoch=lease["epoch"])
                 trial_failed = self.updates.state.get("trial_started") and state["faulted"]
                 preparation_failed = (not self.preflight_result["ok"] and
                     time.time()-self.updates.state.get("activated_at", time.time()) > 120)
-                if self.updates.state.get("pending") and (trial_failed or preparation_failed):
+                if not getattr(self, "operator_maintenance", False) and self.updates.state.get("pending") and (trial_failed or preparation_failed):
                     self.updates.rollback()
                     self.restart_requested = True
                     self.stop.set()
-                elif self.updates.activate():
+                elif not getattr(self, "operator_maintenance", False) and self.updates.activate():
                     self.restart_requested = True
                     self.stop.set()
             elif self.processes.epoch != lease["epoch"]:
@@ -109,7 +156,8 @@ class Node:
             self.healthy_since = None
         with self.lock:
             prepared = (self.preflight_result["ok"] and now-self.preflight_at < 90
-                        and not self.maintenance and (healthy if owned else True))
+                        and not self.maintenance and not getattr(self, "operator_maintenance", False)
+                        and (healthy if owned else True))
         if not owned and state["faulted"]:
             # A repair claim is ignored; independently observe post-repair preflight.
             if prepared and self.repair_attempted:
@@ -151,6 +199,8 @@ class Node:
         if service not in ["all"] + list(SERVICES):
             raise ValueError("Unknown service")
         with self.mutation:
+            if getattr(self, "operator_maintenance", False):
+                raise RuntimeError("OperatorMaintenance")
             lease = self.store.lease()
             if lease["valid"] and lease["owner"] == self.cfg["node_id"]:
                 raise RuntimeError("ActiveNodeRepairForbidden")
@@ -223,6 +273,8 @@ class Node:
                     return self.send(401, {"error": "Unauthorized"})
                 if self.path == "/status":
                     return self.send(200, node.snapshot())
+                if self.path == "/diagnostics":
+                    return self.send(200, node.diagnostics())
                 self.send(404, {"error": "NotFound"})
 
             def do_POST(self):
@@ -235,6 +287,8 @@ class Node:
                     data = json.loads(self.rfile.read(size))
                     if self.path == "/repair" and set(data) == {"action", "service"}:
                         return self.send(200, node.repair(data["action"], data["service"]))
+                    if self.path == "/maintenance" and set(data) == {"enabled", "release"}:
+                        return self.send(200, node.set_operator_maintenance(data["enabled"], data["release"]))
                     if self.path == "/demote" and data == {}:
                         with node.mutation:
                             lease = node.store.lease()

@@ -31,9 +31,10 @@ class SqlIntegrationTests(unittest.TestCase):
             raise RuntimeError("Use a fresh test database with no Perimeter tables")
         for table in TABLES:
             cls.conn.execute("CREATE TABLE dbo."+table+"(Id int PRIMARY KEY,[Value] int)")
-        script=(Path(__file__).parents[1]/"migrations/003_perimeter_ha.sql").read_text()
-        for batch in re.split(r"(?im)^GO\s*$",script):
-            if batch.strip(): cls.conn.execute(batch)
+        for migration in ("003_perimeter_ha.sql", "004_perimeter_ha_epoch_barrier.sql"):
+            script=(Path(__file__).parents[1]/"migrations"/migration).read_text()
+            for batch in re.split(r"(?im)^GO\s*$",script):
+                if batch.strip(): cls.conn.execute(batch)
         cls.conn.execute("UPDATE dbo.KPP_HA_Lease SET Enabled=1 WHERE Id=1")
 
     @classmethod
@@ -85,6 +86,26 @@ class SqlIntegrationTests(unittest.TestCase):
         self.conn.execute("UPDATE dbo.KPP_HA_Lease SET ExpiresAt=DATEADD(second,-1,SYSUTCDATETIME())")
         with self.assertRaises(self.pyodbc.Error):
             writer.execute("INSERT dbo.ReelTransitions VALUES(100,1)")
+
+    def test_long_business_transaction_permits_renewal_but_blocks_epoch_transfer(self):
+        epoch = self.store.lease()["epoch"]
+        old = self.writer("physical", epoch)
+        old.autocommit = False
+        old.execute("INSERT dbo.KPP_ProcessingErrors VALUES(901,1)")
+        # Business locks remain open across repeated controller renewals.
+        for _ in range(3):
+            self.store.grant("physical")
+            self.assertEqual(epoch, self.store.lease()["epoch"])
+        with self.assertRaisesRegex(RuntimeError, "EpochBarrierUnavailable"):
+            self.store.grant("perimetr")
+        self.assertEqual("physical", self.store.lease()["owner"])
+        old.commit()
+        self.store.grant("perimetr")
+        with self.assertRaises(self.pyodbc.Error):
+            old.execute("INSERT dbo.KPP_ProcessingErrors VALUES(902,1)")
+        old.rollback()
+        new = self.writer("perimetr", self.store.lease()["epoch"])
+        new.execute("DELETE dbo.KPP_ProcessingErrors WHERE Id=901")
 
     def test_repair_quarantine_blocks_simultaneous_promotion(self):
         self.store.begin_repair("perimetr")
