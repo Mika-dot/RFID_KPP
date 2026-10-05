@@ -1,4 +1,5 @@
 import importlib.util
+from copy import deepcopy
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,6 +11,102 @@ PATH = Path(__file__).resolve().parents[1] / "deploy/ha/upgrade_initial_windows.
 SPEC = importlib.util.spec_from_file_location("initial_windows_upgrade", PATH)
 upgrade = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(upgrade)
+
+
+class ExistingLegacyFaultTests(unittest.TestCase):
+    def health(self, latched=True):
+        deps = {
+            "RfidReader": ("business_flow", "database", "delivery_writer",
+                           "local_spool", "reader_loop", "rfid_reader", "rfid_tcp"),
+            "RusGuardSync": ("destination_database", "source_database", "sync_loop"),
+            "Yolo": ("camera_0", "camera_1", "database", "delivery_writer",
+                     "local_spool", "model", "pipeline"),
+            "Aggregator": ("database", "pipeline", "rfid_reader", "rusguard", "yolo"),
+            "WebDashboard": ("aggregator", "database", "web_port"),
+        }
+        health = {name: {"ok": True, "detail": {
+            "status": "ok", "dependencies": {
+                key: {"status": "ok"} for key in names
+            }}} for name, names in deps.items()}
+        if latched:
+            for name, key, reason in (
+                ("RfidReader", "business_flow", "rfid_business_flow_fault_latched"),
+                ("Aggregator", "rfid_reader", "peer_not_ready"),
+                ("WebDashboard", "aggregator", "peer_not_ready"),
+            ):
+                health[name]["ok"] = False
+                health[name]["detail"]["status"] = "degraded"
+                health[name]["detail"]["dependencies"][key] = {
+                    "status": "unavailable", "detail": reason,
+                }
+        return health
+
+    def test_default_still_rejects_latched_business_flow(self):
+        with self.assertRaisesRegex(ValueError, "not all healthy"):
+            upgrade.legacy_health_mode(self.health())
+
+    def test_explicit_maintenance_mode_keeps_red_statuses_unchanged(self):
+        health = self.health()
+        before = deepcopy(health)
+        self.assertEqual(upgrade.legacy_health_mode(health, True), "existing_latched_rfid")
+        self.assertEqual(health, before)
+
+    def test_healthy_services_need_no_exception(self):
+        for allowed in (False, True):
+            self.assertEqual(upgrade.legacy_health_mode(self.health(False), allowed), "healthy")
+
+    def test_cascade_heartbeat_lag_is_allowed(self):
+        health = self.health()
+        healthy = self.health(False)
+        health["Aggregator"] = healthy["Aggregator"]
+        health["WebDashboard"] = healthy["WebDashboard"]
+        self.assertEqual(upgrade.legacy_health_mode(health, True), "existing_latched_rfid")
+
+    def test_transport_storage_and_other_service_faults_are_rejected(self):
+        for name, deps in (
+            ("RfidReader", ("database", "delivery_writer", "local_spool", "reader_loop",
+                            "rfid_reader", "rfid_tcp")),
+            ("Aggregator", ("database", "pipeline", "rusguard", "yolo")),
+            ("WebDashboard", ("database", "web_port")),
+        ):
+            for key in deps:
+                with self.subTest(service=name, dependency=key):
+                    health = self.health()
+                    health[name]["detail"]["dependencies"][key]["status"] = "unavailable"
+                    with self.assertRaises(ValueError):
+                        upgrade.legacy_health_mode(health, True)
+        for name in ("RusGuardSync", "Yolo"):
+            with self.subTest(service=name):
+                health = self.health()
+                health[name]["ok"] = False
+                with self.assertRaises(ValueError):
+                    upgrade.legacy_health_mode(health, True)
+
+    def test_unknown_missing_and_probe_failed_dependencies_are_rejected(self):
+        changes = (
+            lambda h: h["RfidReader"].update(error="TimeoutError"),
+            lambda h: h["RfidReader"]["detail"]["dependencies"].pop("local_spool"),
+            lambda h: h["RfidReader"]["detail"]["dependencies"].update(
+                unexpected={"status": "unavailable"}),
+            lambda h: h["RfidReader"]["detail"]["dependencies"]["business_flow"].update(
+                detail="probe_OperationalError"),
+            lambda h: h["Aggregator"]["detail"]["dependencies"]["rfid_reader"].update(
+                detail="peer_unreachable"),
+            lambda h: h.pop("Yolo"),
+            lambda h: h.update(unexpected={"ok": True}),
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                health = self.health()
+                change(health)
+                with self.assertRaises(ValueError):
+                    upgrade.legacy_health_mode(health, True)
+
+    def test_new_latch_is_rejected_if_initial_services_were_healthy(self):
+        with self.assertRaisesRegex(ValueError, "worsened"):
+            upgrade.preserve_health_mode("healthy", "existing_latched_rfid")
+        upgrade.preserve_health_mode("existing_latched_rfid", "existing_latched_rfid")
+        upgrade.preserve_health_mode("existing_latched_rfid", "healthy")
 
 
 @unittest.skipUnless(shutil.which("git"), "Git is required")

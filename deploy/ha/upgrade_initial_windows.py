@@ -18,6 +18,55 @@ CACHES = frozenset((
 ))
 
 
+def legacy_health_mode(health, allow_latched_rfid=False):
+    """Accept only a known RFID latch/cascade for this inactive checkout update."""
+    expected = {"RfidReader", "RusGuardSync", "Yolo", "Aggregator", "WebDashboard"}
+    if set(health) != expected:
+        raise ValueError("Unexpected legacy health services")
+    if all(item.get("ok") is True for item in health.values()):
+        return "healthy"
+    if not allow_latched_rfid:
+        raise ValueError("Legacy services are not all healthy")
+
+    for name in ("RusGuardSync", "Yolo"):
+        if health[name].get("ok") is not True:
+            raise ValueError("Additional legacy fault: " + name)
+
+    independent = {
+        "RfidReader": {"database", "delivery_writer", "local_spool", "reader_loop",
+                       "rfid_reader", "rfid_tcp"},
+        "Aggregator": {"database", "pipeline", "rusguard", "yolo"},
+        "WebDashboard": {"database", "web_port"},
+    }
+    cascade = {
+        "RfidReader": ("business_flow", "rfid_business_flow_fault_latched"),
+        "Aggregator": ("rfid_reader", "peer_not_ready"),
+        "WebDashboard": ("aggregator", "peer_not_ready"),
+    }
+    for name, required in independent.items():
+        result = health[name]
+        # Downstream heartbeat updates can lag behind the RFID failure.
+        if name != "RfidReader" and result.get("ok") is True:
+            continue
+        detail = result.get("detail", {})
+        deps = detail.get("dependencies", {})
+        failed, reason = cascade[name]
+        if (result.get("ok") is not False or result.get("error")
+                or detail.get("status") != "degraded"
+                or not required.issubset(deps)
+                or deps.get(failed, {}).get("status") != "unavailable"
+                or deps.get(failed, {}).get("detail") != reason
+                or any(value.get("status") != "ok"
+                       for key, value in deps.items() if key != failed)):
+            raise ValueError("Legacy fault is not the known RFID latch/cascade: " + name)
+    return "existing_latched_rfid"
+
+
+def preserve_health_mode(baseline, current):
+    if baseline == "healthy" and current != "healthy":
+        raise ValueError("Legacy health worsened during inactive checkout update")
+
+
 def names(raw):
     return [os.fsdecode(name) for name in raw.split(b"\0") if name]
 
@@ -69,6 +118,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", required=True)
     parser.add_argument("--from-release", default="d138fcc3d8d674833937e696d60a7fdab448c590")
+    parser.add_argument("--allow-latched-rfid", action="store_true", help=(
+        "Allow only an existing RFID business-flow latch and its downstream cascade "
+        "while updating the never-started HA checkout; does not permit HA activation"))
     args = parser.parse_args(argv)
     if os.name != "nt":
         raise ValueError("Run this initial physical upgrade on native Windows")
@@ -83,6 +135,10 @@ def main(argv=None):
     from guardian.sql import SqlStore
     from guardian.probes import services_health
     import psutil
+    import pyodbc
+
+    # This utility can load an older checkout that still enables ODBC pooling.
+    pyodbc.pooling = False
 
     config = Path("D:/PerimeterHA/node.json")
     cfg = json.loads(config.read_text(encoding="utf-8-sig"))
@@ -98,6 +154,8 @@ def main(argv=None):
 
     def git(*arguments):
         return subprocess.check_output([git_exe, "-C", str(source), *arguments], timeout=90)
+
+    baseline_health = None
 
     def precheck():
         state = subprocess.check_output([
@@ -119,11 +177,14 @@ def main(argv=None):
         if lease["enabled"] or lease["owner"] is not None:
             raise ValueError("HA must remain disabled throughout this initial upgrade")
         health = services_health()
-        if len(health) != 5 or not all(item["ok"] for item in health.values()):
-            raise ValueError("Legacy services are not all healthy")
-        return {"ha_enabled": lease["enabled"], "legacy_services": {k: v["ok"] for k, v in health.items()}}
+        mode = legacy_health_mode(health, args.allow_latched_rfid)
+        preserve_health_mode(baseline_health, mode)
+        return {"ha_enabled": lease["enabled"], "legacy_health_mode": mode,
+                "legacy_services": {k: v["ok"] for k, v in health.items()}}
 
-    print("PHYSICAL_UPGRADE_PRECHECK", json.dumps(precheck()), flush=True)
+    initial = precheck()
+    baseline_health = initial["legacy_health_mode"]
+    print("PHYSICAL_UPGRADE_PRECHECK", json.dumps(initial), flush=True)
     if git("rev-parse", "HEAD").decode().strip() != args.from_release:
         raise ValueError("Unexpected initial physical checkout SHA")
     origin = git("remote", "get-url", "origin").decode().strip().removesuffix(".git")
