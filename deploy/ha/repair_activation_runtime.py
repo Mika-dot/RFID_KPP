@@ -16,7 +16,8 @@ import uuid
 from pathlib import Path
 
 BASE = "0c573bc708f2906c240af64a23e0f6042006a669"
-BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38")
+BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38",
+         "79f79e7ad0836a86808d05b543f14fb9be84e940")
 PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
 OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
                  "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
@@ -83,6 +84,20 @@ def start_guardian(windows):
                        check=True, timeout=25)
     else:
         subprocess.run(["systemctl", "start", "perimeter-guardian"], check=True, timeout=35)
+
+
+def wait_comparator(store):
+    """Keep the stopped Perimetr controller out of the takeover race."""
+    deadline = time.monotonic() + 45
+    while True:
+        with store.connect() as conn:
+            row = conn.execute("SELECT Owner,CASE WHEN ExpiresAt>SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                               "FROM dbo.KPP_HA_Controller WHERE Id=1").fetchone()
+        if row and row[0] == "comparator" and row[1]:
+            print("CONTROLLER_ON_COMPARATOR", flush=True)
+            return
+        require(time.monotonic() < deadline, "Comparator did not take controller ownership")
+        time.sleep(2)
 
 
 def quarantine(store, node):
@@ -421,8 +436,25 @@ def main(argv=None):
         return 0
     if windows:
         migration_connection(store)  # Detect missing DDL permissions BEFORE a rollout.
+    if args.node == "perimetr":
+        for peer in cfg["nodes"]:
+            if peer["id"] != "perimetr":
+                code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
+                require(staged_status(code, status, peer["id"], args.release),
+                        "Stage physical and Comparator before Perimetr: " + peer["id"])
     if state["current"]["sha"] == args.release:
         wait_staged(get_json, token, args.node, args.release)
+        if args.node == "perimetr":
+            with store.connect() as conn:
+                controller = conn.execute("SELECT Owner,CASE WHEN ExpiresAt>SYSUTCDATETIME() THEN 1 ELSE 0 END "
+                                          "FROM dbo.KPP_HA_Controller WHERE Id=1").fetchone()
+            if not (controller and controller[0] == "comparator" and controller[1]):
+                try:
+                    stop_guardian()
+                    wait_comparator(store)
+                finally:
+                    start_guardian(False)
+                wait_staged(get_json, token, args.node, args.release)
         return 0
     require(state["current"]["sha"] in BASES, "Unexpected runtime release; nothing was stopped")
     require(git("remote", "get-url", "origin").decode().strip().removesuffix(".git") ==
@@ -477,6 +509,8 @@ def main(argv=None):
             write_record(Path(cfg["state_dir"]) / "repair-verification.json", {"required": True})
             write_record(Path(cfg["state_dir"]) / "operator-maintenance.json", {"enabled": True})
             print("HOTFIX_INSTALLED", args.node, args.release, flush=True)
+        if args.node == "perimetr":
+            wait_comparator(store)
     finally:
         if restart:
             start_guardian(windows)

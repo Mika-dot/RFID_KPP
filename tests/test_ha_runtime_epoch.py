@@ -9,7 +9,7 @@ import types
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from guardian.node import Node
 from guardian.sql import SqlStore
@@ -169,6 +169,16 @@ class OperatorPauseTests(unittest.TestCase):
 
 
 class RolloutTests(unittest.TestCase):
+    def test_perimetr_handoff_waits_for_valid_comparator_without_claiming_its_lease(self):
+        store = MagicMock()
+        conn = store.connect.return_value.__enter__.return_value
+        conn.execute.return_value.fetchone.side_effect = [("perimetr", True), ("comparator", False), ("comparator", True)]
+        with patch.object(repair.time, "sleep"):
+            repair.wait_comparator(store)
+        store.claim_controller.assert_not_called()
+        store.grant.assert_not_called()
+        self.assertEqual(conn.execute.call_count, 3)
+
     def test_mixed_versions_never_pass_the_sql_migration_gate(self):
         cfg = {"nodes": [{"id": "physical", "url": "http://physical"},
                          {"id": "perimetr", "url": "http://perimetr"}]}
