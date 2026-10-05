@@ -12,6 +12,10 @@ def install():
     if not node or not epoch or not epoch.isdigit():
         raise RuntimeError("Invalid HA writer identity")
     import pyodbc
+    # SESSION_CONTEXT keys are immutable for this connection. Pooled handles
+    # can retain those keys on unixODBC and must never cross worker lifetimes.
+    # Set this before the first worker connection allocates the ODBC environment.
+    pyodbc.pooling = False
     original = pyodbc.connect
     if getattr(original, "_ha_wrapped", False):
         return

@@ -97,6 +97,9 @@ class Processes:
         logdir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.update(self.cfg.get("env", {}))
+        # Pipes under Windows SYSTEM otherwise use the locale (often cp1251),
+        # which cannot encode the dashboard banner or emoji. Capture is UTF-8.
+        env.update(PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         env.update(PERIMETER_HA_NODE=self.cfg["node_id"], PERIMETER_HA_EPOCH=str(epoch),
                    PERIMETER_HA_STATE_DIR=self.cfg["state_dir"],
                    PERIMETER_HEALTH_HOST="127.0.0.1", RFID_HEADLESS="1")
