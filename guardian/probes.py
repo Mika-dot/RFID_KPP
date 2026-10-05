@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from guardian.config import SERVICES
+from guardian.sql import control_odbc
 
 
 def get_json(url, token=None, timeout=3, body=None):
@@ -57,7 +58,7 @@ SELECT COUNT(*) FROM sys.triggers WHERE name IN
 'HA_KPP_EventVideoLinks','HA_KPP_EventSkudLinks') AND is_disabled=0
 """).fetchone()
             checks["sql_fencing"] = row[0] == 9
-        import pyodbc
+        pyodbc = control_odbc()
         env = os.environ.copy()
         env.update(cfg.get("env", {}))
         env.update(PERIMETER_HA_NODE=cfg["node_id"], PERIMETER_HA_STATE_DIR=cfg["state_dir"])

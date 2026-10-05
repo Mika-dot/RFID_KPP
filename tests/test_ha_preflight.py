@@ -33,7 +33,12 @@ class PreflightDatabaseTests(unittest.TestCase):
                 ("sql", "output"), ("sql", "output"), ("sql", "output"),
                 ("other-sql", "output") if different_dst else ("sql", "output")]
             pyodbc = Mock()
+            pyodbc.pooling = True
             pyodbc.connect.return_value = db
+            def connect(*args, **kwargs):
+                self.assertIs(pyodbc.pooling, False)
+                return db
+            pyodbc.connect.side_effect = connect
             with patch.dict(sys.modules, {"pyodbc":pyodbc}), patch("guardian.probes.subprocess.run") as run:
                 run.return_value.returncode = 0
                 result = preflight(cfg, store, active=True)

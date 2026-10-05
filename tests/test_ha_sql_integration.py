@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from guardian.sql import SqlStore
+from guardian.sql import SqlStore, control_odbc
 
 TABLES = ["RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
           "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
@@ -16,7 +16,7 @@ TABLES = ["RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
 class SqlIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        import pyodbc
+        pyodbc = control_odbc()
         cls.pyodbc = pyodbc
         cls.text = os.environ["PERIMETER_HA_TEST_SQL"]
         cls.env = patch.dict(os.environ, {"PERIMETER_HA_SQL":cls.text})

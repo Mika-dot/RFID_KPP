@@ -1,10 +1,14 @@
 import importlib.util
+import contextlib
+import errno
+import io
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "deploy/ha/upgrade_initial_vm.py"
 SPEC = importlib.util.spec_from_file_location("initial_vm_upgrade", MODULE_PATH)
@@ -102,3 +106,42 @@ class InitialCheckoutUpgradeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "mode/deletion"):
             upgrade.checkout_plan(self.source, self.target, self.git)
         self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+
+
+class StoppedGuardianTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        (self.root / "cgroup.controllers").touch()
+        self.group = self.root / "system.slice/perimeter-guardian.service"
+        self.group.mkdir(parents=True)
+        (self.group / "cgroup.events").write_text("populated 0\nfrozen 0\n")
+        self.info = "LoadState=loaded\nActiveState=failed\nMainPID=0\nControlPID=0\nControlGroup=\n"
+
+    def run_stop(self, occupied=False):
+        with patch.object(upgrade.subprocess, "run") as run, \
+                patch.object(upgrade.subprocess, "check_output", side_effect=[self.info, "inactive\n"]), \
+                patch.object(upgrade.socket, "socket") as socket, \
+                contextlib.redirect_stdout(io.StringIO()):
+            socket.return_value.__enter__.return_value.connect_ex.return_value = 0 if occupied else errno.ECONNREFUSED
+            upgrade.stop_guardian(self.root)
+        return run
+
+    def test_failed_unit_is_reset_only_after_no_processes_and_free_ports(self):
+        run = self.run_stop()
+        self.assertEqual(["systemctl", "reset-failed", "perimeter-guardian.service"], run.call_args.args[0])
+
+    def test_live_descendant_blocks_update_even_with_zero_main_pid(self):
+        (self.group / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+        with self.assertRaisesRegex(ValueError, "child processes"):
+            self.run_stop()
+
+    def test_occupied_port_blocks_update(self):
+        with self.assertRaisesRegex(ValueError, "port is still occupied"):
+            self.run_stop(occupied=True)
+
+    def test_active_unit_blocks_update(self):
+        self.info = self.info.replace("ActiveState=failed", "ActiveState=active")
+        with self.assertRaisesRegex(ValueError, "unit processes"):
+            self.run_stop()

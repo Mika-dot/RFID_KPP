@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 
 from guardian.config import read_config
-from guardian.sql import SqlStore
+from guardian.sql import SqlStore, control_odbc
 
 
 def supervise(stop, node, threads, telemetry, resource_guard):
@@ -46,6 +46,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     cfg = read_config(args.config)
     Path(cfg["state_dir"]).mkdir(parents=True, exist_ok=True)
+    # Pooling is a process-wide ODBC environment setting; configure it before
+    # any agent thread or readiness check can create the first connection.
+    control_odbc()
     store = SqlStore(cfg["node_id"])
     if args.command == "migrate":
         sql = (Path(cfg["root"]) / "migrations/003_perimeter_ha.sql").read_text()

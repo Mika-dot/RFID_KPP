@@ -5,6 +5,18 @@ import uuid
 from contextlib import contextmanager
 
 
+def control_odbc():
+    """Configure the Guardian process before pyodbc allocates its first HENV.
+
+    Closing a pooled connection can retain its SQL socket. The control agent's
+    short checks must release physical connections, including readiness probes.
+    Worker interpreters are separate processes and keep their own ODBC settings.
+    """
+    import pyodbc
+    pyodbc.pooling = False
+    return pyodbc
+
+
 class SqlStore:
     """SQL Server's UTC clock and row locks are the sole lease authority."""
 
@@ -14,7 +26,7 @@ class SqlStore:
 
     @contextmanager
     def connect(self):
-        import pyodbc
+        pyodbc = control_odbc()
         conn = pyodbc.connect(os.environ["PERIMETER_HA_SQL"], timeout=3, autocommit=False)
         try:
             conn.timeout = 3
