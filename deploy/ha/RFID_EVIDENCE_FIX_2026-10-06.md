@@ -90,6 +90,9 @@ HOTFIX_PROTOCOL2_RUNTIME_RESTORED; BUSINESS_READ_ACCEPTANCE_NOT_PROVEN.
 
 ## Проверки и точка остановки
 
+GitHub Linux job402 tests success. Windows job обнаружил только прежний mock
+os.geteuid в двух ub22 monitoring tests (этого атрибута на Windows нет); tests
+исправлены с create=True, production temporal/rollout code не менялся.
 402 local tests OK, skipped15 (platform/environment/real SQL dependent), full
 unittest discover после установки только локальных CI dependencies psutil/OpenCV.
 Новые regression10 tests: observed timings, same-time passage, real later evidence,

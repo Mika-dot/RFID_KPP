@@ -26,7 +26,7 @@ class FinishMonitoringTests(unittest.TestCase):
         values = {n: status(n) for n in m.AGENTS}
         values["physical"].update(active=True, healthy=True)
         output = io.StringIO()
-        with patch.object(m.os, "geteuid", return_value=0), patch.object(m, "load_observer", return_value=observer), patch.object(m, "snapshot", return_value=values), patch("sys.argv", ["tool", "--configure-zabbix"]), patch("builtins.input", return_value="-"), redirect_stdout(output):
+        with patch.object(m.os, "geteuid", return_value=0, create=True), patch.object(m, "load_observer", return_value=observer), patch.object(m, "snapshot", return_value=values), patch("sys.argv", ["tool", "--configure-zabbix"]), patch("builtins.input", return_value="-"), redirect_stdout(output):
             self.assertEqual(m.main(), 1)
         self.assertIn("ZABBIX_SETUP_PENDING_DIRECT_LOGIN", output.getvalue())
         self.assertIn("FINAL_HA_READY", output.getvalue())
@@ -36,7 +36,7 @@ class FinishMonitoringTests(unittest.TestCase):
         observer = SimpleNamespace(observer_token=lambda: "secret")
         values = {n: status(n, faulted=True) for n in m.AGENTS}
         output = io.StringIO()
-        with patch.object(m.os, "geteuid", return_value=0), patch.object(m, "load_observer", return_value=observer), patch.object(m, "snapshot", return_value=values), patch.object(m, "finish_grafana", side_effect=RuntimeError("secret")), patch.object(m, "diagnose") as diagnosis, patch("sys.argv", ["tool", "--finish-grafana", "--diagnose"]), redirect_stdout(output):
+        with patch.object(m.os, "geteuid", return_value=0, create=True), patch.object(m, "load_observer", return_value=observer), patch.object(m, "snapshot", return_value=values), patch.object(m, "finish_grafana", side_effect=RuntimeError("secret")), patch.object(m, "diagnose") as diagnosis, patch("sys.argv", ["tool", "--finish-grafana", "--diagnose"]), redirect_stdout(output):
             self.assertEqual(m.main(), 1)
             diagnosis.assert_called_once_with("secret")
         self.assertIn("FINAL_HA_NOT_READY", output.getvalue())
