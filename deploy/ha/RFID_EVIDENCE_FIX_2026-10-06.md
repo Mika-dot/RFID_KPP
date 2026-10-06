@@ -1,6 +1,23 @@
 # Исправление ложного RFID failover, 06.10.2026
 
-## Актуальная точка продолжения: все три hotfix установлены
+## Подтверждённый результат: 06.10.2026 18:54 МСК
+
+**Система запущена.** Пользователь подтвердил HA_ACTIVE_PHYSICAL_RESERVES_READY и
+HOTFIX_PROTOCOL2_RUNTIME_RESTORED на физике: все5 служб готовы,7 stable samples,
+physical leader/epoch264, Comparator controller valid, оба резерва prepared и
+nonfaulted. Все3 на1c7930912ad84e8f205cf16fbdd715c76c9eb74e, protocol2,
+operator_maintenance=false. ub22 подтвердил4 live Grafana queries,
+GRAFANA_FOUR_HA_PANELS_LIVE_AUTOSTART_OBSERVER_OK и FINAL_HA_READY на том же epoch264.
+Zabbix пропущен. Новые команды staging/resume/installer/fault tests не требуются.
+Сохраняется ожидаемый RFID warning rfid_historical_activity_evidence_contradicted;
+реальный бизнес-проход отдельно не принят. Main/adoption auto-update не менялись.
+Полный результат, эксплуатация и ограничения:
+[DEPLOYED_STATUS_2026-10-06.md](DEPLOYED_STATUS_2026-10-06.md).
+
+Ниже — исторические этапы, включая уже устранённые остановки.
+
+
+## Историческая точка: все три hotfix установлены, resume ещё не завершён
 
 Последний вывод пользователя подтверждает HOTFIX_INSTALLED/RUNTIME_STAGED на
 physical, Comparator и Perimetr для **1c7930912ad84e8f205cf16fbdd715c76c9eb74e**.
