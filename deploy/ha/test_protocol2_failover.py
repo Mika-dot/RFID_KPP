@@ -53,12 +53,13 @@ def aggregator_identity(argv, executable, env, cfg, lease):
             and normalized(env.get("PERIMETER_HA_STATE_DIR", "")) == normalized(cfg["state_dir"]))
 
 
-def ready(snapshot, owner, held=False):
+def ready(snapshot, owner, held=False, controller="comparator", held_nodes=()):
     lease, rows = snapshot["lease"], snapshot["nodes"]
     leader = rows[owner]
+    holds = set(held_nodes) | ({"physical"} if held else set())
     return (snapshot["consistent"] and lease["enabled"] is True and lease["valid"] is True
             and lease["owner"] == owner and leader.get("epoch") == lease["epoch"]
-            and snapshot["controller"] == {"owner": "comparator", "valid": True}
+            and snapshot["controller"] == {"owner": controller, "valid": True}
             and leader.get("active") is True and leader.get("healthy") is True
             and leader.get("prepared") is True
             and leader.get("faulted") is False and leader.get("operator_maintenance") is False
@@ -67,8 +68,8 @@ def ready(snapshot, owner, held=False):
             and all(rows[n].get("active") is False for n in NODES if n != owner)
             and all(rows[n].get("prepared") is True and rows[n].get("faulted") is False
                     and rows[n].get("operator_maintenance") is False
-                    for n in NODES if n != owner and not (held and n == "physical"))
-            and (not held or rows["physical"].get("operator_maintenance") is True))
+                    for n in NODES if n != owner and n not in holds)
+            and all(rows[n].get("operator_maintenance") is True for n in holds))
 
 
 class Test:
@@ -141,6 +142,9 @@ class Test:
             self.save_json(self.journal, self.record)
         print(name, flush=True)
 
+    def ready_snapshot(self, snapshot, owner, held):
+        return ready(snapshot, owner, held)
+
     def wait_ready(self, owner, held=False, timeout=600, samples=7):
         deadline, streak, identity = time.monotonic() + timeout, 0, None
         while True:
@@ -148,14 +152,14 @@ class Test:
             try:
                 snapshot = self.observe()
                 lease, rows = snapshot["lease"], snapshot["nodes"]
-                good = ready(snapshot, owner, held)
+                good = self.ready_snapshot(snapshot, owner, held)
                 if good:
                     good = all(self.workers(n) == {} for n in NODES if n != owner)
                     leader_workers = self.workers(owner)
                     good = good and set(leader_workers) == SERVICES and all(v.get("running") is True for v in leader_workers.values())
                     final = self.store.lease()
                     good = good and all(lease[k] == final[k] for k in ("owner", "epoch", "valid", "enabled"))
-                current = (lease["owner"], lease["epoch"])
+                current = (lease["owner"], lease["epoch"], snapshot["controller"]["owner"])
                 streak = streak + 1 if good and identity == current else int(good)
                 identity = current
                 evidence = {"owner": lease["owner"], "epoch": lease["epoch"], "valid": lease["valid"],
@@ -231,11 +235,12 @@ class Test:
 
     def hold_demoted_physical(self):
         deadline = time.monotonic() + 120
+        reserve = getattr(self, "reserve", "perimetr")
         while True:
             try:
                 snapshot = self.observe()
                 lease, physical = snapshot["lease"], snapshot["nodes"]["physical"]
-                if snapshot["consistent"] and lease["owner"] == "perimetr" and lease["valid"]:
+                if snapshot["consistent"] and lease["owner"] == reserve and lease["valid"]:
                     if physical.get("active") is False and self.workers("physical") == {}:
                         self.phase("PHYSICAL_MAINTENANCE_REQUESTED")
                         self.maintain(True)
@@ -247,7 +252,7 @@ class Test:
                 raise
             except Exception as exc:
                 print("AUTOMATIC_DEMOTION_WAIT", type(exc).__name__, flush=True)
-            require(time.monotonic() < deadline, "Automatic Perimetr takeover and physical demotion not confirmed")
+            require(time.monotonic() < deadline, "Automatic reserve takeover and physical demotion not confirmed")
             time.sleep(2)
 
     def release_physical(self):
