@@ -1,6 +1,44 @@
 # Подключение внешнего мониторинга HA, 06.10.2026
 
-## Текущая остановка: частичная установка и деградация, 17:20 МСК
+## Подтверждённый результат, вывод получен 18:16 МСК
+
+Пользователь запустил finish_monitoring.py из906102659389b5202b65ecec4bb3e54d186a6270,
+checksum aeb386b950a5636ac7f22280c677060b2df361a6a04dfc3f3004c874ef934e3f совпал.
+Получен GRAFANA_FOUR_HA_PANELS_LIVE_AUTOSTART_OBSERVER_OK: все4 HA panels сохранены,
+каждый реальный backend query работает, внешний observer enabled/active.
+Dashboard: http://172.31.0.97:3000/d/mositlab-director-wallboard.
+
+Получены HA_ONE_HEALTHY_LEADER_TWO_READY_RESERVES_CONFIRMED и FINAL_HA_READY.
+Epoch237 общий, все3 наf5, protocol2/maintenance=false/faulted=false.
+Physical active/healthy/prepared, все5 workers running и dependencies ok,
+uptime2735сек (около45мин). Оба VM passive/prepared, preflight.ok=true, workers={}.
+Resource restart не требуется. Passive repair skipped на всех3: восстановление
+произошло самостоятельно до запуска, инструмент не останавливал/не ремонтировал
+работающие процессы. Последующие25сек stable samples и финальный snapshot готовы.
+Историческую деградацию17:20 не считать текущим состоянием.
+
+RFID CONNECTED,241 reads/db deliveries, db_errors0, spool_pending0;
+business_flow_latched=false, reader/TCP/database/writer и обе cameras ok.
+Это подтверждает реальную работу служб и приём RFID. Business acceptance точности
+учёта катушек не завершена: Aggregator log содержит неподтверждённые как катушка
+события и recheck533. Не подменять её health/счётчиком чтений; искусственный проход
+не создавался. Main adoption не подтверждён: release_sha=f5 и main_sha=null.
+
+ZABBIX_FINISH_ACTION_INCOMPLETE RuntimeError после ZabbixApiRejected_user_login
+code=-32602. Сервер отклонил местный вход; error data намеренно не раскрыты,
+не угадывать пароль, block/role/версию причины. HA items/triggers этим запуском
+НЕ созданы. Это отдельная незавершённая настройка, не отказ кластера или Grafana.
+Остался только повтор прямого Zabbix этапа на ub22:
+
+    printf '%s  %s\n' aeb386b950a5636ac7f22280c677060b2df361a6a04dfc3f3004c874ef934e3f /tmp/perimeter-finish.3e8Xh0/finish.py | sha256sum --check -
+    sudo python3 -B /tmp/perimeter-finish.3e8Xh0/finish.py --configure-zabbix
+
+Использовать именно Zabbix username, пароль скрыт/не сохраняется. Enter=Admin
+только если такой login пользователя; '-' честно оставляет настройку pending.
+Нужны ZABBIX_DIRECT_HA_ITEMS_AND_TRIGGERS_CONFIGURED и ZABBIX_HA_LIVE_HISTORY_CONFIRMED.
+Повторный полный installer/token-transfer/recovery/failover не требуется.
+
+## Историческая остановка: частичная установка и деградация, 17:20 МСК
 
 Пользователь подтвердил HA_OBSERVER_TOKEN_TRANSFERRED physical→ub22. Повторно
 передавать ключ не требуется. На ub22 запущен install_monitoring.py из ae4cf476;
