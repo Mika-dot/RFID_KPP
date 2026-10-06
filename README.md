@@ -10,6 +10,8 @@
 
 > Канонический репозиторий production-системы КПП. Если вы продолжаете работу после паузы, **сначала прочитайте этот README целиком** и только потом меняйте код/мониторинг.
 
+> **План следующего раунда:** [NEXT_ROUND_PLAN_2026-10-06.md](deploy/ha/NEXT_ROUND_PLAN_2026-10-06.md) — незакрытая production-приёмка, безопасный Git auto-update с mechanical/logical/golden/shadow gates, анализ шин данных, drift/divergence и predictive observability.
+
 ## 0. Коротко: что сейчас считается правильным состоянием
 
 Дата фиксации: **2026-09-16**.
