@@ -12,6 +12,11 @@ spec.loader.exec_module(repair)
 
 
 class RepairSafetyTests(unittest.TestCase):
+    def test_resume_after_stage_is_restricted_before_any_node_io(self):
+        for node, mode in (("physical", "--stage"), ("comparator", "--stage"), ("perimetr", "--diagnose")):
+            with self.subTest(node=node, mode=mode), self.assertRaisesRegex(repair.Abort, "final Perimetr"):
+                repair.main(["--node", node, "--release", "a"*40, mode, "--resume-after-stage"])
+
     def resume_setup(self, released=False):
         cfg = {"nodes": [{"id": n, "priority": i, "url": "http://" + n}
                          for i, n in enumerate(("physical", "perimetr", "comparator"), 1)]}

@@ -1,5 +1,12 @@
 # Подключение внешнего мониторинга HA, 06.10.2026
 
+**Обновление18:23: Zabbix по прямому указанию пользователя ПРОПУЩЕН.
+External observer и4 Grafana panels работают независимо. READY237 больше не
+актуально: в18:20–18:23 unhealthy takeover239→241→243. Root cause — old temporal
+RFID evidence/latch logic, не Grafana/Zabbix/TCP/SQL. Нужен production fix и
+штатное обновление всех3; см. [RFID_EVIDENCE_FIX_2026-10-06.md](RFID_EVIDENCE_FIX_2026-10-06.md).
+Мониторинг не переустанавливать, к Zabbix login не возвращаться как условию работы.**
+
 ## Подтверждённый результат, вывод получен 18:16 МСК
 
 Пользователь запустил finish_monitoring.py из906102659389b5202b65ecec4bb3e54d186a6270,

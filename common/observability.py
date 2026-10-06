@@ -403,14 +403,18 @@ class HealthReporter:
         # Partial business evidence is an operator warning, not proof that a
         # different machine will read better. Keep it visible without causing
         # HA to restart a working transport/pipeline every startup grace period.
-        # Confirmed/latching faults and stale/missing probes still fail closed.
+        # A historical latch contradicted by complete timestamp history stays
+        # visible as a warning. Other latched faults and stale/missing probes
+        # still fail closed.
         warnings = {}
         flow = deps.get("business_flow", {})
         with self.lock:
             unlatched = self.metrics.get("business_flow_latched") is False
-        if (self.service == "Perimeter.RfidReader" and unlatched
-                and flow.get("status") == "degraded"
-                and flow.get("detail") == "rfid_stale_with_partial_activity_evidence"):
+            latched = self.metrics.get("business_flow_latched") is True
+        advisory = (unlatched and flow.get("detail") == "rfid_stale_with_partial_activity_evidence")
+        contradicted_history = (latched and flow.get("detail") == "rfid_historical_activity_evidence_contradicted")
+        if (self.service == "Perimeter.RfidReader" and (advisory or contradicted_history)
+                and flow.get("status") == "degraded"):
             warnings["business_flow"] = {"status": "degraded", "detail": flow["detail"]}
             missing = [name for name in missing if name != "business_flow"]
         is_ready = not self.fatal and not missing

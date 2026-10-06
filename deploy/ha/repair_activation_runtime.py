@@ -22,7 +22,8 @@ from pathlib import Path
 BASE = "0c573bc708f2906c240af64a23e0f6042006a669"
 BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38",
          "79f79e7ad0836a86808d05b543f14fb9be84e940",
-         "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665")
+         "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665",
+         "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa")
 PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
 OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
                  "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
@@ -416,8 +417,8 @@ def resume_protocol2(cfg, store, get_json, token, release):
             if warnings:
                 # Only a typed allowlisted reason; never export arbitrary data.
                 flow = warnings.get("business_flow", {})
-                if name == "RfidReader" and flow.get("detail") == "rfid_stale_with_partial_activity_evidence":
-                    print("RFID_BUSINESS_WARNING partial_activity_evidence; real RFID passage still required", flush=True)
+                if name == "RfidReader" and flow.get("detail") in {"rfid_stale_with_partial_activity_evidence", "rfid_historical_activity_evidence_contradicted"}:
+                    print("RFID_BUSINESS_WARNING", flow["detail"], "; real RFID passage still required", flush=True)
     print("HOTFIX_PROTOCOL2_RUNTIME_RESTORED; BUSINESS_READ_ACCEPTANCE_NOT_PROVEN", flush=True)
 
 
@@ -433,7 +434,11 @@ def main(argv=None):
     mode.add_argument("--finalize", action="store_true")
     mode.add_argument("--diagnose", action="store_true")
     mode.add_argument("--resume-protocol2", action="store_true")
+    parser.add_argument("--resume-after-stage", action="store_true",
+                        help="Perimetr only: after staging all three exact agents, release protocol 2 and verify the cluster")
     args = parser.parse_args(argv)
+    require(not args.resume_after_stage or (args.stage and args.node == "perimetr"),
+            "Resume-after-stage requires the final Perimetr staging step")
     require(bool(re.fullmatch(r"[0-9a-f]{40}", args.release)), "An exact release SHA is required")
     windows = os.name == "nt"
     require((windows and args.node == "physical") or (not windows and args.node != "physical"),
@@ -484,6 +489,10 @@ def main(argv=None):
         return state
 
     state = initial_state()
+    def resume_after_stage():
+        if args.resume_after_stage:
+            with SingleInstanceLock(str(Path(cfg["state_dir"]) / "operator-cutover.lock")):
+                resume_protocol2(cfg, store, get_json, token, args.release)
     if args.resume_protocol2:
         require(windows and args.node == "physical", "Resume protocol 2 from physical only")
         require(state["current"]["sha"] == args.release and state.get("fencing_protocol_min") == 2,
@@ -516,6 +525,7 @@ def main(argv=None):
                 finally:
                     start_guardian(False)
                 wait_staged(get_json, token, args.node, args.release)
+        resume_after_stage()
         return 0
     require(state["current"]["sha"] in BASES, "Unexpected runtime release; nothing was stopped")
     require(git("remote", "get-url", "origin").decode().strip().removesuffix(".git") ==
@@ -532,6 +542,12 @@ def main(argv=None):
                             "-p", "test_ha_runtime_*.py"], cwd=candidate,
                            stdin=subprocess.DEVNULL, timeout=60)
     require(tests.returncode == 0, "Candidate regression tests failed; nothing was stopped")
+    if state["current"]["sha"] == "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa":
+        for pattern in ("test_rfid_evidence_ordering.py", "test_business_flow_selfheal.py", "test_rfid_advisory_readiness.py"):
+            require((candidate / "tests" / pattern).is_file(), "Business-flow candidate regressions required")
+            tests = subprocess.run([cfg["python"], "-B", "-m", "unittest", "discover", "-s", "tests", "-p", pattern],
+                                   cwd=candidate, stdin=subprocess.DEVNULL, timeout=60)
+            require(tests.returncode == 0, "Business-flow regression tests failed; nothing was stopped")
     if state["current"]["sha"] == "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665":
         require((candidate / "tests/test_rfid_advisory_readiness.py").is_file(),
                 "RFID warning regression tests required for this hotfix")
@@ -583,6 +599,7 @@ def main(argv=None):
         if restart:
             start_guardian(windows)
     wait_staged(get_json, token, args.node, args.release)
+    resume_after_stage()
     return 0
 
 
