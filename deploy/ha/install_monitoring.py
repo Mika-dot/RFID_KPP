@@ -1,4 +1,7 @@
-"""Install an independent ub22 HA observer, Zabbix items and existing Grafana panels.
+"""Install an independent ub22 HA observer and existing Grafana panels.
+
+Use finish_monitoring.py for direct Zabbix API setup after installation.
+Grafana Zabbix proxy permits reads only; never send item/trigger writes there.
 
 Self-contained stdlib tool. Does not change HA, SQL, worker processes or main.
 Grafana token is read locally only during installation, never copied to daemon.
@@ -363,6 +366,8 @@ def install():
     def api(path, body=None, method=None):
         return http_json("http://127.0.0.1:3000" + path, token, body, method)[1]
     def rpc(method, params):
+        if method != "host.get":
+            raise ValueError("ZabbixProxyReadOnly")
         value = api("/api/datasources/uid/" + zuid + "/resources/zabbix-api", {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
         if "error" in value or "result" not in value:
             raise RuntimeError("ZabbixApiRejected_" + method.replace(".", "_"))
@@ -489,42 +494,7 @@ def install():
         print("ORIGINAL_WALLBOARD_LAUNCHER_RESTORED", flush=True)
         raise
     print("EXISTING_WALLBOARD_AND_HA_ROUTE_CONFIRMED", flush=True)
-    # Upsert only this tool's own item namespace; keep legacy items and hosts.
-    def item(spec):
-        prior = rpc("item.get", {"hostids": [host["hostid"]], "filter": {"key_": [spec["key_"]]}, "output": "extend", "selectPreprocessing": "extend"})
-        if prior:
-            if len(prior) != 1 or prior[0].get("description") != MARKER:
-                raise ValueError("ExistingItemCollision")
-            save("item-" + prior[0]["itemid"] + ".json", prior)
-            rpc("item.update", dict({k: v for k, v in spec.items() if k != "hostid"}, itemid=prior[0]["itemid"]))
-            return prior[0]["itemid"]
-        return rpc("item.create", spec)["itemids"][0]
-    master = item({"hostid": host["hostid"], "name": "Периметр HA: полный статус кластера", "key_": KEY, "type": 19,
-                   "value_type": 4, "url": BASE + "/status", "delay": "5s", "timeout": "5s", "status_codes": "200",
-                   "retrieve_mode": 0, "history": "1d", "status": 0, "description": MARKER})
-    keys = {"severity": "$.severity", "active_count": "$.active_count", "ready_reserves": "$.ready_reserves", "business_level": "$.business_level"}
-    for node in NODES:
-        for field in ("reachable", "active", "healthy", "prepared", "faulted", "epoch"):
-            keys[node+"."+field] = "$.nodes." + node + "." + field
-    for key, path in keys.items():
-        item({"hostid": host["hostid"], "name": "Периметр HA: " + key, "key_": "perimeter.ha."+key, "type": 18,
-              "master_itemid": master, "value_type": 3, "delay": "0", "history": "30d", "trends": "365d", "status": 0,
-              "description": MARKER, "preprocessing": [{"type": 12, "params": path, "error_handler": 0, "error_handler_params": ""}]})
-    expressions = [("Периметр HA: наблюдатель недоступен", "nodata(/"+host["host"]+"/"+KEY+",45s)=1", 4),
-                   ("Периметр HA: нет готового единственного ведущего", "last(/"+host["host"]+"/perimeter.ha.severity)=2", 4),
-                   ("Периметр HA: резерв или RFID-поток требует внимания", "last(/"+host["host"]+"/perimeter.ha.severity)=1", 2)]
-    for title, expression, priority in expressions:
-        prior = rpc("trigger.get", {"hostids": [host["hostid"]], "filter": {"description": [title]}, "output": "extend"})
-        spec = {"description": title, "expression": expression, "priority": priority, "status": 0, "comments": MARKER,
-                "tags": [{"tag": "component", "value": "perimeter-ha"}]}
-        if prior:
-            if len(prior) != 1 or prior[0].get("comments") != MARKER:
-                raise ValueError("ExistingTriggerCollision")
-            save("trigger-" + prior[0]["triggerid"] + ".json", prior)
-            rpc("trigger.update", dict(spec, triggerid=prior[0]["triggerid"]))
-        else:
-            rpc("trigger.create", spec)
-    print("ZABBIX_HA_ITEMS_AND_TRIGGERS_CONFIGURED", flush=True)
+    # Zabbix configuration requires a direct local API session in finish_monitoring.py.
     # Original version + overwrite=false lets Grafana reject concurrent editing.
     body = {"dashboard": updated, "overwrite": False, "message": MARKER}
     for field in ("folderUid", "folderId"):
@@ -543,18 +513,10 @@ def install():
     if result.get("error") or not any(any(values for values in frame.get("data", {}).get("values", [])) for frame in result.get("frames", [])):
         raise RuntimeError("GrafanaBackendQueryNotConfirmed")
     print("GRAFANA_HA_BACKEND_DATA_CONFIRMED", flush=True)
-    deadline = time.monotonic()+55
-    while time.monotonic() < deadline:
-        rows = rpc("item.get", {"itemids": [master], "output": ["state", "lastclock", "lastvalue"]})
-        if rows and rows[0]["state"] == "0" and int(rows[0]["lastclock"]) >= now//1000-20:
-            break
-        time.sleep(3)
-    else:
-        raise RuntimeError("ZabbixHistoryNotConfirmed")
     if command(["systemctl", "is-enabled", UNIT]) != "enabled" or command(["systemctl", "is-active", UNIT]) != "active":
         raise RuntimeError("ObserverAutostartNotConfirmed")
-    print("ZABBIX_HA_HISTORY_CONFIRMED", flush=True)
-    print("MONITORING_INSTALLED_AUTOSTART_GRAFANA_ZABBIX_OK", flush=True)
+    print("OBSERVER_AND_GRAFANA_INSTALLED_AUTOSTART_OK", flush=True)
+    print("ZABBIX_SETUP_PENDING_RUN_FINISH_MONITORING", flush=True)
     print("CLUSTER_OPERATIONAL_STATE " + json.dumps(http_json(BASE+"/status")[1], ensure_ascii=False), flush=True)
     incoming_token.unlink(missing_ok=True)
 

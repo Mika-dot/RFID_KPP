@@ -1,5 +1,77 @@
 # Подключение внешнего мониторинга HA, 06.10.2026
 
+## Текущая остановка: частичная установка и деградация, 17:20 МСК
+
+Пользователь подтвердил HA_OBSERVER_TOKEN_TRANSFERRED physical→ub22. Повторно
+передавать ключ не требуется. На ub22 запущен install_monitoring.py из ae4cf476;
+checksum совпал, observer и wallboard adapter установлены. Получен marker
+EXISTING_WALLBOARD_AND_HA_ROUTE_CONFIRMED, затем MONITORING_ACTION_INCOMPLETE
+HTTP_403. Существующий wallboard сохранён. Grafana HA panels и Zabbix items этим
+запуском НЕ созданы: прежний installer делал Zabbix writes раньше сохранения panels.
+
+Свежий наблюдатель (timestamp1791296415): все три узла доступны по точным IP,
+на f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa, epoch230. Physical active=true,
+healthy=false/prepared=false/faulted=false; не готовы RfidReader, Aggregator,
+WebDashboard. Perimetr и Comparator passive/prepared=true/faulted=true. Готовых
+резервов0, severity2. Исторический успех15:38 не подтверждает текущее состояние.
+Конкретная причина текущего отказа RFID ещё НЕ установлена; latch/SQL/transport
+нельзя объявлять причиной без diagnostics. Принятие main0b022bf не подтверждено.
+
+Причина HTTP403 в конфигураторе доказана исходниками официального grafana-zabbix:
+pkg/datasource/guardrails.go разрешает read API methods, не item.create/update
+и trigger.create/update; resource_handler.go отвергает их HTTP403. Это ошибка
+маршрута установщика, не доказательство неверного пароля/недостаточных прав.
+Нельзя снимать guardrails, менять Grafana роли или извлекать datasource passwords.
+install_monitoring.py теперь не отправляет Zabbix writes через этот proxy; новая
+установка завершает observer/Grafana и явно оставляет прямой Zabbix setup pending.
+На текущем ub22 повторять --install не нужно: observer уже работает.
+
+Следующий единственный запуск на ub22: скачанный pinned finish_monitoring.py:
+
+    sudo python3 -B finish.py --finish-grafana --diagnose --repair-passive --configure-zabbix
+
+Инструмент импортирует уже установленный observer /usr/local/lib/perimeter-ha-monitor/monitor.py,
+не перезапускает daemon/wallboard и использует существующий root credential.
+1. Сохраняет4 HA panels в director dashboard, сохраняет прочие panels/options,
+   проверяет все4 backend queries и enabled/active external observer. Dashboard
+   backup0700/0600 в /var/lib/perimeter-ha-monitor/backups/grafana-<uuid>.
+2. GET /diagnostics всех3 agents: status, preflight, resources, workers, readiness,
+   business dependencies/metrics и короткие redacted logs. Секреты дополнительно
+   удаляются локально; operator-maintenance/cursors/spools/latch не меняются.
+3. Не более одного штатного restart_service/all repair request на каждый узел,
+   только при fresh protocol2 passive/faulted/prepared, preflight.ok=true,
+   maintenance=false, resources.restart_required=false. Повторные status/diagnostics
+   должны иметь ту же epoch/release и workers={}. Guardian SQL owner/rate guards
+   дополнительно проверяют состояние при запросе. Active owner не ремонтируется.
+   Fault снимает только Guardian после собственного recovery verification.
+   До105сек ожидается один healthy/prepared/nonfaulted owner и оба prepared/nonfaulted
+   reserves на общей epoch; подтверждение требует25сек стабильности. Это штатное
+   восстановление, не повторное испытание отказа. При failure выводятся причины;
+   SQL fault flags не сбрасываются принудительно и бизнес-отказ не маскируется.
+4. Локально запрашивает Zabbix login (Enter=Admin) и скрытый пароль Zabbix,
+   отдельно от Linux sudo/SSH. '-' пропускает только этот этап и явно оставляет pending;
+   финальное состояние кластера всё равно выводится. Пароль/сессия не сохраняются.
+   Используется прямой http://127.0.0.1/api_jsonrpc.php, version6.x, затем local
+   user.login. Только managed HA items/triggers существующего host10539; collision
+   отказывает, backup перед managed updates. Проверяет свежую Zabbix историю.
+   Новых actions/recipients не создаёт. Вход недостаточной роли честно отказывает.
+
+Markers: GRAFANA_FOUR_HA_PANELS_LIVE_AUTOSTART_OBSERVER_OK означает живые4 queries;
+ZABBIX_DIRECT_HA_ITEMS_AND_TRIGGERS_CONFIGURED и ZABBIX_HA_LIVE_HISTORY_CONFIRMED
+означают установленный Zabbix setup/сбор. FINAL_CLUSTER_STATE и FINAL_HA_READY
+либо FINAL_HA_NOT_READY отдельно отражают текущую готовность системы. Успех
+мониторинга не подменяет успех production. Ошибка Grafana/Zabbix не блокирует
+независимую диагностику и безопасную попытку восстановления. Полный успех exit0
+требует завершённых requested actions и готового кластера; pending/failure exit1.
+
+Проверено:35 monitoring tests, включая passive-only guard, active repair запрет,
+workers/epoch recheck, failover consistency, local direct API credential scope,
+redaction, skip-login final state и независимую диагностику после Grafana failure.
+На заводских узлах новый инструмент пока НЕ запущен. Настоящий RFID-проход
+пользователем отложен и не имитируется. Production code/main не менялись.
+
+## Предыдущая подготовка и исторические данные (до 17:20)
+
 Последняя заводская квалификация стека: f5, physical189 active/healthy, оба
 резерва prepared/nonfaulted, 15:38 МСК. PR#3 объединён в main0b022bf в16:03.
 Принятие main заводскими агентами ещё не подтверждено.
