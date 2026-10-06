@@ -108,6 +108,14 @@ staged/untracked файлы и ранее запущенные релизы тр
 Если контрольная метка затронет учёт 1С, для обновления этой отдельной неактивной
 копии можно явно указать `--allow-latched-rfid`. Допускается только сохранённый
 `rfid_business_flow_fault_latched` и его следствие в Aggregator/WebDashboard.
+
+Неполная активность (`rfid_stale_with_partial_activity_evidence`) остаётся
+`dependencies.business_flow.status=degraded` и дополнительно видна в
+`warnings.business_flow`. Если latch=false и все технические зависимости исправны,
+это предупреждение не снимает operational readiness и не запускает HA failover.
+Подтверждённое отсутствие RFID при достаточной активности, latch, stale probe и
+технические отказы остаются HTTP503. Готовность пяти служб не заменяет приёмку
+настоящего RFID-прохода; бизнес-предупреждение нужно отдельно подключить в Zabbix.
 RFID transport, цикл чтения, spool, доставка и БД должны быть готовы;
 RusGuardSync и Yolo должны отвечать ready. Другая ошибка блокирует обновление.
 В отчёте сохраняются реальные красные статусы и режим `existing_latched_rfid`.

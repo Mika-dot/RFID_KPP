@@ -350,7 +350,7 @@ def health_summary(body):
     """Keep dependency reasons and metrics; omit repeated timestamps/metadata."""
     if not isinstance(body, dict):
         return {}
-    result = {k: body[k] for k in ("status", "started_at", "uptime_seconds", "metrics") if k in body}
+    result = {k: body[k] for k in ("status", "started_at", "uptime_seconds", "metrics", "warnings") if k in body}
     dependencies = body.get("dependencies", {})
     if isinstance(dependencies, dict):
         result["dependencies"] = {

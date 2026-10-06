@@ -1,4 +1,9 @@
-"""Stage the runtime on each node, then migrate the epoch barrier and verify HA."""
+"""Stage a guarded runtime hotfix on each node.
+
+For an existing protocol 2 deployment use --resume-protocol2 from physical:
+it verifies the nine existing triggers and releases staged maintenance without
+SQL migration. --finalize is the older schema-migration workflow.
+"""
 from __future__ import annotations
 
 import argparse
@@ -11,13 +16,13 @@ import socket
 import subprocess
 import sys
 import time
-import traceback
 import uuid
 from pathlib import Path
 
 BASE = "0c573bc708f2906c240af64a23e0f6042006a669"
 BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38",
-         "79f79e7ad0836a86808d05b543f14fb9be84e940")
+         "79f79e7ad0836a86808d05b543f14fb9be84e940",
+         "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665")
 PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
 OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
                  "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
@@ -368,6 +373,54 @@ def wait_cluster(cfg, store, get_json, token, release):
         time.sleep(10)
 
 
+def resume_protocol2(cfg, store, get_json, token, release):
+    """Resume a staged hotfix against existing protocol 2; no DDL/migrations."""
+    require(store.lease()["enabled"] is True, "Existing enabled protocol 2 HA required")
+    with store.connect() as conn:
+        for table in OUTPUT_TABLES:
+            row = conn.execute("SELECT is_disabled,OBJECT_DEFINITION(object_id) FROM sys.triggers "
+                               "WHERE name=?", "HA_" + table).fetchone()
+            require(row and not row[0] and row[1] and "Perimeter.HA.Epoch" in row[1]
+                    and "READCOMMITTEDLOCK" in row[1] and "UPDLOCK" not in row[1],
+                    "Existing protocol 2 trigger required: " + table)
+    snapshots = []
+    for peer in cfg["nodes"]:
+        code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
+        require(code == 200 and status.get("node") == peer["id"]
+                and status.get("release_sha") == release and status.get("fencing_protocol") == 2
+                and status.get("sample_age", 999) < 10
+                and status.get("preflight", {}).get("ok") is True
+                and type(status.get("operator_maintenance")) is bool
+                and not status.get("resources", {}).get("restart_required"),
+                "All three exact hotfix agents required before resume: " + peer["id"])
+        if status["operator_maintenance"]:
+            code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
+            require(status.get("active") is False and code == 200 and diag.get("workers") == {},
+                    "Held executor must be inactive and empty: " + peer["id"])
+        snapshots.append((peer, status))
+    print("SQL_PROTOCOL2_EXISTING_VERIFIED_NO_MIGRATION", flush=True)
+    for peer, status in sorted(snapshots, key=lambda item: item[0]["priority"]):
+        require(store.lease()["enabled"] is True, "HA mode changed; resume stopped")
+        if status["operator_maintenance"]:
+            code, data = get_json(peer["url"].rstrip("/") + "/maintenance", token, timeout=10,
+                                 body={"enabled": False, "release": release})
+            require(code == 200 and data.get("operator_maintenance") is False,
+                    "Independent verification release unconfirmed: " + peer["id"])
+            print("HOTFIX_RELEASED_FOR_INDEPENDENT_VERIFICATION", peer["id"], flush=True)
+    wait_cluster(cfg, store, get_json, token, release)
+    code, status = get_json(next(p["url"] for p in cfg["nodes"] if p["id"] == "physical").rstrip("/")
+                            + "/status", token, timeout=5)
+    if code == 200:
+        for name, health in status.get("services", {}).items():
+            warnings = health.get("detail", {}).get("warnings")
+            if warnings:
+                # Only a typed allowlisted reason; never export arbitrary data.
+                flow = warnings.get("business_flow", {})
+                if name == "RfidReader" and flow.get("detail") == "rfid_stale_with_partial_activity_evidence":
+                    print("RFID_BUSINESS_WARNING partial_activity_evidence; real RFID passage still required", flush=True)
+    print("HOTFIX_PROTOCOL2_RUNTIME_RESTORED; BUSINESS_READ_ACCEPTANCE_NOT_PROVEN", flush=True)
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -379,6 +432,7 @@ def main(argv=None):
     mode.add_argument("--stage", action="store_true")
     mode.add_argument("--finalize", action="store_true")
     mode.add_argument("--diagnose", action="store_true")
+    mode.add_argument("--resume-protocol2", action="store_true")
     args = parser.parse_args(argv)
     require(bool(re.fullmatch(r"[0-9a-f]{40}", args.release)), "An exact release SHA is required")
     windows = os.name == "nt"
@@ -430,6 +484,13 @@ def main(argv=None):
         return state
 
     state = initial_state()
+    if args.resume_protocol2:
+        require(windows and args.node == "physical", "Resume protocol 2 from physical only")
+        require(state["current"]["sha"] == args.release and state.get("fencing_protocol_min") == 2,
+                "Stage this exact protocol 2 hotfix on physical first")
+        with SingleInstanceLock(str(Path(cfg["state_dir"]) / "operator-cutover.lock")):
+            resume_protocol2(cfg, store, get_json, token, args.release)
+        return 0
     if args.finalize:
         require(state["current"]["sha"] == args.release, "Stage this node first")
         finalize(cfg, store, get_json, token, args.release, source)
@@ -471,6 +532,13 @@ def main(argv=None):
                             "-p", "test_ha_runtime_*.py"], cwd=candidate,
                            stdin=subprocess.DEVNULL, timeout=60)
     require(tests.returncode == 0, "Candidate regression tests failed; nothing was stopped")
+    if state["current"]["sha"] == "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665":
+        require((candidate / "tests/test_rfid_advisory_readiness.py").is_file(),
+                "RFID warning regression tests required for this hotfix")
+        tests = subprocess.run([cfg["python"], "-B", "-m", "unittest", "discover", "-s", "tests",
+                                "-p", "test_rfid_advisory_readiness.py"], cwd=candidate,
+                               stdin=subprocess.DEVNULL, timeout=60)
+        require(tests.returncode == 0, "RFID warning regression tests failed; nothing was stopped")
     backup = Path(cfg["state_dir"]) / "upgrade-backups" / uuid.uuid4().hex
     if windows:
         save_caches(backup, plan)
@@ -523,14 +591,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        evidence = str(exc) if isinstance(exc, Abort) else traceback.format_exc()
-        for key, value in os.environ.items():
-            if any(part in key.upper() for part in ("PASSWORD", "TOKEN", "CONNECTION", "CONN_STR", "USERNAME")) and len(value) >= 4:
-                evidence = evidence.replace(value, "REDACTED")
-        try:
-            from guardian.repair import redact
-            evidence = redact(evidence)
-        except ImportError:
-            pass
-        print("HOTFIX_FAILED", type(exc).__name__, evidence, flush=True)
+        print("HOTFIX_FAILED", type(exc).__name__, str(exc) if isinstance(exc, Abort) else "", flush=True)
         raise SystemExit(2)
