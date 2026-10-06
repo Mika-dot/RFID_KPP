@@ -29,7 +29,7 @@ class BusinessFlowSelfHealTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertFalse(result.latch_fault)
 
-    def test_warehouse_only_makes_readiness_degraded_but_does_not_restart(self) -> None:
+    def test_warehouse_only_keeps_business_dependency_degraded_but_does_not_restart(self) -> None:
         result = assess_rfid_flow(
             now=self.now,
             rfid_at=self.now - timedelta(hours=2),

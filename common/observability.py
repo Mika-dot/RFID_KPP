@@ -400,6 +400,19 @@ class HealthReporter:
             for name in self.required_dependencies
             if deps.get(name, {}).get("status") != "ok"
         ]
+        # Partial business evidence is an operator warning, not proof that a
+        # different machine will read better. Keep it visible without causing
+        # HA to restart a working transport/pipeline every startup grace period.
+        # Confirmed/latching faults and stale/missing probes still fail closed.
+        warnings = {}
+        flow = deps.get("business_flow", {})
+        with self.lock:
+            unlatched = self.metrics.get("business_flow_latched") is False
+        if (self.service == "Perimeter.RfidReader" and unlatched
+                and flow.get("status") == "degraded"
+                and flow.get("detail") == "rfid_stale_with_partial_activity_evidence"):
+            warnings["business_flow"] = {"status": "degraded", "detail": flow["detail"]}
+            missing = [name for name in missing if name != "business_flow"]
         is_ready = not self.fatal and not missing
         status = "ok" if (is_ready or not ready) else "degraded"
         with self.lock:
@@ -415,6 +428,8 @@ class HealthReporter:
             if ready:
                 payload["dependencies"] = deps
                 payload["metrics"] = dict(self.metrics)
+                if warnings:
+                    payload["warnings"] = warnings
         return payload, 200 if (not ready or is_ready) else 503
 
     def _write_heartbeat(self, force_ready: bool = False) -> None:

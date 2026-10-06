@@ -1,0 +1,26 @@
+[Unit]
+Description=Perimeter node agent, deterministic HA controller and repair worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=perimeter
+Group=perimeter
+WorkingDirectory=/opt/perimeter/source
+EnvironmentFile=/etc/perimeter/environment
+Environment=TZ=Europe/Moscow
+ExecStart=/opt/perimeter/venv/bin/python /opt/perimeter/source/guardian/boot.py --config /etc/perimeter/node.json
+Restart=always
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

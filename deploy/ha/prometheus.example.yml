@@ -1,0 +1,6 @@
+scrape_configs:
+  - job_name: perimeter-ha
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['172.31.0.188:18200', 'perimetr:18200', 'Comparator:18200']
+    # Existing 18101..18105 Zabbix readiness remains in place.

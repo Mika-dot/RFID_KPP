@@ -4,6 +4,7 @@ import importlib.util
 import tempfile
 import unittest
 import sys
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +22,22 @@ spec.loader.exec_module(rtsp)
 
 
 class SpoolTests(unittest.TestCase):
+    def test_connection_closes_and_failed_transaction_rolls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = rtsp.DurableEventSpool(str(Path(tmp) / "spool.sqlite"))
+            with spool._connect() as conn:
+                conn.execute("CREATE TABLE transaction_probe (value INTEGER)")
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+            with self.assertRaisesRegex(RuntimeError, "abort"):
+                with spool._connect() as conn:
+                    conn.execute("INSERT INTO transaction_probe VALUES(1)")
+                    raise RuntimeError("abort")
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
+            with spool._connect() as conn:
+                self.assertEqual(0, conn.execute("SELECT COUNT(*) FROM transaction_probe").fetchone()[0])
+
     def test_enqueue_is_durable_and_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             spool = rtsp.DurableEventSpool(str(Path(tmp) / "spool.sqlite"))

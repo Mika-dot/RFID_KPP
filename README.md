@@ -1,5 +1,13 @@
 # RFID КПП «Периметр» — production runbook
 
+> **Рабочий HA, 06.10.2026 15:38 МСК:** система запущена на3 узлах с runtime
+> `f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa`, protocol2. Physical epoch189:
+> все5 служб healthy, оба резерва готовы, controller Comparator. Испытаны полные
+> переключения на Comparator и Perimetr с возвратом. Итоги и оставшиеся задачи:
+> [RESUME_2026-10-06.md](deploy/ha/RESUME_2026-10-06.md). Тест настоящей метки
+> отложен пользователем; main auto-update и новые внешние HA/business items ещё
+> не приняты. При HA ON запуском управляет PerimeterGuardian, legacy не запускать.
+
 > Канонический репозиторий production-системы КПП. Если вы продолжаете работу после паузы, **сначала прочитайте этот README целиком** и только потом меняйте код/мониторинг.
 
 ## 0. Коротко: что сейчас считается правильным состоянием
@@ -12,7 +20,7 @@
 D:\Desktop\RFID_KPP-main
 ```
 
-Штатный запуск всей системы:
+Исторический legacy запуск до ввода HA (при текущем HA ON не запускать):
 
 ```bat
 RUN_RFID_KPP_FINAL.cmd
@@ -802,3 +810,21 @@ web_port = ok
 13. никогда не публиковать `deploy/config_v3.cmd`.
 
 Если всё это соблюдено — изменения обычно можно делать точечно, без перестройки всей системы.
+
+---
+
+# 19. Трёхузловое резервирование и ремонт
+
+Ветка `feature/perimeter-ha-guardian` добавляет отдельный HA-агент, жёсткий
+приоритет `physical → perimetr → comparator`, SQL lease/epoch fencing,
+запасной контроллер, Wine-мост существующей UHFAPI.dll, ограниченные инструменты
+ремонта через LM Studio и поэтапное обновление exact SHA из main с откатом.
+
+Установка, порядок SQL cutover, проверка Wine/считывателя, границы гарантий и
+подключение к существующему мониторингу: [deploy/ha/README.md](deploy/ha/README.md).
+На06.10.2026 15:38 HA работает на всех3 узлах с exact runtime f5fdb6a, protocol2:
+physical189 all5 healthy, оба reserves готовы. Full-stack takeover Comparator183
+и Perimetr187 с возвратом подтверждены. История и оставшаяся работа:
+[RESUME_2026-10-06.md](deploy/ha/RESUME_2026-10-06.md). Реальный RFID-проход
+отложен; main auto-update и внешние HA/business monitoring items ещё не приняты.
+Business-контракты выше сохраняют своё назначение.

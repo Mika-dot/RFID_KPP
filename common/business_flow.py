@@ -134,8 +134,9 @@ def assess_rfid_flow(
             latch_fault=True,
         )
 
-    # Warehouse is delayed business evidence, so it must make readiness red but
-    # cannot by itself trigger an automatic hardware restart.
+    # Partial/delayed evidence keeps business_flow degraded. The health adapter
+    # exposes this as a warning while operational dependencies remain ready;
+    # it cannot by itself trigger a hardware restart or HA failover.
     if warehouse_recent_events > 0 or video_recent_events > 0:
         return RfidFlowAssessment(
             "degraded",
