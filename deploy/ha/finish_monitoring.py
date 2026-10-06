@@ -195,6 +195,11 @@ def finish_grafana(m):
     if not old.get("meta", {}).get("canSave"):
         raise ValueError("ExistingDashboardNotWritable")
     new = m.make_panels(old["dashboard"])
+    # The installed observer can still generate the older numeric-only Stat
+    # defaults. Include string fields so leader/business values are rendered.
+    for panel in new["panels"]:
+        if panel.get("description") == MARKER and panel.get("type") == "stat":
+            panel["options"]["reduceOptions"]["fields"] = "/.*/"
     backup = Path("/var/lib/perimeter-ha-monitor/backups") / ("grafana-"+uuid.uuid4().hex)
     backup.mkdir(parents=True, mode=0o700)
     os.chmod(backup, 0o700)

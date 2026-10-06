@@ -28,6 +28,7 @@ PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
 OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
                  "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
                  "KPP_EventVideoLinks", "KPP_EventSkudLinks")
+RESUME_PREFLIGHT_TIMEOUT = 180
 
 
 class Abort(RuntimeError):
@@ -374,6 +375,53 @@ def wait_cluster(cfg, store, get_json, token, release):
         time.sleep(10)
 
 
+def wait_resume_agents(cfg, store, get_json, token, release):
+    """Wait for asynchronous probes; keep every node held until all checks pass."""
+    deadline = time.monotonic() + RESUME_PREFLIGHT_TIMEOUT
+    check_names = ("starting", "space", "sql_fencing", "same_output_database",
+                   "entrypoints", "configuration", "model", "masks", "dll_file",
+                   "ports_free", "sdk_load", "python_dependencies", "exception")
+    while True:
+        require(store.lease()["enabled"] is True, "HA mode changed; resume stopped")
+        snapshots, rows = [], []
+        for peer in cfg["nodes"]:
+            try:
+                code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
+            except (OSError, ValueError) as exc:
+                rows.append({"node": peer["id"], "error": type(exc).__name__})
+                continue
+            require(code not in (401, 403), "Resume authentication refused: " + peer["id"])
+            if code != 200:
+                rows.append({"node": peer["id"], "http": code})
+                continue
+            require(status.get("node") == peer["id"] and status.get("release_sha") == release
+                    and status.get("fencing_protocol") == 2
+                    and type(status.get("operator_maintenance")) is bool,
+                    "All three exact hotfix agents required before resume: " + peer["id"])
+            require(not status.get("resources", {}).get("restart_required"),
+                    "Agent resource restart required before resume: " + peer["id"])
+            if status["operator_maintenance"]:
+                code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
+                require(status.get("active") is False and code == 200 and diag.get("workers") == {},
+                        "Held executor must be inactive and empty: " + peer["id"])
+            preflight = status.get("preflight", {})
+            checks = preflight.get("checks", {})
+            ready = status.get("sample_age", 999) < 10 and preflight.get("ok") is True
+            rows.append({"node": peer["id"], "sample_age": status.get("sample_age"),
+                         "preflight_ok": preflight.get("ok") is True,
+                         "failed_checks": [name for name in check_names
+                                           if name in checks and checks[name] is not True]})
+            if ready:
+                snapshots.append((peer, status))
+        if len(snapshots) == len(cfg["nodes"]):
+            print("HOTFIX_ALL_AGENTS_PREFLIGHT_OK", flush=True)
+            return snapshots
+        print("HOTFIX_RESUME_PREFLIGHT_WAIT", json.dumps(rows), flush=True)
+        require(time.monotonic() < deadline,
+                "Agent preflight did not become ready; no maintenance was released; see checks above")
+        time.sleep(3)
+
+
 def resume_protocol2(cfg, store, get_json, token, release):
     """Resume a staged hotfix against existing protocol 2; no DDL/migrations."""
     require(store.lease()["enabled"] is True, "Existing enabled protocol 2 HA required")
@@ -384,21 +432,7 @@ def resume_protocol2(cfg, store, get_json, token, release):
             require(row and not row[0] and row[1] and "Perimeter.HA.Epoch" in row[1]
                     and "READCOMMITTEDLOCK" in row[1] and "UPDLOCK" not in row[1],
                     "Existing protocol 2 trigger required: " + table)
-    snapshots = []
-    for peer in cfg["nodes"]:
-        code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
-        require(code == 200 and status.get("node") == peer["id"]
-                and status.get("release_sha") == release and status.get("fencing_protocol") == 2
-                and status.get("sample_age", 999) < 10
-                and status.get("preflight", {}).get("ok") is True
-                and type(status.get("operator_maintenance")) is bool
-                and not status.get("resources", {}).get("restart_required"),
-                "All three exact hotfix agents required before resume: " + peer["id"])
-        if status["operator_maintenance"]:
-            code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
-            require(status.get("active") is False and code == 200 and diag.get("workers") == {},
-                    "Held executor must be inactive and empty: " + peer["id"])
-        snapshots.append((peer, status))
+    snapshots = wait_resume_agents(cfg, store, get_json, token, release)
     print("SQL_PROTOCOL2_EXISTING_VERIFIED_NO_MIGRATION", flush=True)
     for peer, status in sorted(snapshots, key=lambda item: item[0]["priority"]):
         require(store.lease()["enabled"] is True, "HA mode changed; resume stopped")
