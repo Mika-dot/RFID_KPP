@@ -10,6 +10,7 @@ import argparse
 import ast
 import hashlib
 import json
+import math
 import os
 import re
 import socket
@@ -254,6 +255,60 @@ def local_logs(state, env):
     return result
 
 
+def audit_snapshot(state):
+    """Bounded read of HA events; export only typed, known nonsecret fields."""
+    kinds = {"controller_role", "controller_error", "failover", "failback", "rolling_update",
+             "promoted", "demoted", "repair_verified", "repair_step", "repair_failed", "agent_rescue",
+             "update_staged", "update_activated", "update_confirmed", "update_rejected",
+             "python_environment_rebuilt", "update_check_failed", "agent_resource_exhausted", "node_error"}
+    nodes = {"physical", "perimetr", "comparator"}
+    rows, files, malformed = [], {}, 0
+    for name in ("audit.previous.jsonl", "audit.jsonl"):
+        path = state / name
+        files[name] = {"exists": path.is_file()}
+        if not path.is_file():
+            continue
+        with path.open("rb") as stream:
+            start = max(0, path.stat().st_size - 256 * 1024)
+            stream.seek(start)
+            raw = stream.read(256 * 1024)
+        if start:
+            raw = raw.split(b"\n", 1)[1] if b"\n" in raw else b""
+        for line in raw.decode("utf-8", "replace").splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                malformed += 1
+                continue
+            if (not isinstance(event, dict) or not isinstance(event.get("kind"), str) or event["kind"] not in kinds
+                    or not isinstance(event.get("node"), str) or event["node"] not in nodes):
+                continue
+            row = {"node": event["node"], "kind": event["kind"]}
+            timestamp = event.get("time")
+            if type(timestamp) in (int, float) and 0 <= timestamp < 253402300799 and math.isfinite(timestamp):
+                row.update(time=timestamp, utc=datetime.fromtimestamp(timestamp, timezone.utc).isoformat())
+            for key in ("previous", "target"):
+                if key in event and (event[key] is None or isinstance(event[key], str) and event[key] in nodes):
+                    row[key] = event[key]
+            for key in ("epoch", "returncode"):
+                if type(event.get(key)) is int:
+                    row[key] = event[key]
+            if type(event.get("active")) is bool:
+                row["active"] = event["active"]
+            if isinstance(event.get("error"), str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,80}", event["error"]):
+                row["error"] = event["error"]
+            if isinstance(event.get("service"), str) and event["service"] in {*SERVICES, "all"}:
+                row["service"] = event["service"]
+            if isinstance(event.get("action"), str) and event["action"] in {"restart_service", "rollback_release", "repair_dependencies", "restore_release",
+                                      "diagnose", "wait", "verify"}:
+                row["action"] = event["action"]
+            if isinstance(event.get("sha"), str) and re.fullmatch(r"[0-9a-f]{40}", event["sha"]):
+                row["sha"] = event["sha"]
+            rows.append(row)
+    return {"files": files, "tail_bytes_per_file": 256 * 1024, "malformed_lines": malformed,
+            "events": rows[-300:]}
+
+
 def collect(cfg, env):
     root, state = Path(cfg["root"]), Path(cfg["state_dir"])
     report = {"timestamp_utc": datetime.now(timezone.utc).isoformat(), "host": socket.gethostname(),
@@ -280,6 +335,7 @@ def collect(cfg, env):
         responses = list(pool.map(lambda item: safe_call(lambda: request_json(item[1], item[2])), jobs))
     report["http"] = dict(zip((item[0] for item in jobs), responses))
     report["logs"] = safe_call(lambda: local_logs(state, env))
+    report["audit"] = safe_call(lambda: audit_snapshot(state))
     report["spools"] = {}
     for key, kind in (("RFID_SPOOL_PATH", "rfid"), ("RFID_VIDEO_SPOOL", "video")):
         if env.get(key):

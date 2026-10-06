@@ -13,6 +13,41 @@ SPEC.loader.exec_module(app)
 
 
 class InspectionTests(unittest.TestCase):
+    def test_audit_exports_only_event_identity_and_typed_safe_fields(self):
+        with tempfile.TemporaryDirectory() as work:
+            state = Path(work)
+            previous = {"time": 1791273600, "node": "comparator", "kind": "failover",
+                        "previous": "physical", "target": "perimetr", "token": "private-controller"}
+            current = {"time": 1791273700, "node": "physical", "kind": "node_error", "error": "OperationalError",
+                       "epoch": 142, "argv": ["private-argument"], "password": "private-password", "sql": "PWD=private"}
+            (state / "audit.previous.jsonl").write_text(json.dumps(previous) + "\n")
+            path = state / "audit.jsonl"
+            path.write_text(json.dumps(current) + "\npartial-json-token")
+            before = path.read_bytes()
+            result = app.audit_snapshot(state)
+            text = json.dumps(result)
+            self.assertNotIn("private", text)
+            self.assertNotIn("PWD", text)
+            self.assertEqual([e["kind"] for e in result["events"]], ["failover", "node_error"])
+            self.assertEqual(result["events"][1]["error"], "OperationalError")
+            self.assertEqual(result["malformed_lines"], 1)
+            self.assertEqual(before, path.read_bytes())
+
+    def test_audit_is_bounded_and_ignores_malformed_or_unknown_payloads(self):
+        with tempfile.TemporaryDirectory() as work:
+            state = Path(work)
+            event = {"time": float("nan"), "node": "physical", "kind": "promoted", "epoch": 134,
+                     "service": [], "action": {}, "target": []}
+            path = state / "audit.jsonl"
+            path.write_text("x" * (300 * 1024) + "partial-password\n" + json.dumps(event) + "\n"
+                            + json.dumps({"node": "physical", "kind": "arbitrary-secret", "password": "unknown"}) + "\n"
+                            + json.dumps({"node": "physical", "kind": []}) + "\n")
+            result = app.audit_snapshot(state)
+            self.assertEqual(result["tail_bytes_per_file"], 256 * 1024)
+            self.assertEqual(result["events"], [{"node": "physical", "kind": "promoted", "epoch": 134}])
+            self.assertFalse(result["files"]["audit.previous.jsonl"]["exists"])
+            self.assertNotIn("password", json.dumps(result))
+
     def test_redaction_handles_quoted_braced_and_multiline_secrets_without_corrupting_json(self):
         password = 'p; a}ss"\\word\nnext'
         env = {"DST_PASSWORD": password, "PERIMETER_HA_TOKEN": "private-bearer-token"}
