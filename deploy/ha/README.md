@@ -1,6 +1,13 @@
 # Резервирование «Периметра»
 
-> **Актуальная передача, 06.10.2026:** сначала прочитать [HA_HANDOFF.md](../../HA_HANDOFF.md). Первый cutover и hotfix не подтвердили полный рабочий стек; последний protocol 2 rollout не подтверждён. Найдено подтверждение отката на legacy / HA OFF, но текущее состояние машин требует новой проверки. Описанный ниже runtime repair рассчитан на HA ON и не покрывает переход от восстановленного legacy / HA OFF.
+> **Текущее состояние, 06.10.2026 15:38 МСК:** система уже запущена, protocol2,
+> exact runtime `f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa` на всех3. Physical189
+> all5 healthy, оба prepared/nonfaulted reserves, controller Comparator valid.
+> Full-stack takeover Comparator183 и Perimetr187 с автоматическим возвратом
+> прошли на заводе. Первоначальное включение и failure tests повторять не нужно.
+> Текущая передача: [RESUME_2026-10-06.md](RESUME_2026-10-06.md). Настоящий RFID
+> проход отложен; main auto-update rollout и внешние HA/business monitoring items
+> остаются отдельными задачами. Старые процедуры первого ввода ниже — история.
 
 Код для трёх узлов находится в `feature/perimeter-ha-guardian`. Узлы:
 physical (Windows, 172.31.0.188), perimetr (Ubuntu, 172.31.0.134) и
