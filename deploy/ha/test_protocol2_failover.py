@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-RELEASE = "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665"
+RELEASE = "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa"
 NODES = ("physical", "perimetr", "comparator")
 SERVICES = {"RfidReader", "RusGuardSync", "Yolo", "Aggregator", "WebDashboard"}
 
@@ -306,6 +306,7 @@ class Test:
             self.phase("PERIMETR_FULL_STACK_PROVEN")
             self.recover()
             self.phase("FAILOVER_AND_FAILBACK_PROTOCOL2_OK")
+            print("BUSINESS_READ_ACCEPTANCE_NOT_PROVEN", flush=True)
         except BaseException:
             if changed:
                 try:

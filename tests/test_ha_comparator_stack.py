@@ -58,13 +58,15 @@ class ComparatorStackTests(unittest.TestCase):
         s["nodes"]["comparator"]["faulted"] = True
         self.assertFalse(t.ready_snapshot(s, "physical", False))
 
-    def test_requires_actual_perimetr_controller_and_five_comparator_services_with_both_holds(self):
+    def test_requires_valid_controller_and_five_comparator_services_with_both_holds(self):
         t = test_object()
         self.assertTrue(t.ready_snapshot(snapshot(), "physical", False))
-        self.assertFalse(t.ready_snapshot(snapshot(controller="comparator"), "physical", False))
+        self.assertTrue(t.ready_snapshot(snapshot(controller="comparator"), "physical", False))
+        self.assertFalse(t.ready_snapshot(snapshot(controller="physical"), "physical", False))
         t.perimetr_held = True
         s = snapshot("comparator", held=True)
         self.assertTrue(t.ready_snapshot(s, "comparator", True))
+        self.assertTrue(t.ready_snapshot(snapshot("comparator", held=True, controller="comparator"), "comparator", True))
         for n in ("physical", "perimetr"):
             bad = copy.deepcopy(s)
             bad["nodes"][n]["operator_maintenance"] = False
@@ -100,7 +102,7 @@ class ComparatorStackTests(unittest.TestCase):
     def test_changed_lease_or_wrong_controller_refuses_hold(self):
         for changed_controller in (True, False):
             t = test_object()
-            t.observe = MagicMock(return_value=snapshot(controller="comparator" if changed_controller else "perimetr"))
+            t.observe = MagicMock(return_value=snapshot(controller="physical" if changed_controller else "perimetr"))
             t.workers = MagicMock(return_value={})
             t.store = MagicMock()
             t.store.lease.return_value = {**snapshot()["lease"], "epoch": 144}
@@ -190,6 +192,16 @@ class ComparatorStackTests(unittest.TestCase):
             with patch.object(app.importlib.util, "spec_from_file_location") as load, self.assertRaises(app.Abort):
                 app.load_base(Path(folder))
             load.assert_not_called()
+
+    def test_pinned_hotfix_helper_is_loaded_from_the_published_source(self):
+        import hashlib
+        helper = ROOT / "deploy/ha/test_protocol2_failover.py"
+        self.assertEqual(base.RELEASE, app.RELEASE)
+        self.assertEqual(app.RELEASE, "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa")
+        self.assertEqual(hashlib.sha256(helper.read_bytes()).hexdigest(), app.BASE_HASH)
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "test-failover.py").write_bytes(helper.read_bytes())
+            self.assertEqual(app.load_base(Path(folder)).RELEASE, app.RELEASE)
 
     def test_cli_suppresses_unknown_exception_messages(self):
         with patch.object(app, "main", side_effect=ValueError("password=private")), patch("builtins.print") as out:

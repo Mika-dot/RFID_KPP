@@ -1,7 +1,7 @@
 """Physical Windows: prove Comparator's five production services, then fail back.
 
-Uses an adjacent, hash-verified test-failover.py helper. Perimetr keeps its
-controller lease while guarded maintenance excludes it as an executor.
+Uses an adjacent, hash-verified test-failover.py helper. The valid controller
+(Comparator or Perimetr) continues while maintenance excludes Perimetr as an executor.
 Kill only the registered physical HA Aggregator. The controller elects the
 Comparator; no SQL lease writes or synthetic business events are performed.
 """
@@ -15,8 +15,8 @@ import sys
 import uuid
 from pathlib import Path
 
-RELEASE = "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665"
-BASE_HASH = "e51e84643fa1ba58d0c27bd462ae367b3b62f2da5f9b4b3643fedccf6d96cee7"
+RELEASE = "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa"
+BASE_HASH = "2aeb379a82aa4c694befe3d74a25c5637ba81047b13021aadbdf6d9cdc7c9583"
 BASE = None
 
 
@@ -36,6 +36,7 @@ def load_base(directory):
     spec = importlib.util.spec_from_file_location("perimeter_comparator_base", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    require(module.RELEASE == RELEASE, "Helper and Comparator test runtime releases differ")
     return module
 
 
@@ -45,7 +46,6 @@ def make_test(base):
             super().__init__()
             self.reserve = "comparator"
             self.perimetr_held = False
-            self.recovering = False
 
         def ready_snapshot(self, snapshot, owner, held):
             # Once the controller rejects the only unheld executor, keeping
@@ -55,7 +55,7 @@ def make_test(base):
                     and snapshot["nodes"]["comparator"].get("faulted") is True):
                 raise base.Halt("Comparator quarantined; releasing both executor holds")
             controller = snapshot["controller"]["owner"]
-            if controller != "perimetr" and not (self.recovering and controller == "comparator"):
+            if controller not in {"perimetr", "comparator"}:
                 return False
             holds = ("perimetr",) if self.perimetr_held else ()
             return base.ready(snapshot, owner, held, controller=controller, held_nodes=holds)
@@ -109,7 +109,6 @@ def make_test(base):
                 base.time.sleep(2)
 
         def recover(self):
-            self.recovering = True
             # Attempt BOTH releases even when physical release encounters an error.
             failure = None
             try:
@@ -147,6 +146,7 @@ def make_test(base):
                 self.phase("COMPARATOR_FULL_STACK_PROVEN")
                 self.recover()
                 self.phase("COMPARATOR_STACK_AND_FAILBACK_PROTOCOL2_OK")
+                print("BUSINESS_READ_ACCEPTANCE_NOT_PROVEN", flush=True)
             except BaseException:
                 if changed:
                     try:
