@@ -57,6 +57,28 @@ def valid_record(state, source, head, release, journal):
     require(head in (BASE, release), "Unexpected installed release")
 
 
+def windows_port_free(port):
+    """Check the Windows TCP table and exclusive bind, not timed connect_ex.
+
+    A failed/timeout connection is not evidence that a listener exists. Bind
+    checks local availability directly; SO_EXCLUSIVEADDRUSE prevents sharing or
+    taking over an existing listener. Never call listen and always close.
+    """
+    import psutil
+    listeners = [c for c in psutil.net_connections(kind="tcp")
+                 if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port]
+    require(not listeners, "HA_PORT_LISTENING port=" + str(port) + " pids=" +
+            ",".join(str(c.pid) for c in listeners))
+    require(hasattr(socket, "SO_EXCLUSIVEADDRUSE"), "Windows exclusive bind check unavailable")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("0.0.0.0", port))
+        except OSError as exc:
+            raise Abort("HA_PORT_BIND_FAILED port=" + str(port) + " code=" +
+                        str(getattr(exc, "winerror", None) or exc.errno)) from None
+
+
 def native_stopped(windows, source, config):
     """Inspect native launchers and process identities, without stopping anything."""
     if windows:
@@ -100,11 +122,15 @@ def native_stopped(windows, source, config):
         except psutil.AccessDenied:
             raise Abort("Cannot inspect a candidate process identity") from None
     # Legacy occupies worker ports on Windows; only the HA control port must be free.
-    for port in ((18200,) if windows else (18101, 18102, 18103, 18104, 18105, 18200)):
+    if windows:
+        windows_port_free(18200)
+        return
+    for port in (18101, 18102, 18103, 18104, 18105, 18200):
         with socket.socket() as probe:
             probe.settimeout(1)
-            require(probe.connect_ex(("127.0.0.1", port)) in (errno.ECONNREFUSED, 10061),
-                    "An expected stopped HA port is occupied/unverifiable")
+            result = probe.connect_ex(("127.0.0.1", port))
+            require(result == errno.ECONNREFUSED,
+                    "HA_PORT_CONNECT_UNVERIFIED port=" + str(port) + " code=" + str(result))
 
 
 def main(argv=None):

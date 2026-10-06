@@ -68,16 +68,53 @@ class StoppedRolloutTests(unittest.TestCase):
     def test_stopped_check_uses_no_stop_start_or_disable_command(self):
         import psutil
         r = MagicMock(returncode=0, stdout=b'{"state":"Disabled","enabled":false}')
-        sock = MagicMock()
-        sock.__enter__.return_value.connect_ex.return_value = 10061
         with patch.object(app.subprocess, "run", return_value=r) as run, \
                 patch.object(psutil, "process_iter", return_value=[]), \
-                patch.object(app.socket, "socket", return_value=sock):
+                patch.object(app, "windows_port_free") as free:
             app.native_stopped(True, Path("HA-source").resolve(), Path("node.json").resolve())
+        free.assert_called_once_with(18200)
         command = " ".join(run.call_args.args[0])
         for forbidden in ("Stop-ScheduledTask", "Start-ScheduledTask", "Disable-ScheduledTask", "taskkill"):
             self.assertNotIn(forbidden, command)
         self.assertIn("Get-ScheduledTask", command)
+
+    def test_windows_check_accepts_exclusive_bind_without_connect_or_listen(self):
+        import psutil
+        sock = MagicMock()
+        probe = sock.__enter__.return_value
+        with patch.object(psutil, "net_connections", return_value=[]), \
+                patch.object(app.socket, "SO_EXCLUSIVEADDRUSE", -5, create=True), \
+                patch.object(app.socket, "socket", return_value=sock):
+            app.windows_port_free(18200)
+        probe.setsockopt.assert_called_once_with(app.socket.SOL_SOCKET, -5, 1)
+        probe.bind.assert_called_once_with(("0.0.0.0", 18200))
+        probe.connect_ex.assert_not_called()
+        probe.listen.assert_not_called()
+        sock.__exit__.assert_called_once()
+
+    def test_windows_check_refuses_listener_and_reports_only_pid(self):
+        import psutil
+        listener = MagicMock(status=psutil.CONN_LISTEN, pid=1234)
+        listener.laddr.port = 18200
+        with patch.object(psutil, "net_connections", return_value=[listener]), \
+                patch.object(app.socket, "socket") as factory:
+            with self.assertRaisesRegex(app.Abort, "HA_PORT_LISTENING port=18200 pids=1234"):
+                app.windows_port_free(18200)
+        factory.assert_not_called()
+
+    def test_windows_check_never_accepts_bind_failure_or_prints_raw_error(self):
+        import psutil
+        for code in (10013, 10048):
+            sock = MagicMock()
+            sock.__enter__.return_value.bind.side_effect = OSError(code, "private-error-text")
+            with patch.object(psutil, "net_connections", return_value=[]), \
+                    patch.object(app.socket, "SO_EXCLUSIVEADDRUSE", -5, create=True), \
+                    patch.object(app.socket, "socket", return_value=sock):
+                with self.assertRaises(app.Abort) as context:
+                    app.windows_port_free(18200)
+            self.assertIn("code=" + str(code), str(context.exception))
+            self.assertNotIn("private-error-text", str(context.exception))
+            sock.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":
