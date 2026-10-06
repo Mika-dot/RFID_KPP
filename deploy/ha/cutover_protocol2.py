@@ -257,7 +257,8 @@ class Cutover:
                     name = match.group().upper()
                     require(name not in targets, "Duplicate legacy launcher")
                     targets[name] = p
-        require(set(targets) == set(self.wrappers), "Exactly five known legacy launchers required")
+        require(set(targets) == {name.upper() for name in self.wrappers},
+                "Exactly five known legacy launchers required")
         for name, p in targets.items():
             covered.update([p.pid] + [c.pid for c in p.children(recursive=True)])
             self.saved.append({"wrapper": name, "pid": p.pid, "created": p.create_time(),

@@ -1,5 +1,7 @@
 """Cutover readiness and rollback interlocks; never use real production data."""
 import importlib.util
+import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,6 +13,42 @@ SPEC.loader.exec_module(app)
 
 
 class Protocol2CutoverTests(unittest.TestCase):
+    def test_capture_accepts_mixed_case_cmd_names_and_rejects_missing_or_duplicate_launcher(self):
+        wrappers = {"RUN_RFID_READER_V3.cmd": "RFID_reader_v4", "RUN_RUSGUARD_V3.cmd": "DB_RusGard",
+                    "RUN_RTSP_V3.cmd": "RTSP", "RUN_AGGREGATOR_V3.cmd": "KPP", "RUN_WEB_V3.cmd": "web"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "deploy").mkdir()
+            processes = []
+            for i, (name, cwd) in enumerate(wrappers.items()):
+                (root / "deploy" / name).touch()
+                (root / cwd).mkdir()
+                p = MagicMock()
+                p.pid = i + 100
+                p.name.return_value = "cmd.exe"
+                p.cmdline.return_value = ["cmd.exe", "/D", "/K", "call", str(root / "deploy" / name)]
+                p.children.return_value = []
+                p.create_time.return_value = 10 + i
+                p.cwd.return_value = str(root)
+                processes.append(p)
+            cutover = app.Cutover.__new__(app.Cutover)
+            cutover.legacy, cutover.wrappers = root, wrappers
+            cutover.launcher_pattern = re.compile(r"(?i)\bRUN_(?:RFID_READER|RUSGUARD|RTSP|AGGREGATOR|WEB)_V3\.cmd\b")
+            cutover.legacy_processes = MagicMock(return_value=processes)
+            cutover.backup, cutover.saved = root / "backup", []
+            cutover.save_json = MagicMock()
+            found = cutover.capture_legacy()
+            self.assertEqual(set(found), {name.upper() for name in wrappers})
+            self.assertEqual(len(cutover.saved), 5)
+            self.assertEqual([row["argv"] for row in cutover.saved], [p.cmdline() for p in processes])
+            cutover.save_json.assert_called_once()
+            cutover.save_json.reset_mock()
+            for candidates in (processes[:-1], processes + [processes[0]]):
+                cutover.legacy_processes.return_value = candidates
+                with self.assertRaises(app.Abort):
+                    cutover.capture_legacy()
+                cutover.save_json.assert_not_called()
+
     def test_cli_success_has_zero_exit_and_failure_does_not_print_secrets(self):
         with patch.object(app, "main", return_value=0), patch("builtins.print") as out:
             self.assertEqual(app.cli(), 0)
