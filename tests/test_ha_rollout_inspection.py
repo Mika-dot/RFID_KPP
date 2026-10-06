@@ -13,6 +13,28 @@ SPEC.loader.exec_module(app)
 
 
 class InspectionTests(unittest.TestCase):
+    def test_brief_retains_peer_dependency_cause_metrics_and_lease_without_mutating_evidence(self):
+        report = {"node": "physical", "sql": {"lease": [{"Owner": "perimetr", "Epoch": 156}],
+                    "triggers": ["large-table"]}, "http": {
+            "agent:perimetr": {"http": 200, "body": {"node": "perimetr", "faulted": False,
+                "operator_maintenance": False, "services": {"RfidReader": {"ok": False, "detail": {
+                    "status": "degraded", "metrics": {"business_flow_latched": True},
+                    "dependencies": {"business_flow": {"status": "unavailable",
+                        "detail": "rfid_business_flow_fault_latched", "data_age_seconds": 900,
+                        "updated_at": "omit-repeated-field"}}}}}}},
+            "service:RfidReader": {"error": "URLError"}},
+            "logs": {"RfidReader": "x" * 3000 + "partial-secret\nKnownError\n", "Aggregator": "trace"}}
+        before = json.dumps(report)
+        out = app.brief_report(report)
+        service = out["peers"]["perimetr"]["services"]["RfidReader"]
+        self.assertEqual(service["detail"]["dependencies"]["business_flow"]["detail"], "rfid_business_flow_fault_latched")
+        self.assertTrue(service["detail"]["metrics"]["business_flow_latched"])
+        self.assertEqual(out["sql"]["lease"], report["sql"]["lease"])
+        self.assertEqual(out["local_services"]["RfidReader"]["error"], "URLError")
+        self.assertNotIn("partial-secret", json.dumps(out))
+        self.assertNotIn("updated_at", json.dumps(out))
+        self.assertEqual(before, json.dumps(report))
+
     def test_audit_exports_only_event_identity_and_typed_safe_fields(self):
         with tempfile.TemporaryDirectory() as work:
             state = Path(work)

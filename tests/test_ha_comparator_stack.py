@@ -40,6 +40,24 @@ def test_object():
 
 
 class ComparatorStackTests(unittest.TestCase):
+    def test_quarantined_comparator_aborts_wait_immediately_but_starting_or_recovery_can_wait(self):
+        t = test_object()
+        t.perimetr_held = True
+        s = snapshot("comparator", held=True)
+        s["lease"].update(owner=None, valid=False)
+        s["nodes"]["comparator"].update(active=False, faulted=True)
+        t.observe = MagicMock(return_value=s)
+        with patch.object(base.time, "sleep") as sleep, patch("builtins.print"), self.assertRaises(base.Halt):
+            t.wait_ready("comparator", held=True)
+        sleep.assert_not_called()
+        s["consistent"] = False
+        self.assertFalse(t.ready_snapshot(s, "comparator", True))
+        s["consistent"] = True
+        s["nodes"]["comparator"]["faulted"] = False
+        self.assertFalse(t.ready_snapshot(s, "comparator", True))
+        s["nodes"]["comparator"]["faulted"] = True
+        self.assertFalse(t.ready_snapshot(s, "physical", False))
+
     def test_requires_actual_perimetr_controller_and_five_comparator_services_with_both_holds(self):
         t = test_object()
         self.assertTrue(t.ready_snapshot(snapshot(), "physical", False))

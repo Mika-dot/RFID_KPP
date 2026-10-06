@@ -346,6 +346,59 @@ def collect(cfg, env):
     return scrub(report, env)
 
 
+def health_summary(body):
+    """Keep dependency reasons and metrics; omit repeated timestamps/metadata."""
+    if not isinstance(body, dict):
+        return {}
+    result = {k: body[k] for k in ("status", "started_at", "uptime_seconds", "metrics") if k in body}
+    dependencies = body.get("dependencies", {})
+    if isinstance(dependencies, dict):
+        result["dependencies"] = {
+            name: {k: value[k] for k in ("status", "detail", "data_age_seconds", "update_age_seconds") if k in value}
+            for name, value in dependencies.items() if isinstance(value, dict)}
+    return result
+
+
+def brief_report(report):
+    """Console view of an already sanitized report. Full evidence stays in JSON."""
+    http = report.get("http", {})
+    peers = {}
+    for name, response in http.items():
+        if not name.startswith("agent:"):
+            continue
+        body = response.get("body", {})
+        row = {k: body[k] for k in ("node", "release_sha", "epoch", "sample_age", "active", "healthy",
+                    "prepared", "faulted", "operator_maintenance", "preflight") if k in body}
+        row.update({k: response[k] for k in ("http", "error", "sql_codes") if k in response})
+        row["services"] = {
+            service: {"ok": value.get("ok"), "error": value.get("error"),
+                      "detail": health_summary(value.get("detail"))}
+            for service, value in body.get("services", {}).items() if isinstance(value, dict)}
+        peers[name.split(":", 1)[1]] = row
+    local = {}
+    for name, response in http.items():
+        if name.startswith("service:"):
+            local[name.split(":", 1)[1]] = {
+                **{k: response[k] for k in ("http", "error", "sql_codes") if k in response},
+                **health_summary(response.get("body"))}
+    logs = report.get("logs", {})
+    tails = {}
+    for service in ("RfidReader", "Aggregator", "WebDashboard"):
+        if not isinstance(logs.get(service), str):
+            continue
+        # Bound console volume without exporting a partial credential line.
+        tail = logs[service]
+        if len(tail) > 2500:
+            tail = tail[-2500:]
+            tail = tail.split("\n", 1)[1] if "\n" in tail else ""
+        tails[service] = tail
+    sql = report.get("sql", {})
+    return {"timestamp_utc": report.get("timestamp_utc"), "node": report.get("node"), "read_only": True,
+            "state": report.get("state"),
+            "sql": {k: sql[k] for k in ("clock", "lease", "controller", "quarantine", "error", "sql_codes") if k in sql},
+            "peers": peers, "local_services": local, "local_logs": tails}
+
+
 def main(argv=None):
     sys.dont_write_bytecode = True
     for stream in (sys.stdout, sys.stderr):
@@ -354,6 +407,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--node", choices=("physical", "perimetr", "comparator"), required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--brief", action="store_true", help="Print dependency reasons and bounded logs; save the full JSON")
     args = parser.parse_args(argv)
     config = Path("D:/PerimeterHA/node.json" if os.name == "nt" else "/etc/perimeter/node.json")
     cfg = read_json(config)
@@ -375,7 +429,7 @@ def main(argv=None):
         if os.name != "nt":
             os.fchmod(stream.fileno(), 0o600)
         json.dump(report, stream, ensure_ascii=False, indent=2, default=str)
-    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(brief_report(report) if args.brief else report, ensure_ascii=False, indent=2, default=str))
     print("HA_INSPECTION_SAVED " + str(output), flush=True)
     return 0
 

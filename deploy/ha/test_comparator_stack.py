@@ -48,6 +48,12 @@ def make_test(base):
             self.recovering = False
 
         def ready_snapshot(self, snapshot, owner, held):
+            # Once the controller rejects the only unheld executor, keeping
+            # both reserves held cannot produce a successful proof. Release
+            # them through run()'s recovery immediately, not at the 300s timeout.
+            if (owner == "comparator" and held and snapshot.get("consistent") is True
+                    and snapshot["nodes"]["comparator"].get("faulted") is True):
+                raise base.Halt("Comparator quarantined; releasing both executor holds")
             controller = snapshot["controller"]["owner"]
             if controller != "perimetr" and not (self.recovering and controller == "comparator"):
                 return False
