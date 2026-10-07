@@ -19,8 +19,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install video regression dependencies
-        run: python -m pip install 'numpy>=1.26,<3' 'opencv-python-headless>=4.10,<5' 'psutil>=6,<8'
+      - name: Install ODBC runtime for Web HTTP regression
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq unixodbc
+      - name: Install video and Web regression dependencies
+        run: python -m pip install 'numpy>=1.26,<3' 'opencv-python-headless>=4.10,<5' 'psutil>=6,<8' 'flask>=3,<4' 'pyodbc>=5.1,<6'
       - name: Compile HA and production adapters
         run: python -m compileall -q guardian deploy RFID_reader_v4 DB_RusGard KPP RTSP web common
       - name: Parse Windows deployment scripts
