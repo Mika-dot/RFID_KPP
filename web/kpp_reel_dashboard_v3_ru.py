@@ -44,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from common.single_instance import SingleInstanceLock  # noqa: E402
+from common.video_images import decode_video_image  # noqa: E402
 
 
 # ============================================================================
@@ -63,6 +64,7 @@ class Config:
 
     DB_CONN_STR = os.getenv("KPP_WEB_DB_CONNECTION", os.getenv("RFID_DB_CONNECTION", ""))
     TASK_TABLE = os.getenv("KPP_TASK_TABLE", "dbo.RfidTags")
+    VIDEO_TABLE = os.getenv("KPP_VIDEO_TABLE", os.getenv("RFID_DB_LOG_TABLE", "dbo.ReelTransitions"))
     REPORT_PLACE = os.getenv("KPP_REPORT_PLACE", "ЗМК Южные ворота")
     # По умолчанию данные событий никуда не отправляются. Включать явно.
     AI_BASE_URL = os.getenv("KPP_AI_BASE_URL", os.getenv("LM_STUDIO_BASE_URL", "")).rstrip("/")
@@ -570,7 +572,7 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
         e.TaskMatchType,e.RfidReadCount,e.SessionCloseReason,
         e.WarehouseId,e.WarehouseDt,e.WarehouseDocIds,
         COALESCE(w.SeriesNumber,'') AS WarehouseSeriesNumber,
-        e.ReelClassification,e.PassageGroupKey,e.GroupReelCount
+        e.ReelClassification,e.PassageGroupKey,e.GroupReelCount,e.VideoEventId
     FROM dbo.KPP_ReelEvents e
     LEFT JOIN {Config.TASK_TABLE} t ON t.Id=e.Task1CId
     LEFT JOIN dbo.Warehouse w ON w.Id=e.WarehouseId
@@ -618,7 +620,14 @@ def report_preview_html(records: List[Dict[str, Any]], date_from: date, date_to:
             if first:
                 h.append(f'<tr><td class="date-row" colspan="4">{html_escape(ru_date(g["date"]))}</td><td class="date-row">{html_escape(event_time)}</td><td class="date-row">{html_escape(wh_time)}</td></tr>')
                 first = False
-            h.append(f'<tr><td class="tag-row" colspan="4">{html_escape(str(r.get("SourceTag") or ""))}</td><td>{html_escape(event_time)}</td><td>{html_escape(wh_time)}</td></tr>')
+            video_id = safe_int(r.get("VideoEventId"), 0)
+            snapshot = (
+                f'<a class="snapshot-thumb" href="/api/image/{video_id}" target="_blank" rel="noopener">'
+                f'<img src="/api/image/{video_id}" alt="Снимок видео №{video_id}" loading="lazy" decoding="async" '
+                'onerror="this.parentElement.textContent=\'Снимок недоступен\'" /></a>'
+                if video_id else ""
+            )
+            h.append(f'<tr><td class="tag-row" colspan="4">{html_escape(str(r.get("SourceTag") or ""))}{snapshot}</td><td>{html_escape(event_time)}</td><td>{html_escape(wh_time)}</td></tr>')
     h.append('</table>')
     return "".join(h)
 
@@ -1202,6 +1211,25 @@ PAGE = r"""
       width: 100%;
       height: auto;
       display: block;
+    }
+    .snapshot-thumb {
+      display: block;
+      width: 160px;
+      min-height: 90px;
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      color: var(--muted);
+      background: #f8fbff;
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .snapshot-thumb img {
+      display: block;
+      width: 160px;
+      height: 90px;
+      object-fit: contain;
     }
 
     .manager-view {
@@ -2239,6 +2267,18 @@ PAGE = r"""
       return parts.slice(0, 2).join(' • ') + (parts.length > 2 ? ` • еще ${parts.length - 2}` : '');
     }
 
+    function snapshotHtml(videoEventId, large = false) {
+      const id = Number(videoEventId);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        return large ? '<div class="img-box image-large">Снимок не сохранён</div>' : '';
+      }
+      const url = `/api/image/${id}`;
+      const img = `<img src="${url}" alt="Снимок видео №${id}" loading="${large ? 'eager' : 'lazy'}" decoding="async" onerror="this.parentElement.textContent='Снимок недоступен'" />`;
+      return large
+        ? `<div class="img-box image-large">${img}</div>`
+        : `<a class="snapshot-thumb" href="${url}" target="_blank" rel="noopener">${img}</a>`;
+    }
+
     function renderEvents(events) {
       const tbody = document.getElementById('eventsBody');
       if (!events.length) {
@@ -2284,6 +2324,7 @@ PAGE = r"""
             <td>
               <div>${previewVideo}</div>
               <div class="panel-desc">${русТранспорт(ev.VideoTransport)}</div>
+              ${snapshotHtml(ev.VideoEventId)}
             </td>
             <td>
               <div>${previewSkud}</div>
@@ -2308,9 +2349,7 @@ PAGE = r"""
       document.getElementById('modalSub').textContent = `Обновлено: ${fmtDate(data.UpdatedAt)} • Ключ: ${data.EventKey}`;
 
       const evidence = JSON.stringify(data.EvidenceJsonParsed ?? data.EvidenceJson ?? {}, null, 2);
-      const imageBlock = data.VideoEventId
-        ? `<div class="img-box image-large"><img src="/api/image/${data.VideoEventId}" alt="Снимок события" onerror="this.parentElement.innerHTML='Снимок недоступен'" /></div>`
-        : `<div class="img-box image-large">Снимок недоступен</div>`;
+      const imageBlock = snapshotHtml(data.VideoEventId, true);
 
       const warehouseFound = Boolean(data.WarehouseId);
       const oneCFound = Boolean(data.Task1CId);
@@ -2540,27 +2579,16 @@ def api_event(event_id: int) -> Response:
 
 @app.route("/api/image/<int:video_event_id>")
 def api_image(video_event_id: int) -> Response:
-    query = "SELECT TOP 1 ImageData,ImageBase64,ImageFormat FROM dbo.ReelTransitions WHERE Id=?"
+    query = f"SELECT TOP 1 ImageData,ImageBase64 FROM {Config.VIDEO_TABLE} WHERE Id=?"
     with db_connect() as conn:
         cur=conn.cursor(); cur.execute(query,video_event_id); row=cur.fetchone()
         if not row:
             return Response(b"",status=404)
-        image_data, legacy, image_format = row
-        data = bytes(image_data) if image_data else None
-        if not data and legacy:
-            if isinstance(legacy,(bytes,bytearray,memoryview)):
-                candidate=bytes(legacy)
-                data=candidate if candidate.startswith(b"\xff\xd8") else None
-            elif isinstance(legacy,str):
-                try:
-                    candidate=base64.b64decode(legacy,validate=True)
-                    data=candidate if candidate.startswith(b"\xff\xd8") else None
-                except Exception:
-                    data=None
-        if not data:
+        image = decode_video_image(*row)
+        if not image:
             return Response(b"",status=404)
-        fmt=str(image_format or "jpg").lower()
-        return Response(data,mimetype="image/jpeg" if fmt in {"jpg","jpeg"} else f"image/{fmt}")
+        data, mime = image
+        return Response(data, mimetype=mime, headers={"Cache-Control": "private, max-age=300"})
 
 
 

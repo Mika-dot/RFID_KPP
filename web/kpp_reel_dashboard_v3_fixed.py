@@ -75,7 +75,7 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
         e.TaskMatchType,e.RfidReadCount,e.SessionCloseReason,
         e.WarehouseId,e.WarehouseDt,e.WarehouseDocIds,
         COALESCE(w.SeriesNumber,'') AS WarehouseSeriesNumber,
-        e.ReelClassification,e.PassageGroupKey,e.GroupReelCount
+        e.ReelClassification,e.PassageGroupKey,e.GroupReelCount,e.VideoEventId
     FROM dbo.KPP_ReelEvents e
     LEFT JOIN {base.Config.TASK_TABLE} t ON t.Id=e.Task1CId
     LEFT JOIN {warehouse_table} w ON w.Id=e.WarehouseId
