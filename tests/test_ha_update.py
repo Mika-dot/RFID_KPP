@@ -1,10 +1,12 @@
 import tempfile
 import os
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from guardian.update import Updates
+from guardian.release_contract import BASE_FLOOR, MANIFEST
 
 
 class UpdateTests(unittest.TestCase):
@@ -88,8 +90,15 @@ class UpdateTests(unittest.TestCase):
         calls=[]
         def git(*args,**kwargs):
             calls.append(args)
-            return "b"*40 if args==("rev-parse","FETCH_HEAD") else ""
+            if args == ("rev-parse", "FETCH_HEAD"):
+                return "b" * 40
+            if args == ("show", "b" * 40 + ":" + MANIFEST):
+                return json.dumps(BASE_FLOOR)
+            if args[:2] == ("diff", "--name-only"):
+                return "common/business_flow.py\n"
+            return ""
         self.updates.git=git
         self.updates.stage()
         self.assertIn(("merge-base","--is-ancestor","d"*40,"b"*40),calls)
         self.assertNotIn(("merge-base","--is-ancestor","a"*40,"b"*40),calls)
+        self.assertEqual("b" * 40, self.updates.staged["sha"])

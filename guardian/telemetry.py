@@ -43,7 +43,7 @@ class Telemetry:
                     path.replace(path.with_suffix(".previous.jsonl"))
                 with path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                if sentry and record["kind"] in ("failover", "repair_failed", "controller_error", "update_rejected", "agent_resource_exhausted"):
+                if sentry and record["kind"] in ("failover", "repair_failed", "controller_error", "update_rejected", "update_candidate_rejected", "agent_resource_exhausted"):
                     import sentry_sdk
                     with sentry_sdk.push_scope() as scope:
                         scope.set_tag("ha_node", self.cfg["node_id"])

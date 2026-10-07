@@ -45,6 +45,17 @@ def _age_seconds(now: datetime, value: Optional[datetime]) -> Optional[float]:
         )
 
 
+def _after(value: Optional[datetime], baseline: Optional[datetime]) -> bool:
+    if value is None:
+        return False
+    if baseline is None:
+        return True
+    try:
+        return value > baseline
+    except TypeError:
+        return value.replace(tzinfo=None) > baseline.replace(tzinfo=None)
+
+
 def assess_rfid_flow(
     *,
     now: datetime,
@@ -57,6 +68,8 @@ def assess_rfid_flow(
     min_video_events: int = 2,
     fault_latched: bool = False,
     latched_rfid_marker: str = "",
+    last_fault_detail: str = "",
+    video_history_complete: bool = False,
 ) -> RfidFlowAssessment:
     """Classify RFID business flow using independent Perimeter evidence.
 
@@ -77,6 +90,14 @@ def assess_rfid_flow(
     marker = source_marker(rfid_at)
     rfid_fresh = rfid_age is not None and rfid_age <= stall_seconds
 
+    # Window counts can include the very passage that produced the last RFID
+    # row. They only prove silence if independent activity happened afterwards.
+    video_after_read = _after(video_at, rfid_at)
+    warehouse_after_read = _after(warehouse_at, rfid_at)
+    counted_video_events = video_recent_events
+    video_recent_events = video_recent_events if video_after_read else 0
+    warehouse_recent_events = warehouse_recent_events if warehouse_after_read else 0
+
     if fault_latched:
         if (
             rfid_at is not None
@@ -90,6 +111,22 @@ def assess_rfid_flow(
                 video_age,
                 warehouse_age,
                 clear_latch=True,
+            )
+        # A complete MAX(video timestamp) snapshot can contradict the old
+        # detector's proof, rather than merely letting evidence age out. Keep
+        # the persistent latch and restart history intact, expose a warning,
+        # and do not keep cycling hosts for video predating the same RFID row.
+        # Unknown/corrupt metadata, missing history, a changed/backlog marker,
+        # or any later physical passage still fail closed.
+        if (video_history_complete is True and rfid_at is not None
+                and marker == str(latched_rfid_marker or "")
+                and video_at is not None and not video_after_read
+                and counted_video_events == 0
+                and last_fault_detail in {"rfid_stale_while_video_active",
+                                          "rfid_stale_while_video_and_warehouse_active"}):
+            return RfidFlowAssessment(
+                "degraded", "rfid_historical_activity_evidence_contradicted",
+                rfid_age, video_age, warehouse_age,
             )
         return RfidFlowAssessment(
             "unavailable",

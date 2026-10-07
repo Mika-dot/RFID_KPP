@@ -1,12 +1,14 @@
 # RFID КПП «Периметр» — production runbook
 
-> **Рабочий HA, 06.10.2026 15:38 МСК:** система запущена на3 узлах с runtime
-> `f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa`, protocol2. Physical epoch189:
-> все5 служб healthy, оба резерва готовы, controller Comparator. Испытаны полные
-> переключения на Comparator и Perimetr с возвратом. Итоги и оставшиеся задачи:
-> [RESUME_2026-10-06.md](deploy/ha/RESUME_2026-10-06.md). Тест настоящей метки
-> отложен пользователем; main auto-update и новые внешние HA/business items ещё
-> не приняты. При HA ON запуском управляет PerimeterGuardian, legacy не запускать.
+> **Последнее подтверждение завода — 06.10.2026 18:54 МСК:** все3 узла на runtime
+> `1c7930912ad84e8f205cf16fbdd715c76c9eb74e`, protocol2, physical epoch264,
+> все5 служб ready, оба резерва prepared/nonfaulted, controller Comparator.
+> [Подтверждение запуска](deploy/ha/DEPLOYED_STATUS_2026-10-06.md).
+> В код включены оба установленных RFID evidence-hotfix и защита будущего updater;
+> установка нового кода на узлы отдельно не подтверждена. Исходник без HA сохранён
+> в `archive/perimeter-original-no-ha-2026-10-07`. Текущие границы приёмки:
+> [ACCEPTANCE_2026-10-07.md](deploy/ha/ACCEPTANCE_2026-10-07.md).
+> При HA ON запуском управляет PerimeterGuardian, legacy не запускать.
 
 > Канонический репозиторий production-системы КПП. Если вы продолжаете работу после паузы, **сначала прочитайте этот README целиком** и только потом меняйте код/мониторинг.
 
@@ -822,9 +824,9 @@ web_port = ok
 
 Установка, порядок SQL cutover, проверка Wine/считывателя, границы гарантий и
 подключение к существующему мониторингу: [deploy/ha/README.md](deploy/ha/README.md).
-На06.10.2026 15:38 HA работает на всех3 узлах с exact runtime f5fdb6a, protocol2:
-physical189 all5 healthy, оба reserves готовы. Full-stack takeover Comparator183
-и Perimetr187 с возвратом подтверждены. История и оставшаяся работа:
-[RESUME_2026-10-06.md](deploy/ha/RESUME_2026-10-06.md). Реальный RFID-проход
-отложен; main auto-update и внешние HA/business monitoring items ещё не приняты.
+Последний подтверждённый запуск:06.10.2026 18:54, все3 exact runtime1c793091,
+protocol2, physical264 all5 ready и оба reserves prepared/nonfaulted.
+Full-stack takeover Comparator183 и Perimetr187 с возвратом ранее принят на f5.
+Текущие границы проверки БД и updater:
+[ACCEPTANCE_2026-10-07.md](deploy/ha/ACCEPTANCE_2026-10-07.md).
 Business-контракты выше сохраняют своё назначение.

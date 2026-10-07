@@ -218,7 +218,8 @@ def release_snapshot(state):
         value = read_json(path)
         if name == "release.json":
             value = {k: value.get(k) for k in ("current", "previous", "pending", "trial_started",
-                                              "fencing_protocol_min", "trusted_main_sha")}
+                                              "fencing_protocol_min", "trusted_main_sha",
+                                              "runtime_contract_floor", "observed_main_sha", "docs_only_sha")}
             for k in ("current", "previous"):
                 if isinstance(value[k], dict):
                     value[k] = {x: value[k].get(x) for x in ("root", "sha", "python")}
@@ -260,6 +261,7 @@ def audit_snapshot(state):
     kinds = {"controller_role", "controller_error", "failover", "failback", "rolling_update",
              "promoted", "demoted", "repair_verified", "repair_step", "repair_failed", "agent_rescue",
              "update_staged", "update_activated", "update_confirmed", "update_rejected",
+             "update_docs_only", "update_candidate_rejected",
              "python_environment_rebuilt", "update_check_failed", "agent_resource_exhausted", "node_error"}
     nodes = {"physical", "perimetr", "comparator"}
     rows, files, malformed = [], {}, 0
@@ -297,6 +299,10 @@ def audit_snapshot(state):
                 row["active"] = event["active"]
             if isinstance(event.get("error"), str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,80}", event["error"]):
                 row["error"] = event["error"]
+            if event.get("kind") == "update_candidate_rejected" and event.get("reason") in {
+                    "CandidateRuntimeContractMissing", "CandidateRuntimeContractInvalid", "CandidateBusinessDowngrade",
+                    "CandidateBusinessChecksTimeout", "CandidateProtectedBusinessChecksFailed", "CandidateTestsFailed"}:
+                row["reason"] = event["reason"]
             if isinstance(event.get("service"), str) and event["service"] in {*SERVICES, "all"}:
                 row["service"] = event["service"]
             if isinstance(event.get("action"), str) and event["action"] in {"restart_service", "rollback_release", "repair_dependencies", "restore_release",

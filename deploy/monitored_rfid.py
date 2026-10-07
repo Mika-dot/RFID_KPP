@@ -171,9 +171,8 @@ ORDER BY Id DESC;
             rfid_at = row[0] if row else None
             cur.execute(
                 """
-SELECT TOP(1) COALESCE(CapturedAt,[Timestamp])
-FROM dbo.ReelTransitions
-ORDER BY Id DESC;
+SELECT MAX(COALESCE(CapturedAt,[Timestamp]))
+FROM dbo.ReelTransitions;
 """
             )
             row = cur.fetchone()
@@ -182,11 +181,11 @@ ORDER BY Id DESC;
                 """
 SELECT COUNT_BIG(*)
 FROM dbo.ReelTransitions
-WHERE (CapturedAt >= DATEADD(SECOND,?,SYSDATETIME()))
-   OR (CapturedAt IS NULL AND [Timestamp] >= DATEADD(SECOND,?,SYSDATETIME()));
+WHERE COALESCE(CapturedAt,[Timestamp]) >= DATEADD(SECOND,?,SYSDATETIME())
+  AND COALESCE(CapturedAt,[Timestamp]) > CAST(? AS datetime2);
 """,
                 -int(self.evidence_window_sec),
-                -int(self.evidence_window_sec),
+                rfid_at if rfid_at is not None else datetime(1900, 1, 1),
             )
             video_recent_events = int(cur.fetchone()[0] or 0)
             cur.execute("SELECT TOP(1) Dt FROM dbo.Warehouse ORDER BY Id DESC;")
@@ -196,9 +195,11 @@ WHERE (CapturedAt >= DATEADD(SECOND,?,SYSDATETIME()))
                 """
 SELECT COUNT_BIG(*)
 FROM dbo.Warehouse
-WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
+WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME())
+  AND Dt > CAST(? AS datetime2);
 """,
                 -int(self.evidence_window_sec),
+                rfid_at if rfid_at is not None else datetime(1900, 1, 1),
             )
             warehouse_recent_events = int(cur.fetchone()[0] or 0)
             return (
@@ -228,6 +229,7 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
         self.reporter.set_metric("video_recent_events", int(video_recent_events))
         self.reporter.set_metric("warehouse_recent_events", int(warehouse_recent_events))
         self.reporter.set_metric("business_flow_latched", bool(self.state.fault_latched))
+        self.reporter.set_metric("business_flow_fault_detail", self.state.last_fault_detail)
         self.reporter.set_metric("self_heal_restarts", int(self.state.restart_attempts))
         self.reporter.set_metric(
             "self_heal_exhausted",
@@ -256,6 +258,8 @@ WHERE Dt >= DATEADD(SECOND,?,SYSDATETIME());
                     min_video_events=self.min_video_events,
                     fault_latched=self.state.fault_latched,
                     latched_rfid_marker=self.state.rfid_marker,
+                    last_fault_detail=self.state.last_fault_detail,
+                    video_history_complete=True,
                 )
                 if assessment.clear_latch:
                     self.state.clear()

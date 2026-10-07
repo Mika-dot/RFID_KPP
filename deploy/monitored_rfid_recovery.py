@@ -188,7 +188,8 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
             "self_heal_fast_attempts_exhausted",
             bool(self.state.fault_latched and attempts >= self.max_restarts),
         )
-        self.reporter.set_metric("self_heal_continues", bool(self.state.fault_latched))
+        self.reporter.set_metric("self_heal_continues",
+                                 bool(self.state.fault_latched and assessment.status == "unavailable"))
         self.reporter.set_metric("recovery_request_pending", _RECOVERY.pending())
         self.reporter.set_metric("recovery_last_mode", self.meta.last_mode)
         self.reporter.set_metric("recovery_last_attempt", int(self.meta.last_attempt))
@@ -248,6 +249,8 @@ class _BusinessFlowWatchdog(_LegacyBusinessFlowWatchdog):
                     min_video_events=self.min_video_events,
                     fault_latched=self.state.fault_latched,
                     latched_rfid_marker=self.state.rfid_marker,
+                    last_fault_detail=self.state.last_fault_detail,
+                    video_history_complete=True,
                 )
 
                 if assessment.clear_latch:

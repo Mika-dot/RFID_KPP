@@ -9,12 +9,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-RELEASE = "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa"
+RELEASE = "1c7930912ad84e8f205cf16fbdd715c76c9eb74e"
 SERVICES = {"RfidReader", "RusGuardSync", "Yolo", "Aggregator", "WebDashboard"}
 NODES = {"physical", "perimetr", "comparator"}
 
@@ -28,13 +29,13 @@ def require(ok, reason):
         raise Abort(reason)
 
 
-def healthy_cluster(lease, controller, peers):
+def healthy_cluster(lease, controller, peers, release=RELEASE):
     if (lease.get("enabled") is not True or lease.get("valid") is not True
             or lease.get("owner") != "physical" or controller != {"owner": "comparator", "valid": True}
             or set(peers) != NODES):
         return False
     for name, status in peers.items():
-        if (status.get("node") != name or status.get("release_sha") != RELEASE
+        if (status.get("node") != name or status.get("release_sha") != release
                 or status.get("fencing_protocol") != 2 or status.get("sample_age", 999) >= 10
                 or status.get("operator_maintenance") is not False or status.get("faulted") is not False
                 or status.get("prepared") is not True or status.get("epoch") != lease["epoch"]
@@ -123,13 +124,16 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--baseline", type=Path, metavar="NEW_JSON")
     mode.add_argument("--check", type=Path, metavar="BASELINE_JSON")
+    parser.add_argument("--release", default=RELEASE, help="Exact independently accepted runtime SHA")
     args = parser.parse_args(argv)
+    release = args.release
+    require(bool(re.fullmatch(r"[0-9a-f]{40}", release)), "Expected release must be an exact SHA")
     require(os.name == "nt", "Run on physical Windows with its native Python")
     cfg = json.loads(Path("D:/PerimeterHA/node.json").read_text(encoding="utf-8-sig"))
     root = Path(cfg["root"])
     record = json.loads((Path(cfg["state_dir"]) / "release.json").read_text(encoding="utf-8-sig"))
     require(cfg["node_id"] == "physical" and cfg.get("controller_enabled") is False
-            and record["current"]["sha"] == RELEASE and Path(record["current"]["root"]).resolve() == root.resolve()
+            and record["current"]["sha"] == release and Path(record["current"]["root"]).resolve() == root.resolve()
             and record.get("fencing_protocol_min") == 2 and record.get("pending") is False
             and record.get("previous") is None, "Stable exact physical hotfix release required")
     path = (args.baseline or args.check).resolve()
@@ -139,7 +143,7 @@ def main(argv=None):
     if args.check:
         baseline = json.loads(path.read_text(encoding="utf-8-sig"))
         require(baseline.get("kind") == "physical-live-rfid" and baseline.get("version") == 1
-                and baseline.get("release") == RELEASE and isinstance(baseline.get("lease"), dict)
+                and baseline.get("release") == release and isinstance(baseline.get("lease"), dict)
                 and type(baseline.get("max_id")) is int and type(baseline.get("cursor")) is int,
                 "A matching read-only baseline is required")
     sys.path.insert(0, str(root / "deploy/ha"))
@@ -160,7 +164,7 @@ def main(argv=None):
             peers[peer["id"]] = response["body"]
         after = sql_snapshot(conn)
         require(before["lease"] == after["lease"], "Executor changed during snapshot")
-        require(healthy_cluster(after["lease"], after["controller"], peers), "Stable physical full stack and both reserves required")
+        require(healthy_cluster(after["lease"], after["controller"], peers, release), "Stable physical full stack and both reserves required")
         spool_path = Path(env["RFID_SPOOL_PATH"])
         if not spool_path.is_absolute():
             spool_path = root / spool_path
@@ -169,7 +173,7 @@ def main(argv=None):
         conn.close()
     if args.baseline:
         require(spool["counts"].get("PENDING", 0) == 0, "Drain pending RFID delivery before baseline")
-        evidence = {"kind": "physical-live-rfid", "version": 1, "release": RELEASE,
+        evidence = {"kind": "physical-live-rfid", "version": 1, "release": release,
                     "local_time": datetime.now().isoformat(), "utc": datetime.now(timezone.utc).isoformat(),
                     "lease": after["lease"], "max_id": after["max_id"], "cursor": after["cursor"],
                     "spool_counts": spool["counts"]}
