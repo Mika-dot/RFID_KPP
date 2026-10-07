@@ -8,6 +8,8 @@
 > установка нового кода на узлы отдельно не подтверждена. Исходник без HA сохранён
 > в `archive/perimeter-original-no-ha-2026-10-07`. Текущие границы приёмки:
 > [ACCEPTANCE_2026-10-07.md](deploy/ha/ACCEPTANCE_2026-10-07.md).
+> Продолжение проверки Warehouse/направления и identity, подготовленное в отдельной ветке:
+> [RECONCILIATION_CONTINUATION_2026-10-07.md](deploy/ha/RECONCILIATION_CONTINUATION_2026-10-07.md).
 > При HA ON запуском управляет PerimeterGuardian, legacy не запускать.
 
 > Канонический репозиторий production-системы КПП. Если вы продолжаете работу после паузы, **сначала прочитайте этот README целиком** и только потом меняйте код/мониторинг.

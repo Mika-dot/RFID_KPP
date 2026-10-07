@@ -152,6 +152,22 @@ class WebSnapshotTests(unittest.TestCase):
         html = self.base.report_preview_html(rows, date(2026, 10, 7), date(2026, 10, 7))
         self.assertIn('src="/api/image/920649"', html)
         self.assertIn('loading="lazy"', html)
+        self.assertTrue(rows[0]["WarehouseDirectionConflict"])
+        self.assertIn("Расхождение направления со складом", html)
+
+    def test_details_show_legacy_direction_mismatch_without_sql_writes(self):
+        event = {"EventId": 71746, "WarehouseId": 4411, "FinalDirection": "IN",
+                 "ConfidencePct": 70, "WarningFlags": "OUT_CONFIRMED_BY_WAREHOUSE"}
+        conn = FakeConnection([(list(event), [tuple(event.values())])])
+        with patch.object(self.base, "db_connect", return_value=conn):
+            response = self.client.get("/api/event/71746")
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertEqual(result["FinalDirection"], "IN")
+        self.assertEqual(result["ConfidencePct"], 70)
+        self.assertTrue(result["WarehouseDirectionConflict"])
+        self.assertEqual(len(conn.executions), 1)
+        self.assertTrue(conn.executions[0][0].lstrip().startswith("SELECT"))
 
     def test_warehouse_only_report_does_not_invent_a_video(self):
         html = self.base.report_preview_html(

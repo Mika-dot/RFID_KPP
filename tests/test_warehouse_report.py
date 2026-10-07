@@ -98,6 +98,35 @@ class WarehouseReportTests(unittest.TestCase):
         self.assertEqual(rows[0]["WarehouseMatchMethod"], "AMBIGUOUS_SERIES")
         self.assertEqual(rows[0]["SourceTag"], "")
 
+    def test_direct_tag_report_does_not_invent_a_mismatched_task(self):
+        warehouse = self.warehouse(WarehouseTag=self.tag_a)
+        task = self.task(Tag=self.tag_b)
+        rows = build_report_records([warehouse], [task], [self.event(301)], self.start, self.end)
+        self.assertEqual(rows[0]["SourceTag"], self.tag_a)
+        self.assertIsNone(rows[0]["Task1CId"])
+        self.assertEqual(rows[0]["Task1CDocIds"], "")
+
+    def test_warehouse_only_report_does_not_invent_a_mismatched_task(self):
+        rows = build_report_records([self.warehouse(WarehouseTag=self.tag_a)],
+            [self.task(Tag=self.tag_b)], [], self.start, self.end)
+        self.assertEqual(rows[0]["SourceTag"], self.tag_a)
+        self.assertIsNone(rows[0]["Task1CId"])
+        self.assertEqual(rows[0]["RfidReadCount"], 0)
+
+    def test_warehouse_report_exposes_in_mismatch_without_reversing_passage(self):
+        event = self.event(301, FinalDirection="IN", ConfidencePct=70,
+            WarningFlags="OUT_CONFIRMED_BY_WAREHOUSE", ConsensusCode="WEIGHTED_MAJORITY")
+        rows = build_report_records([self.warehouse()], [self.task()], [event], self.start, self.end)
+        self.assertEqual(rows[0]["FinalDirection"], "IN")
+        self.assertEqual(rows[0]["ConfidencePct"], 70)
+        self.assertTrue(rows[0]["WarehouseDirectionConflict"])
+
+    def test_report_does_not_resolve_explicit_direction_conflict(self):
+        event = self.event(301, ConsensusCode="CONFLICT", ConfidencePct=0)
+        rows = build_report_records([self.warehouse()], [self.task()], [event], self.start, self.end)
+        self.assertEqual(rows[0]["FinalDirection"], "UNKNOWN")
+        self.assertEqual(rows[0]["ConfidencePct"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

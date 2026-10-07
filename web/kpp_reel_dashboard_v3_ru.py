@@ -627,7 +627,11 @@ def report_preview_html(records: List[Dict[str, Any]], date_from: date, date_to:
                 'onerror="this.parentElement.textContent=\'Снимок недоступен\'" /></a>'
                 if video_id else ""
             )
-            h.append(f'<tr><td class="tag-row" colspan="4">{html_escape(str(r.get("SourceTag") or ""))}{snapshot}</td><td>{html_escape(event_time)}</td><td>{html_escape(wh_time)}</td></tr>')
+            warning = (
+                '<div>Расхождение направления со складом</div>'
+                if r.get("WarehouseDirectionConflict") else ""
+            )
+            h.append(f'<tr><td class="tag-row" colspan="4">{html_escape(str(r.get("SourceTag") or ""))}{warning}{snapshot}</td><td>{html_escape(event_time)}</td><td>{html_escape(wh_time)}</td></tr>')
     h.append('</table>')
     return "".join(h)
 

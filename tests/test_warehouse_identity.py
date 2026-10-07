@@ -68,6 +68,23 @@ class WarehouseIdentityTests(unittest.TestCase):
         self.assertFalse(result.series_ambiguous)
         self.assertEqual(result.preferred_tag, self.tag_a)
 
+    def test_direct_tag_never_uses_a_different_tags_ids_task(self):
+        result = resolve_warehouse_identity(
+            self.tag_a, "ID-B", "7734/26", self.dt,
+            [self.task(2, self.tag_b, "ID-B", "7734/26")],
+        )
+        self.assertEqual(result.preferred_tag, self.tag_a)
+        self.assertIsNone(result.task_for_tag(self.tag_a))
+        self.assertEqual(result.task_for_tag(self.tag_b).row_id, 2)
+
+    def test_persisted_link_with_unresolved_tag_does_not_borrow_primary_task(self):
+        result = resolve_warehouse_identity(
+            None, "ID-A", "7734/26", self.dt,
+            [self.task(1, self.tag_a, "ID-A", "7734/26")],
+        )
+        self.assertIsNone(result.task_for_tag(self.tag_b))
+        self.assertIsNone(result.task_for_tag(None))
+
     def test_ambiguous_series_is_not_auto_joined(self):
         result = resolve_warehouse_identity(
             None,

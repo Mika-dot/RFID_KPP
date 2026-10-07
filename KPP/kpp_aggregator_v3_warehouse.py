@@ -26,6 +26,7 @@ from common.warehouse_identity import (
     IdentityRecord,
     IdentityResolution,
     MATCH_AMBIGUOUS_SERIES,
+    MATCH_NONE,
     normalize_tag,
     normalize_value,
     resolve_warehouse_identity,
@@ -417,9 +418,11 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
 
         event_id = None
         event_candidate = None
+        event_tag = ""
         linked = self._find_existing_linked_event(cur, warehouse_id, warehouse_dt)
         if linked is not None:
             event_id, linked_tag = linked
+            event_tag = linked_tag
             event_candidate = next(
                 (candidate for candidate in identity.candidates if candidate.tag == linked_tag),
                 None,
@@ -432,16 +435,15 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
                 )
                 if event_id is not None:
                     event_candidate = candidate
+                    event_tag = candidate.tag
                     break
 
         if event_id is not None:
-            task = (
-                event_candidate.task if event_candidate is not None else None
-            ) or identity.primary_task
+            task = identity.task_for_tag(event_tag)
             match_method = (
                 event_candidate.method
                 if event_candidate is not None
-                else identity.primary_method
+                else MATCH_NONE
             )
             self._enrich_existing_event(
                 cur,
@@ -473,7 +475,7 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
             identity.preferred_tag,
             warehouse_doc_ids,
             series_number,
-            identity.primary_task,
+            identity.task_for_tag(identity.preferred_tag),
             match_method,
             link_status,
         )

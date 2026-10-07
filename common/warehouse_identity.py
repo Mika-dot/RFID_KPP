@@ -78,6 +78,19 @@ class IdentityResolution:
     def preferred_tag(self) -> str:
         return self.candidates[0].tag if self.candidates else ""
 
+    def task_for_tag(self, tag: object) -> Optional[IdentityRecord]:
+        """A preferred 1C row for another physical tag is never a fallback."""
+        normalized = normalize_tag(tag)
+        if not normalized:
+            return None
+        for candidate in self.candidates:
+            if (candidate.tag == normalized and candidate.task is not None
+                    and candidate.task.tag == normalized):
+                return candidate.task
+        if self.primary_task is not None and self.primary_task.tag == normalized:
+            return self.primary_task
+        return None
+
 
 def _nearest(records: Iterable[IdentityRecord], dt: datetime) -> Optional[IdentityRecord]:
     values = list(records)
