@@ -15,7 +15,7 @@ import os
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -250,7 +250,7 @@ def replay_local(journal, paths):
             continue  # Only the normal spool constructor creates its schema.
         image = validate_record(record)
         p = record["payload"]
-        with sqlite3.connect(path, timeout=2) as db:
+        with closing(sqlite3.connect(path, timeout=2)) as db, db:
             db.execute("PRAGMA synchronous=FULL")
             if record["stream"] == "rfid":
                 db.execute("INSERT OR IGNORE INTO reads(client_uuid,source_time,source_sequence,connection_epoch,antenna,rssi,epc,tid,time_quality,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
