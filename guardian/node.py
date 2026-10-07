@@ -43,6 +43,15 @@ class Node:
         self.status = {"node": cfg["node_id"], "active": False, "healthy": False,
                        "prepared": False, "epoch": 0, "faulted": False}
         self.rate_path = Path(cfg["state_dir"]) / "repair-rate.json"
+        self.replica = None
+        self.bus_metrics = {}
+        self.bus_metrics_at = 0
+        from guardian.probation import BusinessProbation
+        self.business_probation = BusinessProbation(cfg.get("probation_stall_sec", 120))
+        if cfg.get("replication_enabled", False):
+            from common.replicated_ingest import ReplicaJournal, validate_peers
+            validate_peers(cfg["nodes"], cfg["node_id"])
+            self.replica = ReplicaJournal(Path(cfg["state_dir"])/"replica.sqlite", cfg["node_id"])
 
     def snapshot(self):
         with self.lock:
@@ -50,9 +59,20 @@ class Node:
             result["sample_age"] = time.monotonic()-self.last_sample
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
+            result["update"] = {"pending": self.updates.state.get("pending", False),
+                "trial_started": self.updates.state.get("trial_started", False),
+                "quarantined": len(self.updates.quarantined) if isinstance(getattr(self.updates, "quarantined", None), (set, list, tuple)) else 0,
+                "qualification": self.updates.state.get("qualification", {}).get("status")}
             result["resources"] = dict(getattr(self, "resources", {}))
             result["fencing_protocol"] = FENCING_PROTOCOL
             result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
+            result["replication_enabled"] = getattr(self, "replica", None) is not None
+            result["bus_metrics"] = dict(getattr(self, "bus_metrics", {}))
+            result["bus_sample_age"] = time.monotonic()-getattr(self, "bus_metrics_at", 0)
+            counts=getattr(self.telemetry,"kind_counts",{})
+            result["event_counts"] = dict(counts) if isinstance(counts,dict) else {}
+            timing=getattr(getattr(self.telemetry,"recovery",None),"last",None)
+            result["recovery_timing"] = dict(timing) if isinstance(timing,dict) else None
             if self.stop.is_set() or self.maintenance or result["operator_maintenance"]:
                 result.update(prepared=False, healthy=False)
             return result
@@ -77,6 +97,69 @@ class Node:
             except FileNotFoundError:
                 logs[name] = ""
         return {"status": self.snapshot(), "workers": workers, "logs": logs}
+
+    def replication_loop(self):
+        from common.replicated_ingest import MAX_BODY, replay_local
+        from guardian.net import json_request
+        cursors = {}
+        while not self.stop.is_set():
+            import sqlite3
+            from datetime import datetime
+            env = dict(os.environ, **self.cfg.get("env", {}))
+            paths = {"rfid": env.get("RFID_SPOOL_PATH", str(Path(self.cfg["root"])/"rfid_spool_v4.sqlite")),
+                     "video": env.get("RFID_VIDEO_SPOOL", str(Path(self.cfg["root"])/"recordings/video_spool_v3.sqlite"))}
+            metrics = {}
+            for stream, path in paths.items():
+                try:
+                    source = Path(path).resolve()
+                    if not source.is_file():
+                        continue
+                    db = sqlite3.connect(source.as_uri()+"?mode=ro", uri=True, timeout=1)
+                    try:
+                        table = "reads" if stream == "rfid" else "events"
+                        pending, oldest = db.execute("SELECT COUNT(*),MIN(created_at) FROM "+table+" WHERE state='PENDING'").fetchone()
+                        sent = db.execute("SELECT COUNT(*) FROM "+table+" WHERE state='SENT'").fetchone()[0]
+                    finally:
+                        db.close()
+                    metrics[stream+"_pending"] = pending
+                    metrics[stream+"_sent"] = sent
+                    metrics[stream+"_oldest_pending_sec"] = max(0, (datetime.now()-datetime.fromisoformat(oldest)).total_seconds()) if oldest else 0
+                except Exception:
+                    continue
+            with self.lock:
+                self.bus_metrics = metrics
+                self.bus_metrics_at = time.monotonic()
+            if self.replica is not None:
+                try:
+                    lease = self.store.lease()
+                    owned = lease["valid"] and lease["owner"] == self.cfg["node_id"]
+                    if owned:
+                        for peer in self.cfg["nodes"]:
+                            if peer["id"] == self.cfg["node_id"]:
+                                continue
+                            try:
+                                code, data = json_request(peer["url"].rstrip("/")+"/replica/page?after="+str(cursors.get(peer["id"], 0)),
+                                    os.environ["PERIMETER_HA_TOKEN"], timeout=2, max_bytes=MAX_BODY)
+                                if code != 200 or not isinstance(data.get("items"), list):
+                                    continue
+                                for item in data["items"]:
+                                    if item["state"] not in {"PENDING", "SENT"}:
+                                        raise ValueError("InvalidReplicaState")
+                                    self.replica.put(item["record"])
+                                    if item["state"] == "SENT":
+                                        r = item["record"]
+                                        self.replica.sent(r["stream"], r["uuid"], r["digest"])
+                                cursors[peer["id"]] = data["cursor"] if data["items"] else 0
+                            except Exception:
+                                continue
+                        # SQL/role may have changed during peer I/O; recheck.
+                        current = self.store.lease()
+                        if current["valid"] and current["owner"] == self.cfg["node_id"] and current["epoch"] == lease["epoch"]:
+                            replay_local(self.replica, paths)
+                    self.replica.maintenance()
+                except Exception as exc:
+                    self.telemetry.event("replication_error", error=type(exc).__name__)
+            self.stop.wait(5)
 
     def set_operator_maintenance(self, enabled, release):
         if not isinstance(enabled, bool) or release != self.updates.state["current"]["sha"]:
@@ -143,14 +226,31 @@ class Node:
                 self.processes.start(lease["epoch"])
                 self.updates.begin_trial()
                 self.healthy_since = None
+                if hasattr(self, "business_probation"):
+                    self.business_probation.streams.clear()
+                    self.bus_metrics = {}
+                    self.bus_metrics_at = 0
                 self.telemetry.event("promoted", epoch=lease["epoch"])
         health = services_health() if owned and self.processes.children else {}
         healthy = owned and self.processes.alive() and len(health) == 5 and all(h["ok"] for h in health.values())
         now = time.monotonic()
+        complete = True
+        if self.updates.state.get("pending") and self.updates.state.get("trial_started") and hasattr(self, "business_probation"):
+            complete = (now-getattr(self,"bus_metrics_at",0) <= 15 and all(k in self.bus_metrics for k in
+                ("rfid_pending", "rfid_sent", "video_pending", "video_sent")))
+            problem = self.business_probation.assess(getattr(self, "bus_metrics", {}), now)
+            if not complete and time.time()-self.updates.state.get("trial_started_at",time.time()) > 240:
+                problem = "candidate_business_metrics_unavailable"
+            if problem:
+                # Fence/demote via the ordinary unhealthy path. Rollback occurs
+                # after ownership is removed, never by swapping an active tree.
+                healthy = False
+                self.telemetry.event("candidate_business_fault", reason=problem)
         if healthy:
             if self.healthy_since is None:
                 self.healthy_since = now
-            if now-self.healthy_since >= self.cfg.get("verify_sec", 60):
+            duration = max(self.cfg.get("verify_sec", 60), self.cfg.get("probation_sec", 180)) if self.updates.state.get("pending") else self.cfg.get("verify_sec", 60)
+            if complete and now-self.healthy_since >= duration:
                 self.updates.confirm()
         else:
             self.healthy_since = None
@@ -248,8 +348,12 @@ class Node:
     def server(self):
         node = self
         class Handler(BaseHTTPRequestHandler):
+            def setup(self):
+                super().setup()
+                self.connection.settimeout(10)
+
             def send(self, code, data, content_type="application/json"):
-                raw = (json.dumps(data, ensure_ascii=False) if content_type == "application/json" else data).encode()
+                raw = (json.dumps(data, ensure_ascii=False,separators=(",",":")) if content_type == "application/json" else data).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(raw)))
@@ -275,6 +379,17 @@ class Node:
                     return self.send(200, node.snapshot())
                 if self.path == "/diagnostics":
                     return self.send(200, node.diagnostics())
+                if self.path == "/replica/stats" and getattr(node, "replica", None) is not None:
+                    return self.send(200, node.replica.stats())
+                if self.path.startswith("/replica/page?") and getattr(node, "replica", None) is not None:
+                    from urllib.parse import parse_qs, urlsplit
+                    try:
+                        query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                        if set(query) != {"after"} or len(query["after"]) != 1:
+                            raise ValueError("InvalidReplicaPage")
+                        return self.send(200, node.replica.page(int(query["after"][0])))
+                    except (ValueError, TypeError):
+                        return self.send(400, {"error": "InvalidReplicaPage"})
                 self.send(404, {"error": "NotFound"})
 
             def do_POST(self):
@@ -282,9 +397,21 @@ class Node:
                     return self.send(401, {"error": "Unauthorized"})
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < size <= 4096:
+                    from common.replicated_ingest import MAX_BODY
+                    replica_request = self.path in {"/replica/put", "/replica/commit"}
+                    if not 0 < size <= (MAX_BODY if replica_request else 4096):
                         raise ValueError("InvalidBodySize")
                     data = json.loads(self.rfile.read(size))
+                    if replica_request and getattr(node, "replica", None) is not None:
+                        if self.path == "/replica/put":
+                            import shutil
+                            if shutil.disk_usage(node.cfg["state_dir"]).free < node.cfg.get("replica_min_free_bytes", 128*1024*1024):
+                                raise RuntimeError("ReplicaDiskFull")
+                            return self.send(200, node.replica.put(data))
+                        if set(data) != {"stream", "uuid", "digest"}:
+                            raise ValueError("InvalidReplicaCommit")
+                        node.replica.sent(data["stream"], data["uuid"], data["digest"])
+                        return self.send(200, {"committed": True})
                     if self.path == "/repair" and set(data) == {"action", "service"}:
                         return self.send(200, node.repair(data["action"], data["service"]))
                     if self.path == "/maintenance" and set(data) == {"enabled", "release"}:

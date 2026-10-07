@@ -30,6 +30,11 @@ class ReleaseAdmissionTests(unittest.TestCase):
             self.write(relative, source.read_text(encoding="utf-8"))
         self.write("tests/test_candidate.py", "import unittest\nclass Candidate(unittest.TestCase):\n"
                    "    def test_candidate_owned_suite(self):\n        self.assertTrue(True)\n")
+        # Full production source for installed mechanical/replay qualification.
+        source_root = Path(__file__).parents[1]
+        for folder in ("common", "guardian", "KPP", "deploy", "web", "RFID_reader_v4", "RTSP", "DB_RusGard"):
+            for source in (source_root/folder).rglob("*.py"):
+                self.write(str(source.relative_to(source_root)), source.read_text(encoding="utf-8-sig"))
         self.base = self.commit()
         self.cfg = {"root": str(self.repo), "state_dir": str(self.folder / "state"),
                     "update_source": str(self.repo), "release_dir": str(self.folder / "releases"),

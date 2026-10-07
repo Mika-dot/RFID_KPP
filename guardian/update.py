@@ -65,6 +65,8 @@ class Updates:
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ValueError("Invalid main commit")
         with self.lock:
+            if self.state.get("pending"):
+                return  # A trial is not an accepted baseline for another candidate.
             current = self.state["current"]["sha"]
             if sha == current:
                 self.main_sha = sha
@@ -84,6 +86,7 @@ class Updates:
                         if isinstance(target_name, ast.Name):
                             constants[target_name.id] = statement.value.value
             if constants.get("FENCING_PROTOCOL", 0) != self.state["fencing_protocol_min"] or constants.get("EPOCH_BARRIER") != "Perimeter.HA.Epoch":
+                self.reject_candidate(sha, "CandidateFencingProtocolIncompatible")
                 raise RuntimeError("CandidateFencingProtocolIncompatible")
         # Follow main ancestry, not the deployed feature commit: a squash merge
         # legitimately creates a different commit than the initial installation.
@@ -117,6 +120,13 @@ class Updates:
                 atomic_json(self.path, self.state)
             self.telemetry.event("update_docs_only", sha=sha)
             return
+        from guardian.qualification import classify, offline_env
+        classes = classify(paths)
+        # Infrastructure/schema/model accuracy cannot be certified by a Python
+        # test alone. Keep these changes in quarantine until operator rollout.
+        if set(classes) & {"DB_SCHEMA", "DEPENDENCIES", "MODEL_OR_DLL"}:
+            self.reject_candidate(sha, "CandidateRequiresInfrastructureQualification")
+            raise RuntimeError("CandidateRequiresInfrastructureQualification")
         target = Path(self.cfg["release_dir"]) / sha
         if not target.exists():
             self.git("worktree", "add", "--detach", str(target), sha)
@@ -126,7 +136,7 @@ class Updates:
         try:
             protected = subprocess.run([self.cfg["python"], str(checker), str(target)],
                 cwd=target, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=30)
+                stderr=subprocess.DEVNULL, timeout=30, env=offline_env())
         except subprocess.TimeoutExpired:
             self.reject_candidate(sha, "CandidateBusinessChecksTimeout")
             raise RuntimeError("CandidateBusinessChecksTimeout") from None
@@ -134,21 +144,46 @@ class Updates:
             self.reject_candidate(sha, "CandidateProtectedBusinessChecksFailed")
             raise RuntimeError("CandidateProtectedBusinessChecksFailed")
         # Do not run schema migrations here. Breaking changes are a distinct rollout.
-        result = subprocess.run([self.cfg["python"], "-m", "unittest", "discover", "-s", "tests"],
-            cwd=target, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, timeout=240)
+        try:
+            result = subprocess.run([self.cfg["python"], "-m", "unittest", "discover", "-s", "tests"],
+                cwd=target, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=240, env=offline_env())
+        except subprocess.TimeoutExpired:
+            self.reject_candidate(sha, "CandidateTestsTimeout")
+            raise RuntimeError("CandidateTestsTimeout") from None
         if result.returncode:
             self.reject_candidate(sha, "CandidateTestsFailed")
             raise RuntimeError("CandidateTestsFailed")
+        qualifier = Path(__file__).with_name("qualification.py").resolve()
+        proof = Path(self.cfg["state_dir"])/("qualification-"+sha+".json")
+        proof.unlink(missing_ok=True)
+        command = [self.cfg["python"], "-I", str(qualifier), "--candidate", str(target),
+                   "--stable", self.cfg["root"], "--report", str(proof)]
+        for key, arg in (("qualification_traces", "--traces"), ("qualification_allowlist", "--allowlist")):
+            if self.cfg.get(key):
+                command.extend([arg, self.cfg[key]])
+        try:
+            qualified = subprocess.run(command, env=offline_env(), cwd=self.cfg["state_dir"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=150)
+            if qualified.returncode or not proof.is_file():
+                raise RuntimeError("CandidateQualificationFailed")
+            qualification = json.loads(proof.read_text(encoding="utf-8"))
+            if qualification.get("status") != "passed":
+                raise RuntimeError("CandidateQualificationFailed")
+        except (subprocess.TimeoutExpired, RuntimeError, ValueError):
+            self.reject_candidate(sha, "CandidateQualificationFailed")
+            raise RuntimeError("CandidateQualificationFailed") from None
         candidate_cfg = dict(self.cfg, root=str(target))
         report = preflight(candidate_cfg, self.store, active=True)
         if not report["ok"]:
+            self.reject_candidate(sha, "CandidatePreflightFailed")
             raise RuntimeError("CandidatePreflightFailed")
         with self.lock:
             if self.state["current"]["sha"] != current:
                 raise RuntimeError("CandidateBaseChanged")
             self.main_sha = sha
             self.staged = {"root": str(target), "sha": sha, "python": self.cfg["python"]}
+            self.state["qualification"] = dict(qualification, sha=sha, classes=classes)
             self.state["trusted_main_sha"] = sha
             atomic_json(self.path, self.state)
         self.telemetry.event("update_staged", sha=sha)
@@ -197,6 +232,7 @@ class Updates:
         with self.lock:
             if self.state.get("pending"):
                 self.state["trial_started"] = True
+                self.state["trial_started_at"] = time.time()
                 atomic_json(self.path, self.state)
 
     def rollback(self):

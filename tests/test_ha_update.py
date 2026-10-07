@@ -86,6 +86,12 @@ class UpdateTests(unittest.TestCase):
     @patch("guardian.update.subprocess.run")
     def test_squash_merge_checks_main_ancestry_instead_of_feature_ancestry(self, run, preflight):
         run.return_value.returncode=0
+        def qualified_command(command, **kwargs):
+            if "--report" in command:
+                proof = Path(command[command.index("--report")+1])
+                proof.write_text(json.dumps({"status":"passed"}), encoding="utf-8")
+            return Mock(returncode=0)
+        run.side_effect = qualified_command
         self.updates.state["trusted_main_sha"]="d"*40
         calls=[]
         def git(*args,**kwargs):

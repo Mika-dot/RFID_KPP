@@ -82,7 +82,7 @@ SELECT Id FROM dbo.KPP_HA_Controller
 WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
 """, self.token).fetchone() is not None
 
-    def grant(self, owner, ttl=15):
+    def grant(self, owner, ttl=15, fence_previous=None):
         # A renewal cannot change Enabled, Owner, Epoch or StartedAt. It needs
         # only a brief row update; taking the epoch barrier would starve it behind
         # a long business transaction and expire an otherwise healthy stack.
@@ -105,7 +105,14 @@ WHERE Id=1 AND Enabled=1 AND Owner=? AND ExpiresAt>SYSUTCDATETIME()
         with self.connect() as conn:
             epoch_barrier(conn)
             self._grant_authority(conn, owner)
-            conn.execute("SELECT Id FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
+            old = conn.execute("SELECT Epoch FROM dbo.KPP_HA_Lease WITH(UPDLOCK,HOLDLOCK) WHERE Id=1").fetchone()
+            if fence_previous:
+                if owner is not None:
+                    raise ValueError("FenceRequiresDemotion")
+                conn.execute("""MERGE dbo.KPP_HA_HardwareFence WITH(HOLDLOCK) t USING(SELECT ? NodeId)s
+                    ON t.NodeId=s.NodeId WHEN MATCHED THEN UPDATE SET Pending=1,Epoch=?,VerifiedAt=NULL
+                    WHEN NOT MATCHED THEN INSERT(NodeId,Pending,Epoch)VALUES(s.NodeId,1,?);""",
+                    fence_previous, int(old[0])+1, int(old[0])+1)
             self._candidate_allowed(conn, owner)
             conn.execute("""
 UPDATE dbo.KPP_HA_Lease WITH (UPDLOCK,HOLDLOCK)
@@ -128,9 +135,23 @@ WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
 
     def _candidate_allowed(self, conn, owner):
         if owner:
+            conn.execute("""IF OBJECT_ID(N'dbo.KPP_HA_HardwareFence',N'U') IS NOT NULL
+                EXEC sys.sp_executesql N'IF EXISTS(SELECT 1 FROM dbo.KPP_HA_HardwareFence WHERE Pending=1)
+                THROW 51041,''HardwareFencePending'',1;';""")
             blocked = conn.execute("SELECT Faulted FROM dbo.KPP_HA_NodeState WITH(UPDLOCK,HOLDLOCK) WHERE NodeId=?", owner).fetchone()
             if blocked and blocked[0]:
                 raise RuntimeError("CandidateInRepair")
+
+    def pending_fences(self):
+        with self.connect() as conn:
+            return [(str(r[0]), int(r[1])) for r in conn.execute(
+                "SELECT NodeId,Epoch FROM dbo.KPP_HA_HardwareFence WHERE Pending=1").fetchall()]
+
+    def confirm_fence(self, node, epoch):
+        with self.connect() as conn:
+            self._grant_authority(conn, None)
+            conn.execute("UPDATE dbo.KPP_HA_HardwareFence SET Pending=0,VerifiedAt=SYSUTCDATETIME() WHERE NodeId=? AND Epoch=? AND Pending=1", node, epoch)
+            conn.commit()
 
     def node_state(self, node):
         with self.connect() as conn:

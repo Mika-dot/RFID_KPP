@@ -1,0 +1,928 @@
+{
+  "version": 1,
+  "origin": "deterministic_offline_contract_models",
+  "traces": [
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "single_IN",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 0,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "OUT",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "OUT"
+        }
+      ],
+      "name": "single_OUT",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "OUT"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 0,
+        "report_rows": 1,
+        "report_directions": [
+          "OUT"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "RFID_without_video",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 1,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [],
+      "name": "RFID_without_SKUD",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [],
+        "need_recheck": 1,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "unknown_RFID_not_reel",
+      "expected": {
+        "sessions": 1,
+        "reels": 0,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 0,
+        "group_counts": [],
+        "video_links": [],
+        "skud_links": [],
+        "need_recheck": 1,
+        "report_rows": 0,
+        "report_directions": [],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 3,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "BBBBBBBBBBBBBBBBBBBBBBBB",
+          "tid": "222222222222222222222222"
+        },
+        {
+          "id": 4,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "BBBBBBBBBBBBBBBBBBBBBBBB",
+          "tid": "222222222222222222222222"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111",
+        "BBBBBBBBBBBBBBBBBBBBBBBB222222222222222222222222"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 2
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "two_reels_one_forklift",
+      "expected": {
+        "sessions": 2,
+        "reels": 2,
+        "directions": [
+          "IN",
+          "IN"
+        ],
+        "read_counts": [
+          2,
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          2
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 0,
+        "report_rows": 2,
+        "report_directions": [
+          "IN",
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "duplicate_raw_delivery",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 0,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 3,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "222222222222222222222222"
+        },
+        {
+          "id": 4,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "222222222222222222222222"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "name": "same_EPC_different_TID",
+      "expected": {
+        "sessions": 2,
+        "reels": 1,
+        "directions": [
+          "IN",
+          "IN"
+        ],
+        "read_counts": [
+          2,
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 1,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": null,
+          "ids": "DOC1",
+          "series": "SERIES1"
+        }
+      ],
+      "name": "warehouse_later_nullable_tag",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "IN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [
+          201
+        ],
+        "need_recheck": 0,
+        "report_rows": 1,
+        "report_directions": [
+          "IN"
+        ],
+        "report_warehouse_conflicts": 1
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [
+        {
+          "id": 201,
+          "direction": "IN"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": null,
+          "ids": "DOC1",
+          "series": "SERIES1"
+        }
+      ],
+      "name": "warehouse_only_no_RFID",
+      "expected": {
+        "sessions": 0,
+        "reels": 0,
+        "directions": [],
+        "read_counts": [],
+        "groups": 0,
+        "group_counts": [],
+        "video_links": [],
+        "skud_links": [],
+        "need_recheck": 0,
+        "report_rows": 1,
+        "report_directions": [
+          "OUT"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "OUT",
+          "count": 1
+        }
+      ],
+      "skud": [],
+      "name": "conflicting_direction_sources",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "UNKNOWN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [],
+        "need_recheck": 1,
+        "report_rows": 1,
+        "report_directions": [
+          "UNKNOWN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "OUT",
+          "count": 1
+        }
+      ],
+      "skud": [],
+      "warehouse": [
+        {
+          "tag": "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+        }
+      ],
+      "name": "warehouse_cannot_resolve_conflict",
+      "expected": {
+        "sessions": 1,
+        "reels": 1,
+        "directions": [
+          "UNKNOWN"
+        ],
+        "read_counts": [
+          2
+        ],
+        "groups": 1,
+        "group_counts": [
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [],
+        "need_recheck": 1,
+        "report_rows": 1,
+        "report_directions": [
+          "UNKNOWN"
+        ],
+        "report_warehouse_conflicts": 1
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 3,
+          "offset": 100,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 4,
+          "offset": 101,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [
+        {
+          "id": 101,
+          "direction": "IN",
+          "count": 1
+        }
+      ],
+      "skud": [],
+      "name": "two_independent_groups_one_video",
+      "expected": {
+        "sessions": 2,
+        "reels": 2,
+        "directions": [
+          "IN",
+          "IN"
+        ],
+        "read_counts": [
+          2,
+          2
+        ],
+        "groups": 2,
+        "group_counts": [
+          1,
+          1
+        ],
+        "video_links": [
+          101
+        ],
+        "skud_links": [],
+        "need_recheck": 2,
+        "report_rows": 2,
+        "report_directions": [
+          "IN",
+          "IN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1000,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [],
+      "skud": [],
+      "name": "session_duration_boundary",
+      "expected": {
+        "sessions": 2,
+        "reels": 2,
+        "directions": [
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "read_counts": [
+          1,
+          1
+        ],
+        "groups": 2,
+        "group_counts": [
+          1,
+          1
+        ],
+        "video_links": [],
+        "skud_links": [],
+        "need_recheck": 2,
+        "report_rows": 2,
+        "report_directions": [
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    },
+    {
+      "at": "2026-10-07T08:00:00",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 2,
+          "offset": 1,
+          "antenna": 1,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        },
+        {
+          "id": 3,
+          "offset": -10,
+          "antenna": 2,
+          "epc": "AAAAAAAAAAAAAAAAAAAAAAAA",
+          "tid": "111111111111111111111111"
+        }
+      ],
+      "known_tags": [
+        "AAAAAAAAAAAAAAAAAAAAAAAA111111111111111111111111"
+      ],
+      "video": [],
+      "skud": [],
+      "name": "late_reordered_source_time",
+      "expected": {
+        "sessions": 2,
+        "reels": 2,
+        "directions": [
+          "IN",
+          "UNKNOWN"
+        ],
+        "read_counts": [
+          1,
+          2
+        ],
+        "groups": 2,
+        "group_counts": [
+          1,
+          1
+        ],
+        "video_links": [],
+        "skud_links": [],
+        "need_recheck": 2,
+        "report_rows": 2,
+        "report_directions": [
+          "IN",
+          "UNKNOWN"
+        ],
+        "report_warehouse_conflicts": 0
+      }
+    }
+  ]
+}

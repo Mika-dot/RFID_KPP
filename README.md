@@ -1,5 +1,7 @@
 # RFID КПП «Периметр» — production runbook
 
+> 07.10.2026: подготовлен [кандидат расширения отказоустойчивости](deploy/ha/RESILIENCE_CANDIDATE_2026-10-07.md): replica queues, Web gateway, release qualification и Behavior Observer. Ветка `feature/ha-resilience-2026-10-07`; установка на оборудование ещё не выполнена.
+
 > **Последнее подтверждение завода — 06.10.2026 18:54 МСК:** все3 узла на runtime
 > `1c7930912ad84e8f205cf16fbdd715c76c9eb74e`, protocol2, physical epoch264,
 > все5 служб ready, оба резерва prepared/nonfaulted, controller Comparator.

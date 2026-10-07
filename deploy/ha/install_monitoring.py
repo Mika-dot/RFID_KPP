@@ -260,6 +260,19 @@ def proxy_wallboard(source):
             def __init__(self, address, handler, *args, **kwargs):
                 class Handler(handler):
                     def do_GET(self):
+                        if self.path in ("/perimeter-behavior/status","/perimeter-behavior/summary","/perimeter-behavior/metrics"):
+                            try:
+                                value=http_json("http://127.0.0.1:19153/status",ha_token=observer_token())[1]
+                            except Exception:
+                                value={"status":"collector_error","stale":True,"metrics":{}}
+                            if self.path.endswith("/summary"):
+                                value=[{k:v for k,v in value.items() if k not in {"metrics","hypotheses"}}]
+                            elif self.path.endswith("/metrics"):
+                                value=[dict(metric=k,**v) for k,v in value.get("metrics",{}).items()]
+                            raw=json.dumps(value,ensure_ascii=False).encode()
+                            self.send_response(200);self.send_header("Content-Type","application/json")
+                            self.send_header("Content-Length",str(len(raw)));self.send_header("Cache-Control","no-store")
+                            self.end_headers();self.wfile.write(raw);return
                         if self.path not in ("/perimeter-ha/status", "/perimeter-ha/summary", "/perimeter-ha/nodes"):
                             return super().do_GET()
                         route = self.path.removeprefix("/perimeter-ha")
