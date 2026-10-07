@@ -22,11 +22,13 @@ from pathlib import Path
 BASE = "0c573bc708f2906c240af64a23e0f6042006a669"
 BASES = (BASE, "d898dbc05feeb3157304d0c34cca344514b59b38",
          "79f79e7ad0836a86808d05b543f14fb9be84e940",
-         "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665")
+         "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665",
+         "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa")
 PRIORITY = [("physical", 1), ("perimetr", 2), ("comparator", 3)]
 OUTPUT_TABLES = ("RFID_Tags", "RusGuardLogs", "ReelTransitions", "KPP_ReelEvents",
                  "KPP_RuntimeState", "KPP_ActiveRfidSessions", "KPP_ProcessingErrors",
                  "KPP_EventVideoLinks", "KPP_EventSkudLinks")
+RESUME_PREFLIGHT_TIMEOUT = 180
 
 
 class Abort(RuntimeError):
@@ -373,6 +375,53 @@ def wait_cluster(cfg, store, get_json, token, release):
         time.sleep(10)
 
 
+def wait_resume_agents(cfg, store, get_json, token, release):
+    """Wait for asynchronous probes; keep every node held until all checks pass."""
+    deadline = time.monotonic() + RESUME_PREFLIGHT_TIMEOUT
+    check_names = ("starting", "space", "sql_fencing", "same_output_database",
+                   "entrypoints", "configuration", "model", "masks", "dll_file",
+                   "ports_free", "sdk_load", "python_dependencies", "exception")
+    while True:
+        require(store.lease()["enabled"] is True, "HA mode changed; resume stopped")
+        snapshots, rows = [], []
+        for peer in cfg["nodes"]:
+            try:
+                code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
+            except (OSError, ValueError) as exc:
+                rows.append({"node": peer["id"], "error": type(exc).__name__})
+                continue
+            require(code not in (401, 403), "Resume authentication refused: " + peer["id"])
+            if code != 200:
+                rows.append({"node": peer["id"], "http": code})
+                continue
+            require(status.get("node") == peer["id"] and status.get("release_sha") == release
+                    and status.get("fencing_protocol") == 2
+                    and type(status.get("operator_maintenance")) is bool,
+                    "All three exact hotfix agents required before resume: " + peer["id"])
+            require(not status.get("resources", {}).get("restart_required"),
+                    "Agent resource restart required before resume: " + peer["id"])
+            if status["operator_maintenance"]:
+                code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
+                require(status.get("active") is False and code == 200 and diag.get("workers") == {},
+                        "Held executor must be inactive and empty: " + peer["id"])
+            preflight = status.get("preflight", {})
+            checks = preflight.get("checks", {})
+            ready = status.get("sample_age", 999) < 10 and preflight.get("ok") is True
+            rows.append({"node": peer["id"], "sample_age": status.get("sample_age"),
+                         "preflight_ok": preflight.get("ok") is True,
+                         "failed_checks": [name for name in check_names
+                                           if name in checks and checks[name] is not True]})
+            if ready:
+                snapshots.append((peer, status))
+        if len(snapshots) == len(cfg["nodes"]):
+            print("HOTFIX_ALL_AGENTS_PREFLIGHT_OK", flush=True)
+            return snapshots
+        print("HOTFIX_RESUME_PREFLIGHT_WAIT", json.dumps(rows), flush=True)
+        require(time.monotonic() < deadline,
+                "Agent preflight did not become ready; no maintenance was released; see checks above")
+        time.sleep(3)
+
+
 def resume_protocol2(cfg, store, get_json, token, release):
     """Resume a staged hotfix against existing protocol 2; no DDL/migrations."""
     require(store.lease()["enabled"] is True, "Existing enabled protocol 2 HA required")
@@ -383,21 +432,7 @@ def resume_protocol2(cfg, store, get_json, token, release):
             require(row and not row[0] and row[1] and "Perimeter.HA.Epoch" in row[1]
                     and "READCOMMITTEDLOCK" in row[1] and "UPDLOCK" not in row[1],
                     "Existing protocol 2 trigger required: " + table)
-    snapshots = []
-    for peer in cfg["nodes"]:
-        code, status = get_json(peer["url"].rstrip("/") + "/status", token, timeout=5)
-        require(code == 200 and status.get("node") == peer["id"]
-                and status.get("release_sha") == release and status.get("fencing_protocol") == 2
-                and status.get("sample_age", 999) < 10
-                and status.get("preflight", {}).get("ok") is True
-                and type(status.get("operator_maintenance")) is bool
-                and not status.get("resources", {}).get("restart_required"),
-                "All three exact hotfix agents required before resume: " + peer["id"])
-        if status["operator_maintenance"]:
-            code, diag = get_json(peer["url"].rstrip("/") + "/diagnostics", token, timeout=5)
-            require(status.get("active") is False and code == 200 and diag.get("workers") == {},
-                    "Held executor must be inactive and empty: " + peer["id"])
-        snapshots.append((peer, status))
+    snapshots = wait_resume_agents(cfg, store, get_json, token, release)
     print("SQL_PROTOCOL2_EXISTING_VERIFIED_NO_MIGRATION", flush=True)
     for peer, status in sorted(snapshots, key=lambda item: item[0]["priority"]):
         require(store.lease()["enabled"] is True, "HA mode changed; resume stopped")
@@ -416,8 +451,8 @@ def resume_protocol2(cfg, store, get_json, token, release):
             if warnings:
                 # Only a typed allowlisted reason; never export arbitrary data.
                 flow = warnings.get("business_flow", {})
-                if name == "RfidReader" and flow.get("detail") == "rfid_stale_with_partial_activity_evidence":
-                    print("RFID_BUSINESS_WARNING partial_activity_evidence; real RFID passage still required", flush=True)
+                if name == "RfidReader" and flow.get("detail") in {"rfid_stale_with_partial_activity_evidence", "rfid_historical_activity_evidence_contradicted"}:
+                    print("RFID_BUSINESS_WARNING", flow["detail"], "; real RFID passage still required", flush=True)
     print("HOTFIX_PROTOCOL2_RUNTIME_RESTORED; BUSINESS_READ_ACCEPTANCE_NOT_PROVEN", flush=True)
 
 
@@ -433,7 +468,11 @@ def main(argv=None):
     mode.add_argument("--finalize", action="store_true")
     mode.add_argument("--diagnose", action="store_true")
     mode.add_argument("--resume-protocol2", action="store_true")
+    parser.add_argument("--resume-after-stage", action="store_true",
+                        help="Perimetr only: after staging all three exact agents, release protocol 2 and verify the cluster")
     args = parser.parse_args(argv)
+    require(not args.resume_after_stage or (args.stage and args.node == "perimetr"),
+            "Resume-after-stage requires the final Perimetr staging step")
     require(bool(re.fullmatch(r"[0-9a-f]{40}", args.release)), "An exact release SHA is required")
     windows = os.name == "nt"
     require((windows and args.node == "physical") or (not windows and args.node != "physical"),
@@ -484,6 +523,10 @@ def main(argv=None):
         return state
 
     state = initial_state()
+    def resume_after_stage():
+        if args.resume_after_stage:
+            with SingleInstanceLock(str(Path(cfg["state_dir"]) / "operator-cutover.lock")):
+                resume_protocol2(cfg, store, get_json, token, args.release)
     if args.resume_protocol2:
         require(windows and args.node == "physical", "Resume protocol 2 from physical only")
         require(state["current"]["sha"] == args.release and state.get("fencing_protocol_min") == 2,
@@ -516,6 +559,7 @@ def main(argv=None):
                 finally:
                     start_guardian(False)
                 wait_staged(get_json, token, args.node, args.release)
+        resume_after_stage()
         return 0
     require(state["current"]["sha"] in BASES, "Unexpected runtime release; nothing was stopped")
     require(git("remote", "get-url", "origin").decode().strip().removesuffix(".git") ==
@@ -532,6 +576,12 @@ def main(argv=None):
                             "-p", "test_ha_runtime_*.py"], cwd=candidate,
                            stdin=subprocess.DEVNULL, timeout=60)
     require(tests.returncode == 0, "Candidate regression tests failed; nothing was stopped")
+    if state["current"]["sha"] == "f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa":
+        for pattern in ("test_rfid_evidence_ordering.py", "test_business_flow_selfheal.py", "test_rfid_advisory_readiness.py"):
+            require((candidate / "tests" / pattern).is_file(), "Business-flow candidate regressions required")
+            tests = subprocess.run([cfg["python"], "-B", "-m", "unittest", "discover", "-s", "tests", "-p", pattern],
+                                   cwd=candidate, stdin=subprocess.DEVNULL, timeout=60)
+            require(tests.returncode == 0, "Business-flow regression tests failed; nothing was stopped")
     if state["current"]["sha"] == "79d1caa3a0709ca96d6ee6d55c8ed73623ca8665":
         require((candidate / "tests/test_rfid_advisory_readiness.py").is_file(),
                 "RFID warning regression tests required for this hotfix")
@@ -583,6 +633,7 @@ def main(argv=None):
         if restart:
             start_guardian(windows)
     wait_staged(get_json, token, args.node, args.release)
+    resume_after_stage()
     return 0
 
 

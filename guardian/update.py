@@ -12,6 +12,7 @@ from pathlib import Path
 
 from guardian.config import atomic_json
 from guardian.probes import preflight
+from guardian.release_contract import MANIFEST, docs_only, raise_floor, validate_contract
 
 
 class Updates:
@@ -41,6 +42,12 @@ class Updates:
             except Exception:
                 self.state["trusted_main_sha"] = None
             atomic_json(self.path, self.state)
+        floor = raise_floor(self.state.get("runtime_contract_floor"))
+        manifest = Path(self.cfg["root"]) / MANIFEST
+        if not self.state.get("pending") and manifest.is_file():
+            floor = raise_floor(floor, validate_contract(manifest.read_text(encoding="utf-8"), floor))
+        self.state["runtime_contract_floor"] = floor
+        atomic_json(self.path, self.state)
 
     def git(self, *args, cwd=None):
         result = subprocess.run(["git"]+list(args), cwd=cwd or self.cfg["update_source"],
@@ -52,7 +59,6 @@ class Updates:
     def stage(self):
         if not self.cfg.get("auto_update", True) or not self.cfg.get("update_source"):
             return
-        source = self.cfg["update_source"]
         # Main must advance from the deployed base; reject force-pushed unrelated history.
         self.git("fetch", "origin", "main")
         sha = self.git("rev-parse", "FETCH_HEAD").strip()
@@ -86,25 +92,75 @@ class Updates:
             self.git("merge-base", "--is-ancestor", trusted, sha)
         else:
             self.git("merge-base", current, sha)
+        try:
+            manifest = self.git("show", sha + ":" + MANIFEST)
+        except RuntimeError:
+            self.reject_candidate(sha, "CandidateRuntimeContractMissing")
+            raise RuntimeError("CandidateRuntimeContractMissing") from None
+        try:
+            validate_contract(manifest, self.state["runtime_contract_floor"])
+        except RuntimeError as exc:
+            self.reject_candidate(sha, str(exc))
+            raise
+        paths = self.git("diff", "--name-only", current, sha, "--").splitlines()
+        if docs_only(paths):
+            with self.lock:
+                if self.state["current"]["sha"] != current:
+                    raise RuntimeError("CandidateBaseChanged")
+                self.staged = None
+                # main_sha is the controller's runtime target, not merely the
+                # newest remote commit. A docs commit must never trigger HA.
+                self.main_sha = current
+                self.state["trusted_main_sha"] = sha
+                self.state["observed_main_sha"] = sha
+                self.state["docs_only_sha"] = sha
+                atomic_json(self.path, self.state)
+            self.telemetry.event("update_docs_only", sha=sha)
+            return
         target = Path(self.cfg["release_dir"]) / sha
         if not target.exists():
             self.git("worktree", "add", "--detach", str(target), sha)
+        # Execute the accepted checker's file, not a candidate-owned test. It
+        # protects the temporal RFID hotfix even if candidate tests are removed.
+        checker = Path(__file__).with_name("release_contract.py").resolve()
+        try:
+            protected = subprocess.run([self.cfg["python"], str(checker), str(target)],
+                cwd=target, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.reject_candidate(sha, "CandidateBusinessChecksTimeout")
+            raise RuntimeError("CandidateBusinessChecksTimeout") from None
+        if protected.returncode:
+            self.reject_candidate(sha, "CandidateProtectedBusinessChecksFailed")
+            raise RuntimeError("CandidateProtectedBusinessChecksFailed")
         # Do not run schema migrations here. Breaking changes are a distinct rollout.
         result = subprocess.run([self.cfg["python"], "-m", "unittest", "discover", "-s", "tests"],
             cwd=target, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, timeout=240)
         if result.returncode:
+            self.reject_candidate(sha, "CandidateTestsFailed")
             raise RuntimeError("CandidateTestsFailed")
         candidate_cfg = dict(self.cfg, root=str(target))
         report = preflight(candidate_cfg, self.store, active=True)
         if not report["ok"]:
             raise RuntimeError("CandidatePreflightFailed")
         with self.lock:
+            if self.state["current"]["sha"] != current:
+                raise RuntimeError("CandidateBaseChanged")
             self.main_sha = sha
             self.staged = {"root": str(target), "sha": sha, "python": self.cfg["python"]}
             self.state["trusted_main_sha"] = sha
             atomic_json(self.path, self.state)
         self.telemetry.event("update_staged", sha=sha)
+
+    def reject_candidate(self, sha, reason):
+        with self.lock:
+            self.quarantined.add(sha)
+            self.state["rejected"] = sorted(self.quarantined)
+            if self.staged and self.staged["sha"] == sha:
+                self.staged = None
+            atomic_json(self.path, self.state)
+        self.telemetry.event("update_candidate_rejected", sha=sha, reason=reason)
 
     def activate(self):
         with self.lock:
@@ -129,6 +185,10 @@ class Updates:
     def confirm(self):
         with self.lock:
             if self.state.get("pending"):
+                manifest = Path(self.cfg["root"]) / MANIFEST
+                if manifest.is_file():
+                    value = validate_contract(manifest.read_text(encoding="utf-8"), self.state["runtime_contract_floor"])
+                    self.state["runtime_contract_floor"] = raise_floor(self.state["runtime_contract_floor"], value)
                 self.state["pending"] = False
                 atomic_json(self.path, self.state)
                 self.telemetry.event("update_confirmed", sha=self.state["current"]["sha"])

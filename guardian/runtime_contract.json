@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "business_generation": 1,
+  "capabilities": [
+    "rfid-causal-activity-evidence",
+    "rfid-historical-latch-evidence"
+  ]
+}

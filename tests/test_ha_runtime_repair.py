@@ -12,6 +12,11 @@ spec.loader.exec_module(repair)
 
 
 class RepairSafetyTests(unittest.TestCase):
+    def test_resume_after_stage_is_restricted_before_any_node_io(self):
+        for node, mode in (("physical", "--stage"), ("comparator", "--stage"), ("perimetr", "--diagnose")):
+            with self.subTest(node=node, mode=mode), self.assertRaisesRegex(repair.Abort, "final Perimetr"):
+                repair.main(["--node", node, "--release", "a"*40, mode, "--resume-after-stage"])
+
     def resume_setup(self, released=False):
         cfg = {"nodes": [{"id": n, "priority": i, "url": "http://" + n}
                          for i, n in enumerate(("physical", "perimetr", "comparator"), 1)]}
@@ -66,8 +71,105 @@ class RepairSafetyTests(unittest.TestCase):
                     value["workers"] = {"RfidReader": {"running": True}}
                 return code, value
             get.side_effect = responses
-            with self.assertRaises(repair.Abort):
+            with patch.object(repair, "RESUME_PREFLIGHT_TIMEOUT", 0), self.assertRaises(repair.Abort):
                 repair.resume_protocol2(cfg, store, get, "token", "candidate")
+            self.assertFalse(any("body" in c.kwargs for c in get.call_args_list))
+
+    def test_resume_waits_for_starting_perimetr_before_any_release(self):
+        cfg, store, conn, get = self.resume_setup()
+        original = get.side_effect
+        polls = 0
+        def responses(url, token, **kw):
+            nonlocal polls
+            code, value = original(url, token, **kw)
+            if url == "http://perimetr/status":
+                polls += 1
+                if polls == 1:
+                    value["preflight"] = {"ok": False, "checks": {"starting": False}}
+            if "body" in kw:
+                self.assertGreaterEqual(polls, 2)
+            return code, value
+        get.side_effect = responses
+        with patch.object(repair.time, "sleep") as sleep, patch.object(repair, "wait_cluster"), patch("builtins.print"):
+            repair.resume_protocol2(cfg, store, get, "private-token", "candidate")
+        sleep.assert_called_once_with(3)
+        self.assertEqual(polls, 2)
+        self.assertEqual(len([c for c in get.call_args_list if "body" in c.kwargs]), 3)
+
+    def test_resume_permanent_probe_failure_is_bounded_and_reports_only_check_names(self):
+        cfg, store, conn, get = self.resume_setup()
+        original = get.side_effect
+        def responses(url, token, **kw):
+            code, value = original(url, token, **kw)
+            if url.endswith("/status"):
+                value["preflight"] = {"ok": False, "checks": {
+                    "sql_fencing": False, "exception": "private-token", "private-token": False}}
+            return code, value
+        get.side_effect = responses
+        with patch.object(repair, "RESUME_PREFLIGHT_TIMEOUT", 0), patch("builtins.print") as output:
+            with self.assertRaisesRegex(repair.Abort, "no maintenance was released"):
+                repair.resume_protocol2(cfg, store, get, "private-token", "candidate")
+        self.assertFalse(any("body" in c.kwargs for c in get.call_args_list))
+        printed = str(output.call_args_list)
+        self.assertIn("sql_fencing", printed)
+        self.assertNotIn("private-token", printed)
+
+    def test_resume_rechecks_ready_peers_and_honors_ha_off_while_waiting(self):
+        cfg, store, conn, get = self.resume_setup()
+        original = get.side_effect
+        def responses(url, token, **kw):
+            code, value = original(url, token, **kw)
+            if url == "http://perimetr/status":
+                value["preflight"]["ok"] = False
+            return code, value
+        get.side_effect = responses
+        store.lease.side_effect = [{"enabled": True}, {"enabled": True}, {"enabled": False}]
+        with patch.object(repair.time, "sleep"), patch("builtins.print"):
+            with self.assertRaisesRegex(repair.Abort, "HA mode changed"):
+                repair.resume_protocol2(cfg, store, get, "token", "candidate")
+        self.assertFalse(any("body" in c.kwargs for c in get.call_args_list))
+
+    def test_resume_rejects_changed_ready_peer_on_next_poll_before_release(self):
+        cfg, store, conn, get = self.resume_setup()
+        original = get.side_effect
+        polls = 0
+        def responses(url, token, **kw):
+            nonlocal polls
+            code, value = original(url, token, **kw)
+            if url == "http://physical/status":
+                polls += 1
+                if polls > 1:
+                    value["release_sha"] = "changed"
+            if url == "http://perimetr/status":
+                value["preflight"]["ok"] = False
+            return code, value
+        get.side_effect = responses
+        with patch.object(repair.time, "sleep"), patch("builtins.print"):
+            with self.assertRaisesRegex(repair.Abort, "exact hotfix agents"):
+                repair.resume_protocol2(cfg, store, get, "token", "candidate")
+        self.assertEqual(polls, 2)
+        self.assertFalse(any("body" in c.kwargs for c in get.call_args_list))
+
+    def test_resume_stale_or_unreachable_agent_never_releases_maintenance(self):
+        for failure in ("stale", "network", "http", "auth", "resource"):
+            cfg, store, conn, get = self.resume_setup()
+            original = get.side_effect
+            def responses(url, token, **kw):
+                if url == "http://comparator/status" and failure == "network":
+                    raise OSError("private-token")
+                code, value = original(url, token, **kw)
+                if url == "http://comparator/status":
+                    if failure == "stale":
+                        value["sample_age"] = 11
+                    if failure in ("http", "auth"):
+                        code = 503 if failure == "http" else 401
+                    if failure == "resource":
+                        value["resources"] = {"restart_required": True}
+                return code, value
+            get.side_effect = responses
+            with self.subTest(failure=failure), patch.object(repair, "RESUME_PREFLIGHT_TIMEOUT", 0), patch("builtins.print"):
+                with self.assertRaises(repair.Abort):
+                    repair.resume_protocol2(cfg, store, get, "token", "candidate")
             self.assertFalse(any("body" in c.kwargs for c in get.call_args_list))
 
     def test_resume_retry_does_not_toggle_already_released_maintenance(self):

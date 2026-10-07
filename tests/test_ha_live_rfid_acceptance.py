@@ -75,6 +75,13 @@ class LiveRfidAcceptanceTests(unittest.TestCase):
             for n in app.NODES}
         controller = {"owner": "comparator", "valid": True}
         self.assertTrue(app.healthy_cluster(self.lease, controller, peers))
+        next_release = "a" * 40
+        for peer in peers.values():
+            peer["release_sha"] = next_release
+        self.assertFalse(app.healthy_cluster(self.lease, controller, peers))
+        self.assertTrue(app.healthy_cluster(self.lease, controller, peers, release=next_release))
+        for peer in peers.values():
+            peer["release_sha"] = app.RELEASE
         bad = copy.deepcopy(peers)
         bad["physical"]["services"]["RfidReader"]["ok"] = False
         self.assertFalse(app.healthy_cluster(self.lease, controller, bad))
