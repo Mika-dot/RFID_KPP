@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Warehouse reconciliation v3.4.5.
+"""Warehouse reconciliation with separate passage and warehouse directions.
 
 Address Warehouse is an independent confirmation of an outbound reel passage.
 If RFID missed the tag but Warehouse has the reel, the event is treated as OUT
@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from kpp_aggregator_v3_warehouse import Aggregator as WarehouseAggregator
 from kpp_aggregator_v3_warehouse import Config, log
+from common.warehouse_direction import warehouse_direction_fields
 
 
 class Aggregator(WarehouseAggregator):
@@ -32,11 +33,12 @@ SET FinalDirection='OUT',
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
     END,
-    ProcessingVersion='3.4.5-warehouse-recheck',
+    ProcessingVersion='3.4.6-warehouse-evidence',
     UpdatedAt=SYSDATETIME()
 WHERE IsReel=1
   AND WarehouseId IS NOT NULL
-  AND (FinalDirection IS NULL OR FinalDirection='UNKNOWN');
+  AND (FinalDirection IS NULL OR FinalDirection='UNKNOWN')
+  AND ISNULL(ConsensusCode,'')<>'CONFLICT';
 """
             )
             repaired = int(cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0)
@@ -135,28 +137,41 @@ ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
             task,
             match_method,
         )
+        self._update_warehouse_direction(cur, "EventId", event_id)
+
+    def _update_warehouse_direction(self, cur, key_column, key_value) -> None:
+        # Callers hold the row lock acquired by the preceding upsert/enrichment
+        # and commit this update in the same business transaction.
+        if key_column not in {"EventId", "EventKey"}:
+            raise ValueError("Unsupported event key")
+        cur.execute(
+            f"""
+SELECT FinalDirection,ConfidencePct,ConsensusCode,WarningFlags
+FROM {Config.EVENT_TABLE}
+WHERE {key_column}=? AND WarehouseId IS NOT NULL;
+""",
+            key_value,
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+        fields = warehouse_direction_fields(dict(zip(
+            ("FinalDirection", "ConfidencePct", "ConsensusCode", "WarningFlags"), row
+        )))
         cur.execute(
             f"""
 UPDATE {Config.EVENT_TABLE}
-SET FinalDirection=CASE
-        WHEN FinalDirection IS NULL OR FinalDirection='UNKNOWN' THEN 'OUT'
-        ELSE FinalDirection
-    END,
-    ConfidencePct=CASE
-        WHEN FinalDirection IS NULL OR FinalDirection='UNKNOWN' THEN 100
-        ELSE ConfidencePct
-    END,
-    WarningFlags=CASE
-        WHEN CHARINDEX('OUT_CONFIRMED_BY_WAREHOUSE',ISNULL(WarningFlags,''))>0 THEN WarningFlags
-        WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
-        ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
-    END,
-    ProcessingVersion='3.4.5-warehouse-recheck',
-    UpdatedAt=SYSDATETIME()
-WHERE EventId=?;
+SET FinalDirection=?, ConfidencePct=?, WarningFlags=?,
+    ProcessingVersion='3.4.6-warehouse-evidence', UpdatedAt=SYSDATETIME()
+WHERE {key_column}=?;
 """,
-            event_id,
+            fields["FinalDirection"], fields["ConfidencePct"], fields["WarningFlags"], key_value,
         )
+
+    def upsert_event(self, conn, context, group) -> None:
+        super().upsert_event(conn, context, group)
+        if context.decision.warehouse is not None:
+            self._update_warehouse_direction(conn.cursor(), "EventKey", context.session.event_key)
 
     def _insert_warehouse_only(
         self,
@@ -191,7 +206,7 @@ SET FinalDirection='OUT',
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
     END,
-    ProcessingVersion='3.4.5-warehouse-recheck',
+    ProcessingVersion='3.4.6-warehouse-evidence',
     UpdatedAt=SYSDATETIME()
 WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
 """,
