@@ -11,6 +11,7 @@ from guardian.config import atomic_json
 from common.replicated_ingest import validate_peers
 from observer.behavior import BehaviorObserver, cross_source, hypotheses
 from observer.collector import cluster_metrics, sql_metrics
+from observer.catalog import coverage
 
 
 class Service:
@@ -33,7 +34,8 @@ class Service:
         else:
             failures.append("sql:unconfigured")
         now = time.time()
-        results = self.engine.observe(now, cross_source(values))
+        observed_values = cross_source(values)
+        results = self.engine.observe(now, observed_values)
         critical = values["ha_active_nodes"] != 1 or values["ha_healthy_executors"] != 1
         critical |= any(values.get(k, 0)>limit for k,limit in self.cfg.get("critical_limits", {}).items())
         warning = values["ha_ready_reserves"] < 2 or bool(failures)
@@ -41,6 +43,7 @@ class Service:
         status = "critical" if critical or severe else "warning" if warning or any(v["status"] == "warning" for v in results.values()) else "collecting_baseline" if any(not v["baseline_ready"] for v in results.values()) else "normal"
         snapshot = {"at": now, "status": status, "metrics": results, "unavailable_sources": failures,
                     "hypotheses": hypotheses(results), "baseline_days_required": self.cfg.get("baseline_days", 7)}
+        snapshot["metric_coverage"] = coverage(observed_values)
         with self.lock:
             self.snapshot = snapshot
         atomic_json(Path(self.cfg["state_dir"])/"latest.json", snapshot)
@@ -76,6 +79,9 @@ class Service:
                         code, raw, mime = 401, b'{"error":"Unauthorized"}', "application/json"
                     elif self.path == "/status":
                         code, raw, mime = 200, json.dumps(dict(data, stale=stale), allow_nan=False).encode(), "application/json"
+                    elif self.path == "/catalog":
+                        code, raw, mime = 200, json.dumps({"at": data["at"], "stale": stale,
+                            "metrics": data.get("metric_coverage", [])}, allow_nan=False).encode(), "application/json"
                     elif self.path == "/metrics":
                         lines = ["perimeter_behavior_stale "+str(int(stale)), "perimeter_behavior_sample_age_seconds "+str(max(0, age))]
                         for key, m in data["metrics"].items():

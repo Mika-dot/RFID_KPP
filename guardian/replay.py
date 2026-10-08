@@ -50,13 +50,20 @@ def replay(root, traces):
         closed = []
         for row in trace["reads"]:
             closed.extend(sessions.process(RfidRead(row["id"], at+timedelta(seconds=row["offset"]),
-                row["antenna"], -50, row["epc"], row["tid"])))
+                row["antenna"], row.get("rssi", -50), row["epc"], row["tid"])))
         closed.extend(sessions.drain())
         tasks = {}
         task_rows = []
         for i, tag in enumerate(trace.get("known_tags", []), 1):
             tasks[tag] = [RegistryRecord(i, at, tag, "DOC"+str(i), "SERIES"+str(i))]
             task_rows.append(dict(Id=i, Dt=at, Tag=tag, Ids="DOC"+str(i), SeriesNumber="SERIES"+str(i)))
+        if "tasks" in trace:
+            tasks, task_rows = {}, []
+            for task in trace["tasks"]:
+                row = dict(task, Dt=datetime.fromisoformat(task["Dt"]))
+                task_rows.append(row)
+                tasks.setdefault(row["Tag"], []).append(RegistryRecord(
+                    row["Id"], row["Dt"], row["Tag"], row["Ids"], row["SeriesNumber"]))
         decisions = {s.event_key: classify_reel(s, tasks, {}, {}, {}) for s in closed}
         directions = {s.event_key: infer_rfid_direction(s, {2, 3}, {1, 4}) for s in closed}
         confirmed = [s for s in closed if decisions[s.event_key].is_reel]
@@ -75,7 +82,7 @@ def replay(root, traces):
         rows = [dict(r, EventId=i+1) for i, r in enumerate(recorded.rows)]
         warehouse = []
         for i, wh in enumerate(trace.get("warehouse", []), 1):
-            warehouse.append(dict(WarehouseId=i, WarehouseDt=at, WarehouseTag=wh.get("tag"),
+            warehouse.append(dict(WarehouseId=i, WarehouseDt=at+timedelta(seconds=wh.get("offset", 0)), WarehouseTag=wh.get("tag"),
                 WarehouseDocIds=wh.get("ids", "DOC1"), WarehouseSeriesNumber=wh.get("series", "SERIES1")))
         # The production Web SELECT accepts confirmed physical RFID rows only.
         report = build_report_records(warehouse, task_rows,

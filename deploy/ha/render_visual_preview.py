@@ -33,8 +33,11 @@ def sample(scenario="normal"):
                      detail="СИНТЕТИЧЕСКИЙ ПРИМЕР", release="a" * 40,
                      snapshot_fresh=True, bus_age=1, bus={"rfid_pending": 0, "video_pending": 0},
                      mirror={"enabled": True, "retention_days": 93,
-                             "streams": {"warehouse": {"age_sec": 1, "caught_up": True, "records": 100}}},
+                             "streams": {key: {"age_sec": 1, "caught_up": True, "records": 100}
+                                         for key in monitor.MIRROR_STREAMS}},
                      controller={"owner": "comparator", "valid": scenario != "no-sql", "at": time.time()},
+                     repair={"verification_required": False, "verified_sec": 0},
+                     update={"pending": False, "quarantined": 0},
                      correlation={"mode": "shadow"})
         value["services"] = {name: {"ok": active, "observed": active,
                                    "dependencies": {key: "ok" for key in ("rfid_reader", "camera_0", "camera_1", "source_database", "database")}}

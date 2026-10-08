@@ -4,6 +4,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from guardian.net import json_request
+from observer.catalog import RUNTIME_FIELDS
 
 
 def table(value):
@@ -118,4 +119,10 @@ def cluster_metrics(nodes, token, request=json_request):
                 observed = True
         if observed:
             metrics["spool_pending"] = pending
+        for service, (prefix, fields) in RUNTIME_FIELDS.items():
+            detail = status.get("services", {}).get(service, {}).get("detail", {})
+            for key in fields:
+                value = detail.get("metrics", {}).get(key)
+                if type(value) in (int, float) and value >= 0:
+                    metrics[prefix + "_" + key] = value
     return metrics, statuses

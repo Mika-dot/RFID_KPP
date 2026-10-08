@@ -13,6 +13,22 @@ EVENT_FIELDS = ("EventId", "FirstSeen", "LastSeen", "UpdatedAt", "SourceTag",
                 "ObjectType", "SessionCloseReason", "WarningFlags", "VideoMatched",
                 "SkudMatched", "ReelClassification", "IsReel")
 IDENTITY_FIELDS = ("Id", "Dt", "Tag", "Ids", "SeriesNumber")
+RFID_FIELDS = ("Id", "RecordTime", "Antenna", "RSSI", "EPC", "TID",
+               "ClientReadUuid", "ReceivedAt", "SourceReaderTime", "SourceSequence",
+               "IngestBatchId", "TimeQuality")
+VIDEO_FIELDS = ("Id", "Timestamp", "Direction", "FromCamera", "ToCamera",
+                "TransportMode", "TimeDiffSec", "DetectionCount", "ClientEventUuid",
+                "CapturedAt", "ProcessedAt", "ReceivedAt", "ReelCount", "SourceTrackIds", "TimeQuality")
+SKUD_FIELDS = ("ExternalId2", "CreatedAt", "Direction", "ReceivedAt")
+STREAMS = (
+    ("events", "OBSERVER_EVENTS_TABLE", "dbo.KPP_ReelEvents", EVENT_FIELDS, "EventId", "FirstSeen"),
+    ("warehouse", "OBSERVER_WAREHOUSE_TABLE", "dbo.Warehouse", IDENTITY_FIELDS, "Id", "Dt"),
+    ("tasks", "OBSERVER_TASK_TABLE", "dbo.RfidTags", IDENTITY_FIELDS, "Id", "Dt"),
+    ("rfid", "OBSERVER_RFID_TABLE", "dbo.RFID_Tags", RFID_FIELDS, "Id", "RecordTime"),
+    ("video", "OBSERVER_VIDEO_TABLE", "dbo.ReelTransitions", VIDEO_FIELDS, "Id", "Timestamp"),
+    ("skud", "OBSERVER_SKUD_TABLE", "dbo.RusGuardLogs", SKUD_FIELDS, "ExternalId2", "CreatedAt"),
+)
+REQUIRED_STREAMS = tuple(item[0] for item in STREAMS)
 
 
 def json_value(value):
@@ -34,11 +50,7 @@ def sync_metadata(mirror, connection=None, batch_size=500):
     try:
         connection.timeout = 3
         connection.execute("SET LOCK_TIMEOUT 2000")
-        for stream, env, default in (
-            ("events", "OBSERVER_EVENTS_TABLE", "dbo.KPP_ReelEvents"),
-            ("warehouse", "OBSERVER_WAREHOUSE_TABLE", "dbo.Warehouse"),
-            ("tasks", "OBSERVER_TASK_TABLE", "dbo.RfidTags"),
-        ):
+        for stream, env, default, fields, id_column, time_column in STREAMS:
             source = table(os.getenv(env, default))
             saved = mirror.watermark(stream)
             # A restored/rolled-back primary must not make a newer local cache
@@ -51,12 +63,11 @@ def sync_metadata(mirror, connection=None, batch_size=500):
                         int(saved[1]), saved[0]).fetchone()
                 else:
                     anchor = connection.execute(
-                        f"SELECT Id FROM {source} WHERE Id=?", int(saved)).fetchone()
+                        f"SELECT {id_column} FROM {source} WHERE {id_column}=?", int(saved)).fetchone()
                 if not anchor:
                     raise RuntimeError("MirrorSourceHistoryChanged:" + stream)
             if stream == "events":
                 stamp, source_id = saved or ["1900-01-01T00:00:00", 0]
-                fields = EVENT_FIELDS
                 sql = f"""SELECT TOP ({batch_size}) {','.join(fields)} FROM {source}
                     WHERE FirstSeen>=DATEADD(day,-?,SYSDATETIME())
                     AND (UpdatedAt>? OR (UpdatedAt=? AND EventId>?))
@@ -65,9 +76,8 @@ def sync_metadata(mirror, connection=None, batch_size=500):
                 position = [json_value(rows[-1][3]), int(rows[-1][0])] if rows else [stamp, source_id]
             else:
                 source_id = int(saved or 0)
-                fields = IDENTITY_FIELDS
                 rows = connection.execute(f"""SELECT TOP ({batch_size}) {','.join(fields)} FROM {source}
-                    WHERE Id>? AND Dt>=DATEADD(day,-?,SYSDATETIME()) ORDER BY Id""",
+                    WHERE {id_column}>? AND [{time_column}]>=DATEADD(day,-?,SYSDATETIME()) ORDER BY {id_column}""",
                     source_id, mirror.retention_days).fetchall()
                 position = int(rows[-1][0]) if rows else source_id
             prepared = [(int(row[0]), row[1], {key: json_value(value) for key, value in zip(fields, row)}) for row in rows]

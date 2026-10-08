@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from common.metadata_mirror import MetadataMirror
-from observer.mirror import EVENT_FIELDS, sync_metadata
+from observer.mirror import EVENT_FIELDS, STREAMS, REQUIRED_STREAMS, sync_metadata
 
 
 class MirrorTests(unittest.TestCase):
@@ -71,6 +71,27 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(before, self.mirror.stats()["streams"]["events"]["synced_at"])
         self.assertEqual(10, self.mirror.recent()[0]["EventId"])
         connection.close.assert_called_once()
+
+    def test_all_six_streams_have_bounded_metadata_without_images_or_personal_fields(self):
+        responses = [Mock()]
+        for _stream, _env, _table, fields, _id, _time in STREAMS:
+            values = [None] * len(fields)
+            values[0], values[1] = 10, self.now
+            if "UpdatedAt" in fields:
+                values[fields.index("UpdatedAt")] = self.now
+            cursor = Mock()
+            cursor.fetchall.return_value = [tuple(values)]
+            responses.append(cursor)
+        connection = Mock()
+        connection.execute.side_effect = responses
+        result = sync_metadata(self.mirror, connection, batch_size=100)
+        self.assertEqual(set(REQUIRED_STREAMS), set(result))
+        self.assertTrue(all(value == 1 for value in result.values()))
+        sql = " ".join(str(call.args[0]) for call in connection.execute.call_args_list)
+        for excluded in ("ImageData", "ImageBase64", "RawData", "FullName", "CardNumReal"):
+            self.assertNotIn(excluded, sql)
+        self.assertEqual(6, sql.count("TOP (100)"))
+        self.assertEqual([10], [row["ExternalId2"] for row in self.mirror.recent("skud")])
 
 
 if __name__ == "__main__":

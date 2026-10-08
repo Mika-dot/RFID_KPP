@@ -213,6 +213,9 @@ ORDER BY ABS(DATEDIFF(SECOND,COALESCE(SourceReaderTime,RecordTime),?)),Id;
 """, tag[:24], tag[24:], recovery_start, warehouse_dt,
             warehouse_dt - timedelta(seconds=bounds.center_sec))
         rows = cur.fetchall()
+        from common.retrospective import session_candidates
+        candidates = session_candidates(tag, warehouse_dt, rows, expected_start, expected_end,
+                                        legacy_start, legacy_end, Config.OUTER_ANTENNAS, Config.INNER_ANTENNAS)
         return {
             "version": 1, "status": "RAW_CANDIDATES" if rows else "NO_RAW_CANDIDATE",
             "expected_window": [expected_start.isoformat(), expected_end.isoformat()],
@@ -223,6 +226,9 @@ ORDER BY ABS(DATEDIFF(SECOND,COALESCE(SourceReaderTime,RecordTime),?)),Id;
             "outside_legacy_window": sum(not legacy_start <= row[1] <= legacy_end for row in rows),
             "raw_candidates": [{"id": int(row[0]), "at": row[1].isoformat(),
                                 "antenna": row[2], "rssi": row[3]} for row in rows],
+            "session_candidates": candidates,
+            "association_status": "REVIEW_REQUIRED" if candidates else "NO_SESSION_CANDIDATE",
+            "identity_basis": "exact_epc_tid",
             "learning_eligible": False, "physical_passage_confirmed": False,
         }
 

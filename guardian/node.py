@@ -96,6 +96,10 @@ class Node:
             result["resources"] = dict(getattr(self, "resources", {}))
             result["fencing_protocol"] = FENCING_PROTOCOL
             result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
+            verified_since = getattr(self, "verified_since", None)
+            result["repair"] = {"verification_required": bool(getattr(self, "repair_attempted", False)),
+                                "verified_sec": max(0, time.monotonic() - verified_since)
+                                if verified_since is not None else 0}
             result["replication_enabled"] = getattr(self, "replica", None) is not None
             result["fallback_enabled"] = getattr(self, "fallback", None) is not None
             result["metadata_mirror"] = dict(getattr(self, "mirror_status", {"enabled": False}))

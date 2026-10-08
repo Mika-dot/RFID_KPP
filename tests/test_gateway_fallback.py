@@ -46,6 +46,15 @@ class GatewayFallbackTests(unittest.TestCase):
         with self.get("/health/ready") as response:
             self.assertEqual(503, response.code)
 
+    def test_healthy_older_mirror_wins_over_newer_failed_or_incomplete_mirror(self):
+        def request(url, token, **kwargs):
+            node = next(node["id"] for node in self.nodes if url.startswith(node["url"]))
+            return 200, dict(configured=True, node=node, events=[],
+                             stale=node == "physical", caught_up=node == "comparator",
+                             at={"physical": 300, "perimetr": 200, "comparator": 100}[node])
+        router = Router(self.nodes, Mock(), "secret", request)
+        self.assertEqual("comparator", router.cached_events()["node"])
+
     def test_outage_view_requires_existing_browser_authentication(self):
         with self.get("/") as response:
             self.assertEqual(401, response.code)

@@ -87,6 +87,27 @@ class FakeGrafana:
 
 
 class VisualTests(unittest.TestCase):
+    def test_partial_mirror_is_warning_and_never_a_ready_local_copy(self):
+        data = sample_cluster()
+        rows = monitor.diagram_rows(data)
+        self.assertEqual("warning", next(row["state"] for row in rows if row["id"] == "physical-queue"))
+        self.assertTrue(all(row["cache_state"] == "ЗАПОЛНЕНИЕ" for row in monitor.queue_rows(data)))
+        data["stale"] = True
+        self.assertTrue(all(row["cache_state"] == "НЕТ ДАННЫХ" for row in monitor.queue_rows(data)))
+
+    def test_repair_and_update_card_uses_observed_state_not_llm_readiness(self):
+        data = sample_cluster()
+        for value in data["nodes"].values():
+            value["repair"] = {"verification_required": False}
+            value["update"] = {"pending": False, "quarantined": 0}
+        def repair():
+            return next(row for row in monitor.diagram_rows(data) if row["id"] == "repair")
+        self.assertEqual("ready", repair()["state"])
+        data["nodes"]["perimetr"]["repair"]["verification_required"] = True
+        self.assertEqual("warning", repair()["state"])
+        data["stale"] = True
+        self.assertEqual("unknown", repair()["state"])
+
     def test_all_fifteen_workers_and_three_nodes_are_visible(self):
         rows = monitor.diagram_rows(sample_cluster())
         self.assertEqual(3, sum(row["kind"] == "header" for row in rows))

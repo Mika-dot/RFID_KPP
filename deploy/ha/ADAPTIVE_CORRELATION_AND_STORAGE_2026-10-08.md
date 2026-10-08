@@ -17,6 +17,9 @@
 ретроспективный поиск до 7 суток. Читаются реальные raw rows с точным EPC+TID;
 сохраняются до 200 кандидатов, антенны/RSSI/время и выход за старое окно.
 Raw-кандидаты — диагностика, а не автоматически подтверждённый новый проход.
+Штатный sessionizer восстанавливает сессии в порядке raw Id; диагностика
+показывает направление, границы, read/antenna counts, задержку и time-fit score.
+Обрезанная выборка помечается; score не называется вероятностью или доказательством.
 Связать существующее KPP-событие можно только при `RfidReadCount>0`.
 Warehouse-only не доказывает работу считывателя.
 
@@ -56,7 +59,7 @@ python deploy/ha/tune_adaptive_windows.py --input labelled-pairs.json --output a
 | Файл в прежнем state_dir | Назначение |
 |---|---|
 | fallback.sqlite | UUID-журнал метаданных RFID/YOLO без фото; PENDING не удаляется по сроку |
-| metadata.sqlite | SELECT-only зеркало событий КПП и Warehouse/1C, направлений и связей |
+| metadata.sqlite | SELECT-only зеркало шести потоков: события КПП, Warehouse, 1C tasks, raw RFID, video metadata, СКУД |
 | Прежние spools и replica.sqlite | Полные недоставленные входы, штатная idempotent доставка через SQL-owner |
 
 Метаданные сохраняются на отправителе и принимающих репликах до ACK. После SQL
@@ -64,8 +67,15 @@ commit архив становится COMMITTED, затем исходный sp
 оставляет spool для повтора; UUID не допускает повторной SQL-вставки.
 Зеркало обновляется bounded-пакетами по 500 строк раз в минуту, с атомарным
 checkpoint. Warehouse/1C идут по Id и предполагают неизменность импортированных
-строк. Откат primary/исчезновение anchor выдаёт ошибку, не сбрасывает локальную
+строк; raw RFID/video/СКУД также идут по исходному Id. Фото и персональные поля
+СКУД не зеркалируются. Откат primary/исчезновение anchor выдаёт ошибку, не сбрасывает локальную
 историю и не помечает её свежей. Возраст/размер/очереди публикуются в мониторинг.
+
+Готовность копии требует всех шести caught-up потоков не старше 130 секунд и
+минимума 93 дня configured retention. Незавершённый backfill показывается как
+заполнение. GET-only installation verifier с `--require-local-copies` проверяет
+это на каждом узле, плюс архив и резервный просмотр. Выбор копии предпочитает
+свежую исправную полной; более новая ошибка не вытесняет рабочее зеркало.
 
 Это компактная копия метаданных, **не полный SQL Server backup**. Автоматический
 replay PENDING идёт через прежние spools/реплики. Callback replay архива не
@@ -103,8 +113,9 @@ Grafana `http://172.31.0.97:3000`. Сохраняются общий UID
 - таблица очередей/копий/SHA по всем узлам и последние проходы.
 
 Старые данные и несколько ведущих не рисуют зелёную действующую цепочку.
-Warehouse-only отдельно от RFID-выезда. Repair/LLM readiness не выдумывается:
-без фактических наблюдений серое состояние. Последние записи берутся из нового
+Warehouse-only отдельно от RFID-выезда. Repair verification/update trial/quarantine
+и readiness RTO показываются из фактических наблюдений; это не LLM readiness
+или физический business RTO. Без наблюдений серое состояние. Последние записи берутся из нового
 зеркала; до его установки/заполнения показывается отсутствие данных.
 Refresh 5 секунд; playlist переключает общий экран и Периметр каждые 1 минуту.
 
@@ -136,7 +147,11 @@ TCP :3000 из текущей среды недоступен; callable Grafana/
 
 Полная offline regression прошла; окончательный результат опубликованного SHA
 фиксируется в handoff/PR. Qualification против неизменённого PR #8: 6 adapter
-contracts, 15 golden traces, 8 HA model scenarios, 0 shadow differences — passed.
+contracts, 27 golden traces, 8 HA model scenarios, 0 shadow differences — passed.
+Из 27 трасс 12 — обезличенные recorded CSV-фрагменты (328 read occurrences,
+203 distinct source reads). Их expected — pinned stable behavior reference,
+не физическая истина; recorded video отсутствует. Полный локальный набор:
+549 тестов, 0 ошибок, 15 skip. Подробная сверка: `PLAN_AUDIT_2026-10-08.md`.
 Физические проходы, отключения, заводские SQL-записи и установка бизнес-runtime
 не выполнялись. Реальные RTO/RPO, RFID acceptance, SQL HA, hardware fence adapter
 и заводская calibration ещё не закрыты.

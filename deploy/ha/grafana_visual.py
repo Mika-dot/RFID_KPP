@@ -57,10 +57,11 @@ def visual_dashboard(existing=None):
                    "gridPos": {"x": 0, "y": 3, "w": 24, "h": 18},
                    "options": {"renderer": "svg", "getOption": script},
                    "fieldConfig": {"defaults": {}, "overrides": []}, "targets": [target("/diagram", columns)]})
-    queue_columns = [("node", "Узел", "string"), ("role", "Роль", "string"),
+    queue_columns = [("node", "Узел", "string"),
                      ("rfid", "RFID очередь", "number"), ("video", "YOLO очередь", "number"),
                      ("fallback_pending", "К выгрузке", "number"),
                      ("cache_days", "Дней копии", "number"),
+                     ("cache_state", "Копия", "string"),
                      ("cache_age", "Возраст копии, с", "number")]
     recent_columns = [("time", "Время", "string"), ("direction", "Направление", "string"),
                       ("reel", "Катушка / метка", "string"), ("reads", "RFID чтений", "number"),

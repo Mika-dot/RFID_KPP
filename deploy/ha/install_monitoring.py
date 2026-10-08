@@ -152,6 +152,8 @@ def probe(pair):
             result["mirror"] = full.get("metadata_mirror", {"enabled": False})
             result["controller"] = full.get("controller", {})
             result["update"] = full.get("update", {})
+            result["repair"] = full.get("repair", {})
+            result["recovery_timing"] = full.get("recovery_timing")
             result["correlation"] = full.get("correlation", {})
     except Exception as exc:
         result["severity"] = 2 if result["active"] else 1
@@ -243,7 +245,8 @@ def collect():
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             available = [value for value in pool.map(fetch_recent, NODES.items()) if value]
         if available:
-            data["recent"] = max(available, key=lambda value: value["at"])
+            data["recent"] = max(available, key=lambda value: (value.get("stale") is False,
+                                                              value.get("caught_up") is True, value["at"]))
     recent = data["recent"]
     for key in ("in_24h", "out_24h", "warehouse_only_24h", "recheck_24h"):
         data[key] = recent.get("counts", {}).get(key) if not recent.get("stale", True) and recent.get("caught_up") else None
@@ -262,13 +265,25 @@ def freshness(data, now=None):
     return value
 
 
+MIRROR_STREAMS = ("events", "warehouse", "tasks", "rfid", "video", "skud")
+
+
+def mirror_ready(mirror):
+    return (mirror.get("enabled") is True and not mirror.get("error")
+            and type(mirror.get("retention_days")) is int and mirror["retention_days"] >= 93
+            and all(isinstance(mirror.get("streams", {}).get(key), dict)
+                    and mirror["streams"][key].get("caught_up") is True
+                    and type(mirror["streams"][key].get("age_sec")) in (int, float)
+                    and 0 <= mirror["streams"][key]["age_sec"] <= 130 for key in MIRROR_STREAMS))
+
+
 def queue_rows(data):
     output = []
     for node in NODES:
         value = data["nodes"].get(node, {})
-        fresh = not data.get("stale") and value.get("snapshot_fresh") and value.get("bus_age", 999999) <= 15
+        fresh = not data.get("stale") and value.get("reachable") and value.get("snapshot_fresh") and value.get("bus_age", 999999) <= 15
         bus = value.get("bus", {}) if fresh else {}
-        mirror = value.get("mirror", {})
+        mirror = value.get("mirror", {}) if fresh else {}
         streams = mirror.get("streams", {})
         output.append({"node": LABELS[node], "role": value.get("role", "НЕИЗВЕСТНО"),
                        "rfid": bus.get("rfid_pending"), "video": bus.get("video_pending"),
@@ -277,6 +292,7 @@ def queue_rows(data):
                        "cache_days": mirror.get("retention_days") if mirror.get("enabled") else None,
                        "cache_rows": sum(row.get("records", 0) for row in streams.values()) if streams else None,
                        "cache_age": max((row.get("age_sec", 999999) for row in streams.values()), default=None),
+                       "cache_state": "ГОТОВА" if mirror_ready(mirror) else "ОШИБКА" if mirror.get("error") else "ЗАПОЛНЕНИЕ" if mirror.get("enabled") else "НЕТ ДАННЫХ",
                        "version": value.get("release", "НЕИЗВЕСТНО")[:8],
                        "state": "СВЕЖИЕ" if fresh else "НЕТ СВЕЖИХ ДАННЫХ"})
     return output
@@ -342,9 +358,10 @@ def diagram_rows(data):
         mirror = value.get("mirror", {}) if local_fresh else {}
         queues_known = "rfid_pending" in bus and "video_pending" in bus
         detail = ("RFID " + str(bus["rfid_pending"]) + "  /  YOLO " + str(bus["video_pending"])) if queues_known else "Очереди: нет данных"
-        detail += "  •  " + str(mirror.get("retention_days", "—")) + " дней копии"
+        copy_ready = mirror_ready(mirror)
+        detail += "  •  " + (str(mirror["retention_days"]) + " дней копии" if copy_ready else "копия: ошибка" if mirror.get("error") else "копия: заполнение" if mirror.get("enabled") else "копия: нет данных")
         card(node + "-queue", "Очереди + локальная копия", detail,
-             "warning" if queues_known and count else "active" if queues_known and node == owner else "ready" if mirror.get("enabled") and mirror.get("streams") else "unknown", x, 220, h=48)
+             "critical" if mirror.get("error") else "warning" if (queues_known and count) or (mirror.get("enabled") and not copy_ready) else "active" if queues_known and copy_ready and node == owner else "ready" if copy_ready else "unknown", x, 220, h=48)
         for name, label, y in (("Aggregator", "Сопоставление", 362), ("WebDashboard", "WEB • 5050", 500)):
             service = value.get("services", {}).get(name, {})
             observed = value.get("snapshot_fresh") and service.get("observed") and not data.get("stale")
@@ -361,11 +378,27 @@ def diagram_rows(data):
     controllers = [value for value in controllers if value.get("valid") is True and value.get("owner") in NODES
                    and 0 <= time.time() - value.get("at", 0) <= 130 and not data.get("stale")]
     control_owner = controllers[0]["owner"] if controllers and len({v["owner"] for v in controllers}) == 1 else None
-    card("lease", "HA • lease / epoch", "контроллер: " + LABELS.get(control_owner, "НЕИЗВЕСТНО"), "control" if control_owner else "unknown", 990, 292)
+    lease_detail = LABELS.get(control_owner, "НЕИЗВЕСТНО")
+    if owner:
+        lease_detail += " • epoch " + str(nodes[owner].get("epoch", "—"))
+    timing = nodes.get(control_owner, {}).get("recovery_timing") or {}
+    rto = timing.get("readiness_rto_sec")
+    if type(rto) in (int, float) and rto >= 0:
+        lease_detail += " • RTO " + str(round(rto, 1)) + " с"
+    card("lease", "HA • lease / epoch", lease_detail, "control" if control_owner else "unknown", 990, 292)
     correlation = nodes.get(owner, {}).get("correlation", {}) if owner else {}
     mode = correlation.get("mode", "не опубликовано")
     card("windows", "Окна КПП → склад", mode, "warning" if mode == "shadow" else "active" if mode == "active" else "unknown", 60, 430)
-    card("repair", "Ремонт + проверка обновлений", "LLM только ремонт • release / rollback", "unknown", 990, 430)
+    observed_repair = [v for v in nodes.values() if v.get("reachable") and v.get("snapshot_fresh")
+                       and type(v.get("repair", {}).get("verification_required")) is bool]
+    pending_repairs = sum(v["repair"]["verification_required"] for v in observed_repair)
+    trials = sum(bool(v.get("update", {}).get("pending")) for v in observed_repair)
+    quarantined = sum(v.get("update", {}).get("quarantined", 0) for v in observed_repair
+                      if type(v.get("update", {}).get("quarantined")) is int)
+    repair_state = "unknown" if data.get("stale") or len(observed_repair) != 3 else "warning" if pending_repairs or trials or quarantined else "ready"
+    repair_detail = "нет свежей телеметрии" if repair_state == "unknown" else (
+        "ремонт " + str(pending_repairs) + " • trial " + str(trials) + " • quarantine " + str(quarantined))
+    card("repair", "Ремонт + проверка обновлений", repair_detail, repair_state, 990, 430)
     gateway = data.get("gateway", {})
     gateway_state = "active" if gateway.get("ready") and owner and not data.get("stale") else "warning" if gateway.get("observed") else "unknown"
     card("gateway", "WEB • постоянный адрес", "Comparator :5051 • независимый сервис", gateway_state, 525, 572, h=44)

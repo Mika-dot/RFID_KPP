@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+import copy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,32 @@ def load(name):
 
 
 class InstallationTests(unittest.TestCase):
+    def test_local_copy_gate_rejects_missing_stale_incomplete_and_short_retention(self):
+        module = load("verify_resilience_installation")
+        node = {"id": "physical", "url": "http://physical"}
+        status = {"fallback_enabled": True, "metadata_mirror": {
+            "enabled": True, "retention_days": 93, "error": None,
+            "streams": {key: {"age_sec": 1, "caught_up": True, "records": 0}
+                        for key in module.REQUIRED_STREAMS}}}
+        calls = []
+        def request(url, token, **kwargs):
+            calls.append(url)
+            if url.endswith("/fallback/stats"):
+                return 200, {"retention_days": 93, "pending": 0}
+            return 200, {"node": "physical", "configured": True, "stale": False, "caught_up": True}
+        proof = module.verify_local_copies(node, status, "secret", request)
+        self.assertTrue(proof["verified"])
+        self.assertTrue(all(url.endswith(("/fallback/stats", "/events/recent")) for url in calls))
+        variants = []
+        missing = copy.deepcopy(status); missing["metadata_mirror"]["streams"].pop("rfid"); variants.append(missing)
+        stale = copy.deepcopy(status); stale["metadata_mirror"]["streams"]["events"]["age_sec"] = 140; variants.append(stale)
+        partial = copy.deepcopy(status); partial["metadata_mirror"]["streams"]["video"]["caught_up"] = False; variants.append(partial)
+        short = copy.deepcopy(status); short["metadata_mirror"]["retention_days"] = 90; variants.append(short)
+        rolled_back = copy.deepcopy(status); rolled_back["metadata_mirror"]["error"] = "RuntimeError"; variants.append(rolled_back)
+        for variant in variants:
+            with self.subTest(variant=variant), self.assertRaises(RuntimeError):
+                module.verify_local_copies(node, variant, "secret", request)
+
     def test_config_preserves_existing_spools_and_business_settings(self):
         module=load("prepare_resilience_config")
         with tempfile.TemporaryDirectory() as folder:

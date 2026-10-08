@@ -63,7 +63,8 @@ class Router:
             available = [value for value in pool.map(fetch, self.nodes.values()) if value is not None]
         if not available:
             return {"source": "unavailable", "stale": True, "events": []}
-        return max(available, key=lambda value: value["at"])
+        return max(available, key=lambda value: (value.get("stale") is False,
+                                                value.get("caught_up") is True, value["at"]))
 
 
 def validate_public_url(cfg):

@@ -646,11 +646,6 @@
               "type": "string"
             },
             {
-              "selector": "role",
-              "text": "Роль",
-              "type": "string"
-            },
-            {
               "selector": "rfid",
               "text": "RFID очередь",
               "type": "number"
@@ -669,6 +664,11 @@
               "selector": "cache_days",
               "text": "Дней копии",
               "type": "number"
+            },
+            {
+              "selector": "cache_state",
+              "text": "Копия",
+              "type": "string"
             },
             {
               "selector": "cache_age",

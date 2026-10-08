@@ -3,6 +3,21 @@
 Сначала читать этот handoff, затем `ADAPTIVE_CORRELATION_AND_STORAGE_2026-10-08.md`
 и прежний `RESILIENCE_CANDIDATE_2026-10-07.md`. Не начинать заново по старому чату.
 
+## Повторная сверка
+
+Сначала сверить [машиночитаемый audit](PLAN_AUDIT_2026-10-08.json) и
+[таблицу всех пунктов](PLAN_AUDIT_2026-10-08.md). Исходные 33 checkbox-пункта:
+20 SOFTWARE_READY, 4 PARTIAL, 8 BLOCKED, 1 DEFERRED. Это готовность ПО,
+не заводская приёмка. Девять уточнений пользователя: 8 готовы программно,
+1 частично. Раздел 8 исходного плана повторяет критерии и не увеличивает счётчик.
+
+В этой итерации доделаны шесть потоков локального зеркала, проверка полного
+backfill/свежести, выбор исправной копии, наблюдаемые repair/update/RTO в Grafana,
+восстановление retrospective session candidates и recorded golden regression.
+Observer `/catalog` различает observed/unavailable/not_instrumented:
+73 определения инструментированных метрик, ещё 43 позиции wishlist не
+инструментированы. Не считать их измеренными или закрывать весь wishlist.
+
 ## GitHub и исходный план
 
 - Репозиторий: https://github.com/Mika-dot/RFID_KPP
@@ -13,6 +28,10 @@
   наличие ветки не означает merge/main или установку.
 - Новый кандидат `feature/adaptive-correlation-fallback-2026-10-08` поверх PR #8.
   Проверенный head PR #8 не менять незаметно.
+- PR #9 https://github.com/Mika-dot/RFID_KPP/pull/9 — текущий handoff и код;
+  точный последний head и CI записаны в его описании. База повторной сверки
+  `4e005d769495f01f2e665133695827d33bf0fac5` уже прошла HA Linux/Windows,
+  Warehouse и Observability CI. Не переносить её success на новый SHA без проверки.
 - Исходный план draft PR #4 прочитан полностью:
   https://github.com/Mika-dot/RFID_KPP/blob/4735b48aa2e7b9b30d26732ac28e64a4337a6376/deploy/ha/NEXT_ROUND_PLAN_2026-10-06.md
   Его production Definition of Done ещё не выполнен.
@@ -56,7 +75,11 @@ power/network failures, production SQL-записи и установка биз
    backend frames, обе страницы и фактический banner. Display открыть на playlist.
 3. Runtime выкатывать отдельным staged-процессом; начать с local copies и shadow.
    Сохранить существующие paths spools/секретов.
-4. Проверить зеркала/возраст/очереди всех узлов, gateway и честный offline cache.
+4. Дождаться backfill всех шести потоков (`events/warehouse/tasks/rfid/video/skud`),
+   проверить архивы/возраст/очереди всех узлов, gateway и честный offline cache.
+   Выполнить GET-only `verify_resilience_installation.py --nodes-config <nodes.json>
+   --release <exact SHA> --require-local-copies --output <receipt.json>`.
+   Без флага local copies явно остаются `not_requested`, а не подтверждаются.
 5. Собрать confirmed/rejected пары; принять профиль по chronological holdout.
 6. Закрыть SQL HA, независимый Web/VIP, реальный hardware fencing.
 7. Физическую приёмку и RTO/RPO — по отдельному согласованному этапу.
@@ -64,14 +87,22 @@ power/network failures, production SQL-записи и установка биз
 
 ## Последняя проверка
 
-Полный локальный набор: 541 тест, ошибок нет, 15 skip (настоящий Windows/systemd,
-SQL integration и PID namespace). После последнего изменения layout ещё 8 Grafana
-tests passed. Qualification против PR #8 прошла: 6 adapter contracts, 15 golden
+Полный локальный набор: 549 тестов, ошибок нет, 15 skip (настоящий Windows/systemd,
+SQL integration и PID namespace). Qualification против PR #8 прошла: 6 adapter contracts, 27 golden
 traces, 8 HA model scenarios, 0 shadow differences. Compileall/diff-check прошли;
 синтетические SVG визуально проверены. Итог SHA/CI — в описании нового PR.
 Production-статус из таблицы от CI не меняется.
+
+27 traces = 15 моделей + 12 обезличенных CSV-фрагментов 06–07.10.2026,
+328 read occurrences / 203 distinct source reads. `tools/build_recorded_traces.py`
+сохраняет источник/хеши/границы и связи TAG→IDS→SERIES без ФИО/card fields.
+Expected получены из чистого pinned PR #8, а не физической разметки. Recorded
+video отсутствует. Не называть корпус полной business acceptance и не заменять
+им длительный shadow или 1–2 недели реальной baseline.
 
 Новые entrypoints: `deploy/ha/update_visual_wallboard.py`,
 `deploy/ha/tune_adaptive_windows.py`, `observer/mirror.py`,
 `common/adaptive_windows.py`, `common/fallback_store.py`, `common/metadata_mirror.py`.
 Установщик Grafana требует весь checkout, не standalone-файл.
+Также добавлены `common/retrospective.py`, `observer/catalog.py`,
+`tools/build_recorded_traces.py`, `tools/render_plan_audit.py`.

@@ -1,0 +1,466 @@
+{
+  "date": "2026-10-08",
+  "timezone": "Europe/Moscow",
+  "source_plan": "deploy/ha/NEXT_ROUND_PLAN_2026-10-06.md",
+  "source_plan_sha": "4735b48aa2e7b9b30d26732ac28e64a4337a6376",
+  "scope": "33 checkbox tasks in section 7; section 8 repeats acceptance criteria and is not added to the denominator",
+  "audited_base_sha": "4e005d769495f01f2e665133695827d33bf0fac5",
+  "base_ci": "Perimeter HA Ubuntu/Windows, Warehouse, Observability: success",
+  "live_installation_of_this_candidate": false,
+  "current_factory_health": "unknown: configured Grafana and three Guardian TCP endpoints unreachable from this environment",
+  "statuses": {
+    "SOFTWARE_READY": "Implemented and offline checked; this does not mean installed or accepted at the factory",
+    "PARTIAL": "Implemented foundation; named requirement still has a material gap",
+    "BLOCKED": "Requires physical equipment, production installation/data or elapsed time; not performed",
+    "DEFERRED": "Existing explicit operator decision; no unrequested server setup"
+  },
+  "tasks": [
+    {
+      "id": "1.1",
+      "stage": 1,
+      "requirement": "Настоящая RFID-метка",
+      "status": "BLOCKED",
+      "evidence": [],
+      "remaining": "Физическая приёмка запрещена условиями этой итерации"
+    },
+    {
+      "id": "1.2",
+      "stage": 1,
+      "requirement": "RFID → spool → SQL → Aggregator",
+      "status": "BLOCKED",
+      "evidence": [
+        "guardian/adapter_checks.py"
+      ],
+      "remaining": "Offline adapter test есть; live business chain не доказана"
+    },
+    {
+      "id": "1.3",
+      "stage": 1,
+      "requirement": "Identity/direction/video/RusGuard/Warehouse/1C",
+      "status": "BLOCKED",
+      "evidence": [
+        "deploy/ha/ACCEPTANCE_2026-10-07.md"
+      ],
+      "remaining": "Архивная проверка не заменяет новый физический проход"
+    },
+    {
+      "id": "1.4",
+      "stage": 1,
+      "requirement": "Зафиксировать acceptance journal",
+      "status": "BLOCKED",
+      "evidence": [
+        "deploy/ha/evidence/reconciliation_export_2026-10-07.json"
+      ],
+      "remaining": "Offline журнал есть; полного live acceptance результата нет"
+    },
+    {
+      "id": "2.1",
+      "stage": 2,
+      "requirement": "Network isolation physical",
+      "status": "BLOCKED",
+      "evidence": [
+        "guardian/simulation.py"
+      ],
+      "remaining": "Есть модель, реальная изоляция не выполнялась"
+    },
+    {
+      "id": "2.2",
+      "stage": 2,
+      "requirement": "Проверить takeover UHF reader",
+      "status": "BLOCKED",
+      "evidence": [
+        "guardian/hardware_fence.py"
+      ],
+      "remaining": "Настоящий TCP/device takeover не измерен"
+    },
+    {
+      "id": "2.3",
+      "stage": 2,
+      "requirement": "External hardware/network fencing",
+      "status": "PARTIAL",
+      "evidence": [
+        "guardian/hardware_fence.py",
+        "tests/test_ha_qualification.py"
+      ],
+      "remaining": "Verified interface/rollback реализованы; адаптер конкретного switch/relay не подключён"
+    },
+    {
+      "id": "2.4",
+      "stage": 2,
+      "requirement": "Измерить RTO",
+      "status": "PARTIAL",
+      "evidence": [
+        "guardian/recovery.py",
+        "guardian/telemetry.py"
+      ],
+      "remaining": "Readiness timing есть; физический business RTO/RPO не измерены"
+    },
+    {
+      "id": "3.1",
+      "stage": 3,
+      "requirement": "VIP/proxy/DNS",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "gateway/server.py",
+        "deploy/ha/install_resilience.py"
+      ],
+      "remaining": "Gateway установить, адрес принять инфраструктурой; отказ Comparator отдельно"
+    },
+    {
+      "id": "3.2",
+      "stage": 3,
+      "requirement": "Проверить URL при physical/perimetr/comparator",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "tests/test_ha_resilience.py",
+        "tests/test_gateway_fallback.py"
+      ],
+      "remaining": "Loopback проверка прошла; live проверка URL после установки"
+    },
+    {
+      "id": "4.1",
+      "stage": 4,
+      "requirement": "Change classifier",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/qualification.py",
+        "tests/test_ha_qualification.py"
+      ],
+      "remaining": "Production rollout не принят"
+    },
+    {
+      "id": "4.2",
+      "stage": 4,
+      "requirement": "Static mechanical gate",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/qualification.py",
+        "guardian/release_contract.py"
+      ],
+      "remaining": "Применить через accepted staged rollout"
+    },
+    {
+      "id": "4.3",
+      "stage": 4,
+      "requirement": "Data-contract tests",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/adapter_checks.py",
+        "tests/test_ha_release_contract.py"
+      ],
+      "remaining": "Native SQL integration требует отдельной test DB"
+    },
+    {
+      "id": "4.4",
+      "stage": 4,
+      "requirement": "Golden Trace Replay",
+      "status": "PARTIAL",
+      "evidence": [
+        "guardian/golden_traces.json",
+        "tools/build_recorded_traces.py"
+      ],
+      "remaining": "15 моделей + 12 recorded fragments; recorded video отсутствует, expected — stable behavior reference, не независимая physical truth"
+    },
+    {
+      "id": "4.5",
+      "stage": 4,
+      "requirement": "Differential Shadow Run",
+      "status": "PARTIAL",
+      "evidence": [
+        "guardian/replay.py",
+        "guardian/qualification.py"
+      ],
+      "remaining": "Offline comparison на записанных inputs есть; длительный shadow полного pipeline на production tail не выполнен"
+    },
+    {
+      "id": "4.6",
+      "stage": 4,
+      "requirement": "HA simulation",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/simulation.py",
+        "tests/test_ha_qualification.py"
+      ],
+      "remaining": "Физический отказ отдельно"
+    },
+    {
+      "id": "4.7",
+      "stage": 4,
+      "requirement": "Reserve staging",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/update.py",
+        "deploy/ha/start_staged_rollout.py"
+      ],
+      "remaining": "Установка новой ветки на узлы не выполнена"
+    },
+    {
+      "id": "4.8",
+      "stage": 4,
+      "requirement": "Candidate quarantine",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/update.py",
+        "guardian/probation.py"
+      ],
+      "remaining": "Production приёмка"
+    },
+    {
+      "id": "4.9",
+      "stage": 4,
+      "requirement": "Automatic rollback",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/update.py",
+        "tests/test_ha_release_contract.py"
+      ],
+      "remaining": "Production приёмка"
+    },
+    {
+      "id": "4.10",
+      "stage": 4,
+      "requirement": "Docs-only commits не меняют runtime",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/qualification.py",
+        "guardian/update.py"
+      ],
+      "remaining": "Принять новое ПО; main пока не менять"
+    },
+    {
+      "id": "5.1",
+      "stage": 5,
+      "requirement": "Перечень bus metrics",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/catalog.py",
+        "observer/collector.py"
+      ],
+      "remaining": "Catalog явно показывает также not_instrumented и unavailable; наличие перечня не означает наличие каждого датчика"
+    },
+    {
+      "id": "5.2",
+      "stage": 5,
+      "requirement": "Cross-source residuals",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/behavior.py"
+      ],
+      "remaining": "Установка, реальная baseline"
+    },
+    {
+      "id": "5.3",
+      "stage": 5,
+      "requirement": "1–2 недели baseline history",
+      "status": "BLOCKED",
+      "evidence": [
+        "observer/behavior.py"
+      ],
+      "remaining": "Observer установить и накопить реальные 1–2 недели, не заменить частыми synthetic samples"
+    },
+    {
+      "id": "5.4",
+      "stage": 5,
+      "requirement": "Anomaly/drift/divergence/degradation scores",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/behavior.py",
+        "tests/test_ha_resilience.py"
+      ],
+      "remaining": "Калибровка реальными наблюдениями"
+    },
+    {
+      "id": "5.5",
+      "stage": 5,
+      "requirement": "Change-point detection",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/behavior.py"
+      ],
+      "remaining": "CUSUM/persistence проверены offline, real thresholds не приняты"
+    },
+    {
+      "id": "5.6",
+      "stage": 5,
+      "requirement": "Short-horizon prediction",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/behavior.py"
+      ],
+      "remaining": "Линейный прогноз, не вероятность отказа; нужна реальная history"
+    },
+    {
+      "id": "5.7",
+      "stage": 5,
+      "requirement": "Grafana dashboard",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/finish_behavior_monitoring.py",
+        "deploy/ha/update_visual_wallboard.py"
+      ],
+      "remaining": "Live Grafana недоступна, установка не выполнена"
+    },
+    {
+      "id": "5.8",
+      "stage": 5,
+      "requirement": "Warning/critical policy",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "observer/service.py",
+        "observer/notifications.py"
+      ],
+      "remaining": "Принять operating thresholds/notification endpoint при установке"
+    },
+    {
+      "id": "6.1",
+      "stage": 6,
+      "requirement": "Новые HA/business Zabbix items без дублей",
+      "status": "DEFERRED",
+      "evidence": [
+        "deploy/ha/finish_monitoring.py",
+        "deploy/ha/zabbix-items.md"
+      ],
+      "remaining": "Ранее setup Zabbix был пропущен по решению пользователя; состояние существующих объектов не проверено live"
+    },
+    {
+      "id": "6.2",
+      "stage": 6,
+      "requirement": "Dashboard owner/epoch/reserves/RTO",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/install_monitoring.py",
+        "deploy/ha/grafana_visual.py"
+      ],
+      "remaining": "Live install/verify; RTO readiness отдельно от physical business RTO"
+    },
+    {
+      "id": "6.3",
+      "stage": 6,
+      "requirement": "Реальный LLM repair на faulted reserve",
+      "status": "BLOCKED",
+      "evidence": [
+        "guardian/repair.py"
+      ],
+      "remaining": "Нужны установленный reserve, LM Studio и отдельно разрешённый реальный fault"
+    },
+    {
+      "id": "6.4",
+      "stage": 6,
+      "requirement": "LM Studio offline — HA работает",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/simulation.py",
+        "guardian/repair.py",
+        "tests/test_ha_repair.py"
+      ],
+      "remaining": "Native production scenario не принят"
+    },
+    {
+      "id": "6.5",
+      "stage": 6,
+      "requirement": "Invalid LLM output — команда не выполняется",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "guardian/repair.py",
+        "tests/test_ha_repair.py"
+      ],
+      "remaining": "Production приёмка ограниченного repair path"
+    }
+  ],
+  "additions": [
+    {
+      "id": "A1",
+      "requirement": "Обратный поиск ожидаемого прохода по складу",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "KPP/kpp_aggregator_v3_warehouse.py",
+        "common/retrospective.py"
+      ],
+      "remaining": "Найдены и ранжируются реальные session candidates; подтверждение/автоматическая business-запись требуют отдельной приёмки полного source context"
+    },
+    {
+      "id": "A2",
+      "requirement": "Адаптивные окна, время суток/сезон/gradient descent",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "common/adaptive_windows.py",
+        "deploy/ha/tune_adaptive_windows.py"
+      ],
+      "remaining": "Confirmed/rejected factory labels и accepted holdout перед active"
+    },
+    {
+      "id": "A3",
+      "requirement": "Постоянный независимый Web адрес",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "gateway/server.py"
+      ],
+      "remaining": "Установка/адрес; для отказа Comparator независимая инфраструктура"
+    },
+    {
+      "id": "A4",
+      "requirement": "Локальные копии минимум три месяца без фото",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "common/fallback_store.py",
+        "common/metadata_mirror.py",
+        "observer/mirror.py"
+      ],
+      "remaining": "Установка и backfill шести потоков; не полный SQL Server backup"
+    },
+    {
+      "id": "A5",
+      "requirement": "Работа при полном обвале БД и последующая выгрузка",
+      "status": "PARTIAL",
+      "evidence": [
+        "common/replicated_ingest.py"
+      ],
+      "remaining": "PENDING/replay есть; непрерывный capture без SQL authority не гарантирован, нужен SQL HA listener"
+    },
+    {
+      "id": "A6",
+      "requirement": "Максимально визуальная схема всех цепочек и резервов",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/grafana_visual.py",
+        "deploy/ha/perimeter_topology.js"
+      ],
+      "remaining": "Live apply недоступен"
+    },
+    {
+      "id": "A7",
+      "requirement": "Две страницы, переключение каждую минуту",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/grafana/playlist.json"
+      ],
+      "remaining": "Live apply и открыть playlist на display"
+    },
+    {
+      "id": "A8",
+      "requirement": "Убрать верхнюю надпись",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/grafana_visual.py"
+      ],
+      "remaining": "Удаляется top text panel; фактический тип live banner пока неизвестен"
+    },
+    {
+      "id": "A9",
+      "requirement": "Сохранить информацию для продолжения в GitHub",
+      "status": "SOFTWARE_READY",
+      "evidence": [
+        "deploy/ha/CONTINUE_HERE_2026-10-08.md",
+        "deploy/ha/PLAN_AUDIT_2026-10-08.json"
+      ],
+      "remaining": "Обновлять по каждому этапу"
+    }
+  ],
+  "note": "The nine additions overlap and refine original tasks; do not add the two denominators into a misleading completion percentage. Software-ready means exactly offline ready, never production accepted.",
+  "metric_catalog": {
+    "instrumented_definitions": 73,
+    "not_instrumented_definitions": 43,
+    "live_measurements": "not_observed_from_this_environment",
+    "note": "Section 5 metric wishlist exceeds section 7 checklist; all missing instrumentation is explicitly listed in observer/catalog.py, not considered measured."
+  }
+}

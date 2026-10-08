@@ -923,6 +923,3446 @@
         ],
         "report_warehouse_conflicts": 0
       }
+    },
+    {
+      "name": "recorded_csv_01",
+      "at": "2026-10-06T07:51:10.427000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0.0,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": 0.156,
+          "antenna": 2,
+          "rssi": -67.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 3,
+          "offset": 0.25,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": 0.391,
+          "antenna": 2,
+          "rssi": -58.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 5,
+          "offset": 0.484,
+          "antenna": 2,
+          "rssi": -62.3,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 6,
+          "offset": 0.625,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 7,
+          "offset": 0.719,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 8,
+          "offset": 0.859,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 9,
+          "offset": 0.969,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 1.14,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 11,
+          "offset": 1.25,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 1.422,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 13,
+          "offset": 1.531,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 14,
+          "offset": 1.656,
+          "antenna": 3,
+          "rssi": -65.0,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 15,
+          "offset": 1.765,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 16,
+          "offset": 1.89,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 17,
+          "offset": 5.281,
+          "antenna": 1,
+          "rssi": -62.3,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        }
+      ],
+      "tasks": [],
+      "warehouse": [],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "IN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [],
+        "groups": 0,
+        "need_recheck": 3,
+        "read_counts": [
+          2,
+          7,
+          8
+        ],
+        "reels": 0,
+        "report_directions": [],
+        "report_rows": 0,
+        "report_warehouse_conflicts": 0,
+        "sessions": 3,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_02",
+      "at": "2026-10-06T07:51:11.146000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -0.719,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": -0.563,
+          "antenna": 2,
+          "rssi": -67.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 3,
+          "offset": -0.469,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": -0.328,
+          "antenna": 2,
+          "rssi": -58.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 5,
+          "offset": -0.235,
+          "antenna": 2,
+          "rssi": -62.3,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 6,
+          "offset": -0.094,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 7,
+          "offset": 0.0,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 8,
+          "offset": 0.14,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 9,
+          "offset": 0.25,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 0.421,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 11,
+          "offset": 0.531,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 0.703,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 13,
+          "offset": 0.812,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 14,
+          "offset": 0.937,
+          "antenna": 3,
+          "rssi": -65.0,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 15,
+          "offset": 1.046,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 16,
+          "offset": 1.171,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        }
+      ],
+      "tasks": [],
+      "warehouse": [],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [],
+        "groups": 0,
+        "need_recheck": 3,
+        "read_counts": [
+          2,
+          6,
+          8
+        ],
+        "reels": 0,
+        "report_directions": [],
+        "report_rows": 0,
+        "report_warehouse_conflicts": 0,
+        "sessions": 3,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_03",
+      "at": "2026-10-06T07:52:37.702000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -0.828,
+          "antenna": 1,
+          "rssi": -62.9,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": -0.734,
+          "antenna": 1,
+          "rssi": -62.9,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 3,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 4,
+          "offset": 0.094,
+          "antenna": 1,
+          "rssi": -68.3,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 5,
+          "offset": 0.219,
+          "antenna": 1,
+          "rssi": -67.8,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 6,
+          "offset": 0.344,
+          "antenna": 1,
+          "rssi": -71.0,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 7,
+          "offset": 3.844,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 8,
+          "offset": 3.937,
+          "antenna": 2,
+          "rssi": -68.9,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 9,
+          "offset": 4.0,
+          "antenna": 2,
+          "rssi": -67.8,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 10,
+          "offset": 4.094,
+          "antenna": 2,
+          "rssi": -68.3,
+          "epc": "6134FA5CB114CC265AFDC9AB",
+          "tid": "C646D3C24855A339ABDF7703"
+        },
+        {
+          "id": 11,
+          "offset": 4.219,
+          "antenna": 3,
+          "rssi": -56.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 4.297,
+          "antenna": 3,
+          "rssi": -57.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 13,
+          "offset": 4.359,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 14,
+          "offset": 4.453,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        }
+      ],
+      "tasks": [],
+      "warehouse": [],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "OUT",
+          "UNKNOWN"
+        ],
+        "group_counts": [],
+        "groups": 0,
+        "need_recheck": 3,
+        "read_counts": [
+          2,
+          5,
+          7
+        ],
+        "reels": 0,
+        "report_directions": [],
+        "report_rows": 0,
+        "report_warehouse_conflicts": 0,
+        "sessions": 3,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_04",
+      "at": "2026-10-06T07:56:02.657000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -0.125,
+          "antenna": 2,
+          "rssi": -62.9,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": 0.0,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 3,
+          "offset": 0.093,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": 0.187,
+          "antenna": 2,
+          "rssi": -60.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 5,
+          "offset": 0.297,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 6,
+          "offset": 0.468,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 7,
+          "offset": 0.562,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 8,
+          "offset": 0.718,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 9,
+          "offset": 0.828,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 0.968,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 11,
+          "offset": 1.062,
+          "antenna": 2,
+          "rssi": -55.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 12,
+          "offset": 1.172,
+          "antenna": 2,
+          "rssi": -54.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 13,
+          "offset": 1.343,
+          "antenna": 2,
+          "rssi": -59.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 14,
+          "offset": 1.453,
+          "antenna": 2,
+          "rssi": -59.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 15,
+          "offset": 1.562,
+          "antenna": 3,
+          "rssi": -68.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 16,
+          "offset": 1.625,
+          "antenna": 3,
+          "rssi": -68.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 17,
+          "offset": 1.765,
+          "antenna": 3,
+          "rssi": -65.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 18,
+          "offset": 1.875,
+          "antenna": 2,
+          "rssi": -62.3,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 19,
+          "offset": 2.015,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 20,
+          "offset": 2.109,
+          "antenna": 2,
+          "rssi": -62.3,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 21,
+          "offset": 2.25,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 22,
+          "offset": 5.015,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 23,
+          "offset": 5.109,
+          "antenna": 1,
+          "rssi": -62.9,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 24,
+          "offset": 5.218,
+          "antenna": 1,
+          "rssi": -59.0,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 25,
+          "offset": 5.374,
+          "antenna": 1,
+          "rssi": -58.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 26,
+          "offset": 5.499,
+          "antenna": 1,
+          "rssi": -59.0,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 27,
+          "offset": 5.64,
+          "antenna": 1,
+          "rssi": -59.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 28,
+          "offset": 5.734,
+          "antenna": 1,
+          "rssi": -67.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 29,
+          "offset": 5.874,
+          "antenna": 1,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 30,
+          "offset": 5.952,
+          "antenna": 1,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 31,
+          "offset": 6.109,
+          "antenna": 1,
+          "rssi": -60.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 32,
+          "offset": 6.218,
+          "antenna": 1,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        }
+      ],
+      "tasks": [],
+      "warehouse": [],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "IN",
+          "IN",
+          "IN"
+        ],
+        "group_counts": [],
+        "groups": 0,
+        "need_recheck": 3,
+        "read_counts": [
+          7,
+          10,
+          15
+        ],
+        "reels": 0,
+        "report_directions": [],
+        "report_rows": 0,
+        "report_warehouse_conflicts": 0,
+        "sessions": 3,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_05",
+      "at": "2026-10-06T08:02:29.474000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -0.125,
+          "antenna": 2,
+          "rssi": -59.0,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": 0.0,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 3,
+          "offset": 0.109,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": 1.015,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 5,
+          "offset": 1.093,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 6,
+          "offset": 1.812,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 7,
+          "offset": 1.937,
+          "antenna": 2,
+          "rssi": -76.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 8,
+          "offset": 2.015,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 9,
+          "offset": 2.078,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 2.171,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 11,
+          "offset": 2.25,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 2.812,
+          "antenna": 3,
+          "rssi": -74.9,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 13,
+          "offset": 2.937,
+          "antenna": 3,
+          "rssi": -80.4,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:31:25",
+          "Tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:31:27",
+          "Tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 166.526
+        },
+        {
+          "tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 166.526
+        }
+      ],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          2
+        ],
+        "groups": 1,
+        "need_recheck": 5,
+        "read_counts": [
+          1,
+          2,
+          2,
+          2,
+          6
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_06",
+      "at": "2026-10-06T08:20:32.243000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -1.703,
+          "antenna": 1,
+          "rssi": -70.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 2,
+          "offset": -1.61,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 3,
+          "offset": -0.719,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 4,
+          "offset": -0.625,
+          "antenna": 1,
+          "rssi": -63.5,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 5,
+          "offset": -0.516,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 6,
+          "offset": -0.422,
+          "antenna": 1,
+          "rssi": -67.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 7,
+          "offset": -0.266,
+          "antenna": 1,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 8,
+          "offset": -0.141,
+          "antenna": 1,
+          "rssi": -68.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 9,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 10,
+          "offset": 0.125,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 11,
+          "offset": 0.297,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 12,
+          "offset": 2.187,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 13,
+          "offset": 2.296,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 14,
+          "offset": 2.39,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 15,
+          "offset": 2.468,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 16,
+          "offset": 2.546,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 17,
+          "offset": 2.64,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 18,
+          "offset": 2.703,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 19,
+          "offset": 2.812,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 20,
+          "offset": 3.078,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 21,
+          "offset": 3.156,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 22,
+          "offset": 3.249,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 23,
+          "offset": 3.374,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 24,
+          "offset": 3.484,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 25,
+          "offset": 3.609,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 26,
+          "offset": 3.718,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 27,
+          "offset": 3.89,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 28,
+          "offset": 3.984,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 29,
+          "offset": 4.062,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 30,
+          "offset": 4.218,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 31,
+          "offset": 4.296,
+          "antenna": 2,
+          "rssi": -68.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 32,
+          "offset": 4.437,
+          "antenna": 3,
+          "rssi": -69.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 33,
+          "offset": 4.546,
+          "antenna": 3,
+          "rssi": -71.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 34,
+          "offset": 4.828,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 35,
+          "offset": 4.89,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 36,
+          "offset": 4.984,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 37,
+          "offset": 5.14,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 38,
+          "offset": 5.249,
+          "antenna": 3,
+          "rssi": -75.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 39,
+          "offset": 5.39,
+          "antenna": 3,
+          "rssi": -72.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 40,
+          "offset": 5.796,
+          "antenna": 2,
+          "rssi": -75.6,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 41,
+          "offset": 6.031,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 42,
+          "offset": 6.124,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:50:18",
+          "Tag": "0ED362D3414C2EF6F602C8207BF2EE191920E7508CCA4939",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:50:19",
+          "Tag": "DF08E038C911CE312B4A0F8F5D5FA5907ABEC097CD5396DE",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "",
+          "ids": "63D7D81E0DDAA1788B1AF91D",
+          "series": "4554B239CF72A45560AA0036",
+          "offset": 315.757
+        }
+      ],
+      "skud": [
+        {
+          "id": 3,
+          "offset": -24.243,
+          "direction": "IN"
+        },
+        {
+          "id": 4,
+          "offset": -21.243,
+          "direction": "IN"
+        },
+        {
+          "id": 5,
+          "offset": -20.243,
+          "direction": "IN"
+        },
+        {
+          "id": 6,
+          "offset": -18.243,
+          "direction": "IN"
+        },
+        {
+          "id": 7,
+          "offset": -16.243,
+          "direction": "IN"
+        }
+      ],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "OUT",
+          "OUT",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          2
+        ],
+        "groups": 1,
+        "need_recheck": 5,
+        "read_counts": [
+          3,
+          4,
+          10,
+          12,
+          13
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [
+          7
+        ],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_07",
+      "at": "2026-10-06T07:58:01.289000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 2,
+          "offset": 0.781,
+          "antenna": 1,
+          "rssi": -72.8,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 3,
+          "offset": 0.875,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 4,
+          "offset": 1.359,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 5,
+          "offset": 1.469,
+          "antenna": 3,
+          "rssi": -67.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 6,
+          "offset": 2.125,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 7,
+          "offset": 2.219,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 8,
+          "offset": 2.359,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 9,
+          "offset": 2.516,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 2.609,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 11,
+          "offset": 2.734,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 3.781,
+          "antenna": 2,
+          "rssi": -72.8,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 13,
+          "offset": 4.64,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 14,
+          "offset": 5.515,
+          "antenna": 2,
+          "rssi": -71.0,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 15,
+          "offset": 5.594,
+          "antenna": 2,
+          "rssi": -67.8,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 16,
+          "offset": 5.703,
+          "antenna": 2,
+          "rssi": -68.3,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 17,
+          "offset": 5.828,
+          "antenna": 2,
+          "rssi": -68.3,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 18,
+          "offset": 5.937,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        },
+        {
+          "id": 19,
+          "offset": 6.062,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "253E0E91D9310A1C1A684D17",
+          "tid": "8D63221FCBE4CDD27373D3D9"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:30:47",
+          "Tag": "253E0E91D9310A1C1A684D178D63221FCBE4CDD27373D3D9",
+          "Ids": "1C9CB5FAF5BF30C5C4394125",
+          "SeriesNumber": "FAEF77FCADCAD9E4F7B1FAEA"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "253E0E91D9310A1C1A684D178D63221FCBE4CDD27373D3D9",
+          "ids": "1C9CB5FAF5BF30C5C4394125",
+          "series": "FAEF77FCADCAD9E4F7B1FAEA",
+          "offset": -35.289
+        },
+        {
+          "tag": "0E20196ADB99DEB34CD06F4B7CC6AA8A966A28A962C542A6",
+          "ids": "1C9CB5FAF5BF30C5C4394125",
+          "series": "FAEF77FCADCAD9E4F7B1FAEA",
+          "offset": -35.289
+        }
+      ],
+      "skud": [
+        {
+          "id": 1,
+          "offset": 12.711,
+          "direction": "OUT"
+        },
+        {
+          "id": 2,
+          "offset": 15.711,
+          "direction": "OUT"
+        }
+      ],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          1
+        ],
+        "groups": 1,
+        "need_recheck": 4,
+        "read_counts": [
+          1,
+          3,
+          4,
+          11
+        ],
+        "reels": 1,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 4,
+        "skud_links": [
+          1
+        ],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_08",
+      "at": "2026-10-06T08:02:31.286000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -1.937,
+          "antenna": 2,
+          "rssi": -59.0,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 2,
+          "offset": -1.812,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 3,
+          "offset": -1.703,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": -0.797,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 5,
+          "offset": -0.719,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 6,
+          "offset": 0.0,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 7,
+          "offset": 0.125,
+          "antenna": 2,
+          "rssi": -76.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 8,
+          "offset": 0.203,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 9,
+          "offset": 0.266,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 10,
+          "offset": 0.359,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 11,
+          "offset": 0.438,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 12,
+          "offset": 1.0,
+          "antenna": 3,
+          "rssi": -74.9,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 13,
+          "offset": 1.125,
+          "antenna": 3,
+          "rssi": -80.4,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:31:25",
+          "Tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:31:27",
+          "Tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 164.714
+        },
+        {
+          "tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 164.714
+        }
+      ],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          2
+        ],
+        "groups": 1,
+        "need_recheck": 5,
+        "read_counts": [
+          1,
+          2,
+          2,
+          2,
+          6
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_09",
+      "at": "2026-10-06T08:02:32.286000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -1.797,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 2,
+          "offset": -1.719,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 3,
+          "offset": -1.0,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 4,
+          "offset": -0.875,
+          "antenna": 2,
+          "rssi": -76.3,
+          "epc": "8B59FF8E854534B358F41A90",
+          "tid": "13D47AF06E07B2A6D980EE5F"
+        },
+        {
+          "id": 5,
+          "offset": -0.797,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 6,
+          "offset": -0.734,
+          "antenna": 3,
+          "rssi": -63.5,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 7,
+          "offset": -0.641,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 8,
+          "offset": -0.562,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 9,
+          "offset": 0.0,
+          "antenna": 3,
+          "rssi": -74.9,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 10,
+          "offset": 0.125,
+          "antenna": 3,
+          "rssi": -80.4,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 11,
+          "offset": 1.703,
+          "antenna": 2,
+          "rssi": -71.0,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 12,
+          "offset": 2.578,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 13,
+          "offset": 2.719,
+          "antenna": 2,
+          "rssi": -75.6,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 14,
+          "offset": 2.812,
+          "antenna": 2,
+          "rssi": -71.8,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 15,
+          "offset": 3.0,
+          "antenna": 2,
+          "rssi": -72.8,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        },
+        {
+          "id": 16,
+          "offset": 3.109,
+          "antenna": 2,
+          "rssi": -75.6,
+          "epc": "2386556FE5EAE05E2F10CC63",
+          "tid": "21E8457442ACBE6049F5AE80"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:31:25",
+          "Tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:31:27",
+          "Tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "Ids": "4E559B3031DD642FEE7F4C4C",
+          "SeriesNumber": "CA14F3463E76DEB6C7A9022C"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "2386556FE5EAE05E2F10CC6321E8457442ACBE6049F5AE80",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 163.714
+        },
+        {
+          "tag": "8B59FF8E854534B358F41A9013D47AF06E07B2A6D980EE5F",
+          "ids": "4E559B3031DD642FEE7F4C4C",
+          "series": "CA14F3463E76DEB6C7A9022C",
+          "offset": 163.714
+        }
+      ],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          2
+        ],
+        "groups": 1,
+        "need_recheck": 4,
+        "read_counts": [
+          1,
+          2,
+          5,
+          8
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 4,
+        "skud_links": [],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_10",
+      "at": "2026-10-06T08:19:53.167000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -0.875,
+          "antenna": 1,
+          "rssi": -66.7,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 2,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -71.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 3,
+          "offset": 1.672,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 4,
+          "offset": 1.781,
+          "antenna": 1,
+          "rssi": -74.9,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 5,
+          "offset": 1.891,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 6,
+          "offset": 4.453,
+          "antenna": 1,
+          "rssi": -66.7,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 7,
+          "offset": 7.203,
+          "antenna": 1,
+          "rssi": -71.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 8,
+          "offset": 7.297,
+          "antenna": 1,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 9,
+          "offset": 7.359,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 10,
+          "offset": 10.89,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 11,
+          "offset": 11.015,
+          "antenna": 1,
+          "rssi": -72.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 12,
+          "offset": 11.109,
+          "antenna": 1,
+          "rssi": -72.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 13,
+          "offset": 12.656,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 14,
+          "offset": 12.749,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 15,
+          "offset": 12.859,
+          "antenna": 1,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 16,
+          "offset": 13.734,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 17,
+          "offset": 14.452,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 18,
+          "offset": 14.577,
+          "antenna": 1,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 19,
+          "offset": 14.687,
+          "antenna": 1,
+          "rssi": -65.8,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 20,
+          "offset": 21.843,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 21,
+          "offset": 21.968,
+          "antenna": 1,
+          "rssi": -72.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 22,
+          "offset": 37.373,
+          "antenna": 1,
+          "rssi": -70.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 23,
+          "offset": 37.466,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 24,
+          "offset": 38.357,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 25,
+          "offset": 38.451,
+          "antenna": 1,
+          "rssi": -63.5,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 26,
+          "offset": 38.56,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 27,
+          "offset": 38.654,
+          "antenna": 1,
+          "rssi": -67.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 28,
+          "offset": 38.81,
+          "antenna": 1,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 29,
+          "offset": 38.935,
+          "antenna": 1,
+          "rssi": -68.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 30,
+          "offset": 39.076,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 31,
+          "offset": 39.201,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 32,
+          "offset": 39.373,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 33,
+          "offset": 41.263,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 34,
+          "offset": 41.372,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 35,
+          "offset": 41.466,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 36,
+          "offset": 41.544,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 37,
+          "offset": 41.622,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 38,
+          "offset": 41.716,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 39,
+          "offset": 41.779,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 40,
+          "offset": 41.888,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 41,
+          "offset": 42.154,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 42,
+          "offset": 42.232,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 43,
+          "offset": 42.325,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 44,
+          "offset": 42.45,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 45,
+          "offset": 42.56,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 46,
+          "offset": 42.685,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 47,
+          "offset": 42.794,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 48,
+          "offset": 42.966,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 49,
+          "offset": 43.06,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 50,
+          "offset": 43.138,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 51,
+          "offset": 43.294,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 52,
+          "offset": 43.372,
+          "antenna": 2,
+          "rssi": -68.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 53,
+          "offset": 43.513,
+          "antenna": 3,
+          "rssi": -69.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 54,
+          "offset": 43.622,
+          "antenna": 3,
+          "rssi": -71.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 55,
+          "offset": 43.904,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 56,
+          "offset": 43.966,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 57,
+          "offset": 44.06,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 58,
+          "offset": 44.216,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 59,
+          "offset": 44.325,
+          "antenna": 3,
+          "rssi": -75.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 60,
+          "offset": 44.466,
+          "antenna": 3,
+          "rssi": -72.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 61,
+          "offset": 44.872,
+          "antenna": 2,
+          "rssi": -75.6,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 62,
+          "offset": 45.107,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 63,
+          "offset": 45.2,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 64,
+          "offset": 45.325,
+          "antenna": 2,
+          "rssi": -77.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 65,
+          "offset": 45.435,
+          "antenna": 3,
+          "rssi": -69.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:50:18",
+          "Tag": "0ED362D3414C2EF6F602C8207BF2EE191920E7508CCA4939",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:50:19",
+          "Tag": "DF08E038C911CE312B4A0F8F5D5FA5907ABEC097CD5396DE",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "",
+          "ids": "63D7D81E0DDAA1788B1AF91D",
+          "series": "4554B239CF72A45560AA0036",
+          "offset": 354.833
+        }
+      ],
+      "skud": [
+        {
+          "id": 3,
+          "offset": 14.833,
+          "direction": "IN"
+        },
+        {
+          "id": 4,
+          "offset": 17.833,
+          "direction": "IN"
+        },
+        {
+          "id": 5,
+          "offset": 18.833,
+          "direction": "IN"
+        },
+        {
+          "id": 6,
+          "offset": 20.833,
+          "direction": "IN"
+        },
+        {
+          "id": 7,
+          "offset": 22.833,
+          "direction": "IN"
+        }
+      ],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "OUT",
+          "OUT",
+          "OUT",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          1,
+          1
+        ],
+        "groups": 2,
+        "need_recheck": 5,
+        "read_counts": [
+          3,
+          11,
+          13,
+          16,
+          22
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [
+          6,
+          7
+        ],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_11",
+      "at": "2026-10-06T08:20:30.540000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -70.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 2,
+          "offset": 0.093,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 3,
+          "offset": 0.984,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 4,
+          "offset": 1.078,
+          "antenna": 1,
+          "rssi": -63.5,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 5,
+          "offset": 1.187,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "C68DC0AA66AA68898B8D20CA",
+          "tid": "0901F5CEB3B4BA57B279ABF7"
+        },
+        {
+          "id": 6,
+          "offset": 1.281,
+          "antenna": 1,
+          "rssi": -67.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 7,
+          "offset": 1.437,
+          "antenna": 1,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 8,
+          "offset": 1.562,
+          "antenna": 1,
+          "rssi": -68.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 9,
+          "offset": 1.703,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 10,
+          "offset": 1.828,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 11,
+          "offset": 2.0,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 12,
+          "offset": 3.89,
+          "antenna": 2,
+          "rssi": -61.7,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 13,
+          "offset": 3.999,
+          "antenna": 2,
+          "rssi": -63.5,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 14,
+          "offset": 4.093,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 15,
+          "offset": 4.171,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "0C973AAD277EE413F8213397",
+          "tid": "4F7337CF5080440FCCDD687F"
+        },
+        {
+          "id": 16,
+          "offset": 4.249,
+          "antenna": 3,
+          "rssi": -59.8,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 17,
+          "offset": 4.343,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 18,
+          "offset": 4.406,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 19,
+          "offset": 4.515,
+          "antenna": 3,
+          "rssi": -59.0,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 20,
+          "offset": 4.781,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 21,
+          "offset": 4.859,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 22,
+          "offset": 4.952,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 23,
+          "offset": 5.077,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 24,
+          "offset": 5.187,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 25,
+          "offset": 5.312,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 26,
+          "offset": 5.421,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 27,
+          "offset": 5.593,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 28,
+          "offset": 5.687,
+          "antenna": 3,
+          "rssi": -61.7,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 29,
+          "offset": 5.765,
+          "antenna": 3,
+          "rssi": -62.3,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 30,
+          "offset": 5.921,
+          "antenna": 3,
+          "rssi": -62.9,
+          "epc": "AAA2598E4B14558E07F42F24",
+          "tid": "9E1E92CB9D27CBFA999B4F81"
+        },
+        {
+          "id": 31,
+          "offset": 5.999,
+          "antenna": 2,
+          "rssi": -68.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 32,
+          "offset": 6.14,
+          "antenna": 3,
+          "rssi": -69.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 33,
+          "offset": 6.249,
+          "antenna": 3,
+          "rssi": -71.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 34,
+          "offset": 6.531,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 35,
+          "offset": 6.593,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 36,
+          "offset": 6.687,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 37,
+          "offset": 6.843,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 38,
+          "offset": 6.952,
+          "antenna": 3,
+          "rssi": -75.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 39,
+          "offset": 7.093,
+          "antenna": 3,
+          "rssi": -72.8,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 40,
+          "offset": 7.499,
+          "antenna": 2,
+          "rssi": -75.6,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 41,
+          "offset": 7.734,
+          "antenna": 2,
+          "rssi": -74.3,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 42,
+          "offset": 7.827,
+          "antenna": 2,
+          "rssi": -74.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 43,
+          "offset": 7.952,
+          "antenna": 2,
+          "rssi": -77.9,
+          "epc": "0ED362D3414C2EF6F602C820",
+          "tid": "7BF2EE191920E7508CCA4939"
+        },
+        {
+          "id": 44,
+          "offset": 8.062,
+          "antenna": 3,
+          "rssi": -69.6,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 45,
+          "offset": 10.374,
+          "antenna": 2,
+          "rssi": -77.9,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        },
+        {
+          "id": 46,
+          "offset": 10.436,
+          "antenna": 2,
+          "rssi": -76.3,
+          "epc": "DF08E038C911CE312B4A0F8F",
+          "tid": "5D5FA5907ABEC097CD5396DE"
+        }
+      ],
+      "tasks": [
+        {
+          "Id": 1,
+          "Dt": "2026-10-05T13:50:18",
+          "Tag": "0ED362D3414C2EF6F602C8207BF2EE191920E7508CCA4939",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        },
+        {
+          "Id": 2,
+          "Dt": "2026-10-05T13:50:19",
+          "Tag": "DF08E038C911CE312B4A0F8F5D5FA5907ABEC097CD5396DE",
+          "Ids": "63D7D81E0DDAA1788B1AF91D",
+          "SeriesNumber": "4554B239CF72A45560AA0036"
+        }
+      ],
+      "warehouse": [
+        {
+          "tag": "",
+          "ids": "63D7D81E0DDAA1788B1AF91D",
+          "series": "4554B239CF72A45560AA0036",
+          "offset": 317.46
+        }
+      ],
+      "skud": [
+        {
+          "id": 3,
+          "offset": -22.54,
+          "direction": "IN"
+        },
+        {
+          "id": 4,
+          "offset": -19.54,
+          "direction": "IN"
+        },
+        {
+          "id": 5,
+          "offset": -18.54,
+          "direction": "IN"
+        },
+        {
+          "id": 6,
+          "offset": -16.54,
+          "direction": "IN"
+        },
+        {
+          "id": 7,
+          "offset": -14.54,
+          "direction": "IN"
+        }
+      ],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "OUT",
+          "OUT",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [
+          2
+        ],
+        "groups": 1,
+        "need_recheck": 5,
+        "read_counts": [
+          3,
+          4,
+          13,
+          13,
+          13
+        ],
+        "reels": 2,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [
+          7
+        ],
+        "video_links": []
+      }
+    },
+    {
+      "name": "recorded_csv_12",
+      "at": "2026-10-06T08:54:41.398000",
+      "provenance": "anonymized_recorded_sources_stable_behavior_not_physical_truth",
+      "reads": [
+        {
+          "id": 1,
+          "offset": -1.828,
+          "antenna": 1,
+          "rssi": -62.3,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 2,
+          "offset": -1.735,
+          "antenna": 1,
+          "rssi": -62.3,
+          "epc": "BDDC003C3BF3CAA1F9911B69",
+          "tid": "E93735B5E5B83916506865FA"
+        },
+        {
+          "id": 3,
+          "offset": -1.594,
+          "antenna": 1,
+          "rssi": -59.8,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 4,
+          "offset": 0.0,
+          "antenna": 1,
+          "rssi": -76.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 5,
+          "offset": 0.109,
+          "antenna": 1,
+          "rssi": -73.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 6,
+          "offset": 0.218,
+          "antenna": 1,
+          "rssi": -75.6,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 7,
+          "offset": 0.328,
+          "antenna": 1,
+          "rssi": -61.7,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 8,
+          "offset": 0.453,
+          "antenna": 1,
+          "rssi": -63.5,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 9,
+          "offset": 0.546,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 10,
+          "offset": 0.718,
+          "antenna": 1,
+          "rssi": -64.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 11,
+          "offset": 1.781,
+          "antenna": 1,
+          "rssi": -69.6,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 12,
+          "offset": 3.062,
+          "antenna": 2,
+          "rssi": -71.8,
+          "epc": "868DA552BFB026927A327B9E",
+          "tid": "E6947602CFE64CEBC0743A65"
+        },
+        {
+          "id": 13,
+          "offset": 3.234,
+          "antenna": 3,
+          "rssi": -58.2,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 14,
+          "offset": 3.359,
+          "antenna": 3,
+          "rssi": -64.2,
+          "epc": "495185F44BF527C314DC795A",
+          "tid": "55BB6ECA1AE65905F9874711"
+        },
+        {
+          "id": 15,
+          "offset": 3.468,
+          "antenna": 3,
+          "rssi": -60.7,
+          "epc": "B898D7B569081D32161DADDD",
+          "tid": "EE880D41D2084173DE046044"
+        },
+        {
+          "id": 16,
+          "offset": 3.89,
+          "antenna": 2,
+          "rssi": -65.0,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 17,
+          "offset": 3.968,
+          "antenna": 2,
+          "rssi": -65.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 18,
+          "offset": 4.046,
+          "antenna": 2,
+          "rssi": -62.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 19,
+          "offset": 4.734,
+          "antenna": 2,
+          "rssi": -64.2,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 20,
+          "offset": 4.89,
+          "antenna": 2,
+          "rssi": -66.7,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 21,
+          "offset": 5.03,
+          "antenna": 2,
+          "rssi": -71.0,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 22,
+          "offset": 5.734,
+          "antenna": 2,
+          "rssi": -68.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 23,
+          "offset": 5.905,
+          "antenna": 2,
+          "rssi": -68.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 24,
+          "offset": 6.562,
+          "antenna": 2,
+          "rssi": -68.9,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 25,
+          "offset": 6.687,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 26,
+          "offset": 6.78,
+          "antenna": 2,
+          "rssi": -69.6,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 27,
+          "offset": 6.89,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 28,
+          "offset": 7.046,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 29,
+          "offset": 7.515,
+          "antenna": 2,
+          "rssi": -71.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 30,
+          "offset": 7.64,
+          "antenna": 2,
+          "rssi": -71.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 31,
+          "offset": 7.749,
+          "antenna": 2,
+          "rssi": -70.3,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 32,
+          "offset": 7.843,
+          "antenna": 2,
+          "rssi": -72.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 33,
+          "offset": 7.921,
+          "antenna": 2,
+          "rssi": -71.0,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 34,
+          "offset": 8.046,
+          "antenna": 2,
+          "rssi": -73.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        },
+        {
+          "id": 35,
+          "offset": 8.14,
+          "antenna": 2,
+          "rssi": -71.8,
+          "epc": "9B44B4B8EFDE6B1C54F3F0BF",
+          "tid": "DEDE80D9C1CECB74ADAF38B4"
+        }
+      ],
+      "tasks": [],
+      "warehouse": [
+        {
+          "tag": "868DA552BFB026927A327B9EE6947602CFE64CEBC0743A65",
+          "ids": "CE802FAA534503837775E1C6",
+          "series": "46ABABC5F0356F0F1D27111A",
+          "offset": -89433.398
+        },
+        {
+          "tag": "9B44B4B8EFDE6B1C54F3F0BFDEDE80D9C1CECB74ADAF38B4",
+          "ids": "A7D632AA18418D46AED5FE00",
+          "series": "67CCD6CAB0D1FA0AC71906C7",
+          "offset": -87805.398
+        }
+      ],
+      "skud": [],
+      "video": [],
+      "unavailable_sources": [
+        "video_recording_not_supplied"
+      ],
+      "expected": {
+        "directions": [
+          "OUT",
+          "OUT",
+          "UNKNOWN",
+          "UNKNOWN",
+          "UNKNOWN"
+        ],
+        "group_counts": [],
+        "groups": 0,
+        "need_recheck": 5,
+        "read_counts": [
+          1,
+          2,
+          2,
+          6,
+          24
+        ],
+        "reels": 0,
+        "report_directions": [
+          "OUT",
+          "OUT"
+        ],
+        "report_rows": 2,
+        "report_warehouse_conflicts": 0,
+        "sessions": 5,
+        "skud_links": [],
+        "video_links": []
+      }
     }
-  ]
+  ],
+  "recorded_source_provenance": {
+    "kind": "anonymized_csv_recordings",
+    "source_inventory": {
+      "RFID_Tags": {
+        "sha256": "a66a0beb248741a2fef8a9330300142a8fa8c5dd775b6369bf4b5f53bb5be6f5",
+        "bytes": 139167737,
+        "rows": 697018
+      },
+      "RfidTags": {
+        "sha256": "296bf09ebe678061b84bc6ef16f23ef5eab5274a2ac0a168d2bae6dd7823cbf9",
+        "bytes": 10183747,
+        "rows": 78959
+      },
+      "Warehouse": {
+        "sha256": "78ad4ea847cb8a8c5906239a1a774d70a9541cc0fe2f88eadc26b3ed16c5c002",
+        "bytes": 530113,
+        "rows": 4426
+      },
+      "RusGuardLogs": {
+        "sha256": "200ebc210defc8a9e4cb9e4740273a5b0eac62085a93e0124fa8958660f256e7",
+        "bytes": 50564311,
+        "rows": 196181
+      }
+    },
+    "source_range": [
+      "2026-10-06T06:00:00",
+      "2026-10-07T09:35:00"
+    ],
+    "selected_traces": 12,
+    "selected_fragment_read_rows": 328,
+    "distinct_source_reads": 203,
+    "pseudonymization": "HMAC_SHA256_private_key_not_in_corpus",
+    "expected_kind": "pinned_stable_behavior_reference_not_physical_acceptance",
+    "stable_reference_sha": "1d59061d0f29e3eba8f877ed03cd63d347300d3f"
+  }
 }
