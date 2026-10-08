@@ -29,6 +29,13 @@ def read_config(path):
         raise ValueError("Exactly three unique nodes, including this node, are required")
     if sorted(n["priority"] for n in cfg["nodes"]) != [1, 2, 3]:
         raise ValueError("Node priorities must be 1, 2, 3")
+    if type(cfg.get("replication_enabled", False)) is not bool:
+        raise ValueError("replication_enabled must be boolean")
+    if cfg.get("replication_enabled", False):
+        from common.replicated_ingest import validate_peers
+        validate_peers(cfg["nodes"], cfg["node_id"])
+    if type(cfg.get("hardware_fencing_required", False)) is not bool:
+        raise ValueError("hardware_fencing_required must be boolean")
     cfg["root"] = str(Path(cfg["root"]).resolve())
     cfg["state_dir"] = str(Path(cfg["state_dir"]).resolve())
     token = os.environ.get("PERIMETER_HA_TOKEN", "")

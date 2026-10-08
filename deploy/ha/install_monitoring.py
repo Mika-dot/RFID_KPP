@@ -27,6 +27,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHand
 
 NODES = {"physical": "172.31.0.188", "perimetr": "172.31.0.134", "comparator": "172.31.0.192"}
 LABELS = {"physical": "Физика", "perimetr": "Perimetr", "comparator": "Comparator"}
+OBSERVER_STATUS = "http://127.0.0.1:19153/status"
 MARKER = "Managed by Perimeter HA external observer v1"
 UNIT = "perimeter-ha-monitor.service"
 SCRIPT = Path("/usr/local/lib/perimeter-ha-monitor/monitor.py")
@@ -44,7 +45,9 @@ class NoRedirects(HTTPRedirectHandler):
 def http_json(url, token=None, body=None, method=None, accept_degraded=False, ha_token=None):
     if token and urlsplit(url).netloc != "127.0.0.1:3000":
         raise ValueError("CredentialDestinationRefused")
-    if ha_token and (token or url not in {"http://"+ip+":18200/status" for ip in NODES.values()}):
+    allowed_ha_destinations = {"http://"+ip+":18200/status" for ip in NODES.values()}
+    allowed_ha_destinations.add(OBSERVER_STATUS)
+    if ha_token and (token or url not in allowed_ha_destinations):
         raise ValueError("CredentialDestinationRefused")
     headers = {"Accept": "application/json"}
     if token:
@@ -260,6 +263,19 @@ def proxy_wallboard(source):
             def __init__(self, address, handler, *args, **kwargs):
                 class Handler(handler):
                     def do_GET(self):
+                        if self.path in ("/perimeter-behavior/status","/perimeter-behavior/summary","/perimeter-behavior/metrics"):
+                            try:
+                                value=http_json(OBSERVER_STATUS,ha_token=observer_token())[1]
+                            except Exception:
+                                value={"status":"collector_error","stale":True,"metrics":{}}
+                            if self.path.endswith("/summary"):
+                                value=[{k:v for k,v in value.items() if k not in {"metrics","hypotheses"}}]
+                            elif self.path.endswith("/metrics"):
+                                value=[dict(metric=k,**v) for k,v in value.get("metrics",{}).items()]
+                            raw=json.dumps(value,ensure_ascii=False).encode()
+                            self.send_response(200);self.send_header("Content-Type","application/json")
+                            self.send_header("Content-Length",str(len(raw)));self.send_header("Cache-Control","no-store")
+                            self.end_headers();self.wfile.write(raw);return
                         if self.path not in ("/perimeter-ha/status", "/perimeter-ha/summary", "/perimeter-ha/nodes"):
                             return super().do_GET()
                         route = self.path.removeprefix("/perimeter-ha")

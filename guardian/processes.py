@@ -103,6 +103,12 @@ class Processes:
         env.update(PERIMETER_HA_NODE=self.cfg["node_id"], PERIMETER_HA_EPOCH=str(epoch),
                    PERIMETER_HA_STATE_DIR=self.cfg["state_dir"],
                    PERIMETER_HEALTH_HOST="127.0.0.1", RFID_HEADLESS="1")
+        if self.cfg.get("replication_enabled", False):
+            import json
+            env.update(PERIMETER_REPLICA_ENABLED="1",
+                       PERIMETER_REPLICA_NODES=json.dumps(self.cfg["nodes"]))
+        else:
+            env["PERIMETER_REPLICA_ENABLED"] = "0"
         registry = []
         try:
             for name, (_, script) in SERVICES.items():

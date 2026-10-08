@@ -15,11 +15,26 @@
   "release_dir": "/opt/perimeter/releases",
   "update_poll_sec": 60,
   "lm_base_url": "http://172.31.0.153:49572/v1",
-  "repair_models": ["openai/gpt-oss-20b", "qwen/qwen3-vl-8b"],
+  "repair_models": [
+    "openai/gpt-oss-20b",
+    "qwen/qwen3-vl-8b"
+  ],
   "nodes": [
-    {"id": "physical", "priority": 1, "url": "http://172.31.0.188:18200"},
-    {"id": "perimetr", "priority": 2, "url": "http://perimetr:18200"},
-    {"id": "comparator", "priority": 3, "url": "http://Comparator:18200"}
+    {
+      "id": "physical",
+      "priority": 1,
+      "url": "http://172.31.0.188:18200"
+    },
+    {
+      "id": "perimetr",
+      "priority": 2,
+      "url": "http://perimetr:18200"
+    },
+    {
+      "id": "comparator",
+      "priority": 3,
+      "url": "http://Comparator:18200"
+    }
   ],
   "env": {
     "RFID_SDK_MODE": "wine",
@@ -42,5 +57,9 @@
     "KPP_WEB_HOST": "0.0.0.0",
     "KPP_WEB_PORT": "5050",
     "KPP_WEB_AUTH_REQUIRED": "1"
-  }
+  },
+  "replication_enabled": true,
+  "hardware_fencing_required": false,
+  "probation_sec": 180,
+  "probation_stall_sec": 120
 }

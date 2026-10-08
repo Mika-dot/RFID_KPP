@@ -1,0 +1,125 @@
+{
+  "cutoff_local_export_time": "2026-10-06T18:54:00",
+  "video_inventory": {
+    "archive_crc_verified": true,
+    "archive_crc32": "7b4c2eff",
+    "csv_bytes": 2194669648,
+    "csv_sha256": "c58ae6ce5c36b8f8c3fc70f93eb72fd249142ffa99b0e41cf72096dd9be25183"
+  },
+  "event_inventory": {
+    "filename": "KPP_ReelEvents_202610070935.csv",
+    "bytes": 73843357,
+    "sha256": "27b59dbffd9d977487da87fbdc11367ba364febff27a728e5c7a89845ded1726"
+  },
+  "video_links_inventory": {
+    "filename": "KPP_EventVideoLinks_202610070935.csv",
+    "bytes": 68320,
+    "sha256": "21d0a75f2cb0f983e089361062cf965b464b4918741ebd6e0b11fcd2e59111c4"
+  },
+  "counts": {
+    "changed_known_passage_directions": 0,
+    "distinct_video_refs": 6540,
+    "duplicate_event_ids": 0,
+    "duplicate_event_keys": 0,
+    "event_rows": 61607,
+    "lossy_image_text_rows": 17706,
+    "missing_video_refs": 0,
+    "recent_need_recheck": 5,
+    "recent_rfid_reels": 8,
+    "recent_video_direction_mismatches": 0,
+    "reel_in_with_out_warehouse_flag": 172,
+    "video_rows": 17730,
+    "video_uuid_comparisons": 1202,
+    "video_uuid_mismatches": 0,
+    "warehouse_direction_conflicts": 232
+  },
+  "recent_events": [
+    {
+      "event_id": 71725,
+      "video_id": 920647,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:39:18.163000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": true
+    },
+    {
+      "event_id": 71726,
+      "video_id": 920647,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:39:18.163000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": true
+    },
+    {
+      "event_id": 71733,
+      "video_id": 920648,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:47:43.925000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": true
+    },
+    {
+      "event_id": 71735,
+      "video_id": 920648,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:47:43.925000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": true
+    },
+    {
+      "event_id": 71746,
+      "video_id": 920649,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:54:00.555000",
+      "final_direction": "IN",
+      "warehouse_id": 4411,
+      "warehouse_direction_conflict": true,
+      "need_recheck": false
+    },
+    {
+      "event_id": 71748,
+      "video_id": 920649,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T07:54:00.555000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": false
+    },
+    {
+      "event_id": 71777,
+      "video_id": 920651,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T08:11:01.813000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": false
+    },
+    {
+      "event_id": 71784,
+      "video_id": 920652,
+      "video_found": true,
+      "video_captured_at": "2026-10-07T08:15:49.574000",
+      "final_direction": "IN",
+      "warehouse_id": null,
+      "warehouse_direction_conflict": false,
+      "need_recheck": true
+    }
+  ],
+  "limits": [
+    "offline exports only; no live HTTP, spool or hardware acceptance",
+    "lossy image text is not evidence of damaged SQL VARBINARY",
+    "historical 1C/warehouse tag correctness requires source registry exports",
+    "export filters and source snapshot atomicity are not established",
+    "camera orientation is compared only after the supplied cutoff"
+  ]
+}

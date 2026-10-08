@@ -15,21 +15,8 @@ from guardian.sql import control_odbc
 
 
 def get_json(url, token=None, timeout=3, body=None):
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(url, headers=headers,
-                                 data=json.dumps(body).encode() if body is not None else None)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    try:
-        response = opener.open(req, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        response = e
-    with response:
-        raw = response.read(256*1024 + 1)
-        if len(raw) > 256*1024:
-            raise ValueError("Oversized response")
-        return response.status, json.loads(raw)
+    from guardian.net import json_request
+    return json_request(url, token, timeout=timeout, body=body)
 
 
 def services_health():
@@ -50,6 +37,8 @@ def preflight(cfg, store, active=False):
     try:
         checks["space"] = shutil.disk_usage(cfg["state_dir"]).free >= cfg.get("min_free_bytes", 2*1024**3)
         with store.connect() as conn:
+            if cfg.get("hardware_fencing_required", False):
+                checks["hardware_fence_ledger"] = conn.execute("SELECT OBJECT_ID(N'dbo.KPP_HA_HardwareFence',N'U')").fetchone()[0] is not None
             identity = conn.execute("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')),DB_NAME()").fetchone()
             row = conn.execute("""
 SELECT COUNT(*) FROM sys.triggers WHERE name IN
@@ -82,6 +71,10 @@ SELECT COUNT(*) FROM sys.triggers WHERE name IN
             finally:
                 candidate.close()
         checks["entrypoints"] = all((root / script).is_file() for _, script in SERVICES.values())
+        if cfg.get("hardware_fencing_required", False):
+            checks["hardware_fence_adapters"] = all(
+                isinstance(n.get(key),list) and bool(n[key]) and Path(n[key][0]).is_file()
+                for n in cfg["nodes"] for key in ("fence_argv","unfence_argv"))
         checks["configuration"] = all(env.get(k) for k in (
             "RFID_DB_CONNECTION", "KPP_CONN_STR", "RFID_READER_IP", "RFID_DLL_PATH",
             "SRC_SERVER", "SRC_DATABASE", "SRC_USERNAME", "SRC_PASSWORD",

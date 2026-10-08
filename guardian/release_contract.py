@@ -92,7 +92,43 @@ def verify_business(root):
     unknown = assess(**dict(latched, video_history_complete=False))
     if unknown.status != "unavailable" or unknown.clear_latch:
         raise RuntimeError("CandidateMissingEvidenceDiscardsLatch")
-    return 6
+    # Load exact candidate files, rather than accidentally importing the
+    # installed common package into the protected-check subprocess.
+    def load(relative, name):
+        spec = importlib.util.spec_from_file_location(name, Path(root) / relative)
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[name] = loaded
+        spec.loader.exec_module(loaded)
+        return loaded
+
+    direction = load("common/warehouse_direction.py", "perimeter_candidate_warehouse_direction")
+    resolve_direction = direction.warehouse_direction_fields
+    incoming = resolve_direction({"FinalDirection": "IN", "ConfidencePct": 70,
+        "WarningFlags": "OUT_CONFIRMED_BY_WAREHOUSE", "ConsensusCode": "WEIGHTED_MAJORITY"})
+    if (incoming["FinalDirection"] != "IN" or incoming["ConfidencePct"] != 70
+            or not incoming["WarehouseDirectionConflict"]
+            or "OUT_CONFIRMED_BY_WAREHOUSE" in incoming["WarningFlags"]):
+        raise RuntimeError("CandidateWarehouseOverridesObservedPassage")
+    conflict = resolve_direction({"FinalDirection": "UNKNOWN", "ConfidencePct": 0,
+                                  "ConsensusCode": "CONFLICT"})
+    if conflict["FinalDirection"] != "UNKNOWN" or conflict["ConfidencePct"] != 0:
+        raise RuntimeError("CandidateWarehouseResolvesFusionConflict")
+    missing = resolve_direction({"FinalDirection": "UNKNOWN", "ConsensusCode": "NO_DATA"})
+    if missing["FinalDirection"] != "OUT" or "WAREHOUSE_DIRECTION_INFERRED" not in missing["WarningFlags"]:
+        raise RuntimeError("CandidateWarehouseFallbackLost")
+    outgoing = resolve_direction({"FinalDirection": "OUT", "ConfidencePct": 55})
+    if outgoing["ConfidencePct"] != 55:
+        raise RuntimeError("CandidateWarehouseInflatesObservedConfidence")
+
+    identity = load("common/warehouse_identity.py", "perimeter_candidate_warehouse_identity")
+    tag_a, tag_b = "A" * 48, "B" * 48
+    task = identity.IdentityRecord.from_values(2, at, tag_b, "ID-B", "SERIES")
+    resolved = identity.resolve_warehouse_identity(tag_a, "ID-B", "SERIES", at, [task])
+    if resolved.preferred_tag != tag_a or resolved.task_for_tag(tag_a) is not None:
+        raise RuntimeError("CandidateWarehouseTaskTagMismatch")
+    if resolved.task_for_tag(tag_b) != task:
+        raise RuntimeError("CandidateWarehouseMatchingTaskLost")
+    return 12
 
 
 def main(argv=None):

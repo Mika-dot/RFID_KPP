@@ -17,6 +17,7 @@ from common.warehouse_identity import (  # noqa: E402
     IdentityRecord,
     IdentityResolution,
     MATCH_IDS,
+    MATCH_TAG,
 )
 
 
@@ -128,6 +129,41 @@ class WarehouseAggregatorTests(unittest.TestCase):
         self.assertIn("ISNULL(RfidReadCount,0)>0", query)
         self.assertNotIn("IsReel=1", query)
         self.assertIn("ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'", query)
+
+    def test_direct_tag_enrichment_does_not_fill_task_from_another_tag(self):
+        obj = self.make_aggregator()
+        other_tag = "B" * 24 + "2" * 8
+        other_task = IdentityRecord.from_values(7, self.dt, other_tag, self.guid, "7734/26")
+        resolution = IdentityResolution((IdentityCandidate(self.tag, MATCH_TAG, None),
+            IdentityCandidate(other_tag, MATCH_IDS, other_task)), other_task, MATCH_IDS)
+        obj._resolve_identity = lambda *_args: resolution
+        obj._find_existing_linked_event = lambda *_args: None
+        obj._find_kpp_event = lambda _cur, tag, *_args: 44 if tag == self.tag else None
+        calls = []
+        obj._enrich_existing_event = lambda *args: calls.append(args)
+        obj._supersede_warehouse_only = lambda *_args: None
+        outcome, _ = obj._process_warehouse_row(RecordingCursor(),
+            (101, self.dt, self.tag, self.guid, "7734/26"))
+        self.assertEqual(outcome, "enriched")
+        self.assertIsNone(calls[0][-2])
+        self.assertEqual(calls[0][-1], MATCH_TAG)
+
+    def test_production_warehouse_enrichment_preserves_in_direction_and_confidence(self):
+        obj = self.make_production_aggregator()
+        cur = RecordingCursor(rows=[("IN", 70, "WEIGHTED_MAJORITY",
+                                     "WAREHOUSE_CONFIRMED | OUT_CONFIRMED_BY_WAREHOUSE")])
+        obj._enrich_existing_event(cur, 71746, 4411, self.dt, self.guid, "7734/26", None, MATCH_IDS)
+        _query, values = cur.executions[-1]
+        self.assertEqual(values[:2], ("IN", 70))
+        self.assertIn("WAREHOUSE_DIRECTION_CONFLICT", values[2])
+        self.assertNotIn("OUT_CONFIRMED_BY_WAREHOUSE", values[2])
+        self.assertEqual(values[3], 71746)
+
+    def test_production_warehouse_enrichment_keeps_unresolved_fusion_conflict(self):
+        obj = self.make_production_aggregator()
+        cur = RecordingCursor(rows=[("UNKNOWN", 0, "CONFLICT", "DIRECTION_CONFLICT")])
+        obj._enrich_existing_event(cur, 44, 101, self.dt, self.guid, "7734/26", None, MATCH_IDS)
+        self.assertEqual(cur.executions[-1][1][:2], ("UNKNOWN", 0))
 
 
 if __name__ == "__main__":

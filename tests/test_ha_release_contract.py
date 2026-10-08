@@ -25,10 +25,16 @@ class ReleaseAdmissionTests(unittest.TestCase):
         self.write("guardian/__main__.py", "")
         self.write("guardian/sql.py", 'FENCING_PROTOCOL = 2\nEPOCH_BARRIER = "Perimeter.HA.Epoch"\n')
         self.write(MANIFEST, json.dumps(BASE_FLOOR))
-        source = Path(__file__).parents[1] / "common/business_flow.py"
-        self.write("common/business_flow.py", source.read_text(encoding="utf-8"))
+        for relative in ("common/business_flow.py", "common/warehouse_direction.py", "common/warehouse_identity.py"):
+            source = Path(__file__).parents[1] / relative
+            self.write(relative, source.read_text(encoding="utf-8"))
         self.write("tests/test_candidate.py", "import unittest\nclass Candidate(unittest.TestCase):\n"
                    "    def test_candidate_owned_suite(self):\n        self.assertTrue(True)\n")
+        # Full production source for installed mechanical/replay qualification.
+        source_root = Path(__file__).parents[1]
+        for folder in ("common", "guardian", "KPP", "deploy", "web", "RFID_reader_v4", "RTSP", "DB_RusGard"):
+            for source in (source_root/folder).rglob("*.py"):
+                self.write(str(source.relative_to(source_root)), source.read_text(encoding="utf-8-sig"))
         self.base = self.commit()
         self.cfg = {"root": str(self.repo), "state_dir": str(self.folder / "state"),
                     "update_source": str(self.repo), "release_dir": str(self.folder / "releases"),
@@ -183,7 +189,28 @@ class ReleaseAdmissionTests(unittest.TestCase):
             restarted.stage()
 
     def test_installed_business_checks_keep_both_factory_hotfixes(self):
-        self.assertEqual(6, verify_business(self.repo))
+        self.assertEqual(12, verify_business(self.repo))
+
+    def test_candidate_green_suite_cannot_hide_wrong_warehouse_direction(self):
+        path = self.repo / "common/warehouse_direction.py"
+        self.write("common/warehouse_direction.py", path.read_text(encoding="utf-8") +
+                   '\n_original = warehouse_direction_fields\ndef warehouse_direction_fields(record):\n'
+                   '    result = _original(record)\n    result["FinalDirection"] = "OUT"\n    return result\n')
+        sha = self.candidate()
+        with patch("guardian.update.preflight") as preflight:
+            with self.assertRaisesRegex(RuntimeError, "CandidateProtectedBusinessChecksFailed"):
+                self.updates.stage()
+        preflight.assert_not_called()
+        self.assertIn(sha, self.updates.quarantined)
+
+    def test_candidate_green_suite_cannot_borrow_another_tags_task(self):
+        path = self.repo / "common/warehouse_identity.py"
+        self.write("common/warehouse_identity.py", path.read_text(encoding="utf-8") +
+                   '\nIdentityResolution.task_for_tag = lambda self, tag: self.primary_task\n')
+        sha = self.candidate()
+        with self.assertRaisesRegex(RuntimeError, "CandidateProtectedBusinessChecksFailed"):
+            self.updates.stage()
+        self.assertIn(sha, self.updates.quarantined)
 
 
 if __name__ == "__main__":

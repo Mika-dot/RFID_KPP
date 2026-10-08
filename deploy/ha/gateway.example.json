@@ -1,0 +1,24 @@
+{
+  "listen": "0.0.0.0",
+  "port": 5051,
+  "nodes": [
+    {
+      "id": "physical",
+      "priority": 1,
+      "url": "http://172.31.0.188:18200",
+      "web_url": "http://172.31.0.188:5050"
+    },
+    {
+      "id": "perimetr",
+      "priority": 2,
+      "url": "http://172.31.0.134:18200",
+      "web_url": "http://172.31.0.134:5050"
+    },
+    {
+      "id": "comparator",
+      "priority": 3,
+      "url": "http://172.31.0.192:18200",
+      "web_url": "http://172.31.0.192:5050"
+    }
+  ]
+}

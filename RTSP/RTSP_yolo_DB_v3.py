@@ -442,6 +442,7 @@ CREATE TABLE IF NOT EXISTS events(
 )
 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS events_delivery_state ON events(state,next_attempt)")
         self.maintenance()
 
     @contextmanager
@@ -534,6 +535,8 @@ class DBWriter(threading.Thread):
     def __init__(self, spool: DurableEventSpool) -> None:
         super().__init__(name="video-db-writer", daemon=True)
         self.spool = spool
+        from common.replicated_ingest import ReplicatedDelivery
+        self.replication = ReplicatedDelivery.from_env()
         self.running = True
         self.sent_since_maintenance = 0
         self.delivered_total = 0
@@ -551,8 +554,10 @@ class DBWriter(threading.Thread):
                 continue
             event_uuid, payload, image, attempts = item
             try:
+                copied = self.replication.ensure("video", payload, image)
                 self.insert(payload, image)
                 self.spool.mark_sent(event_uuid)
+                self.replication.committed(copied)
                 self.delivered_total += 1
                 self.last_success_at = datetime.now()
                 self.sent_since_maintenance += 1
