@@ -41,6 +41,17 @@ class InstallationTests(unittest.TestCase):
         bad=dict(panels=[dict(id=191530,description="other owner")])
         with self.assertRaises(RuntimeError):module.panels(bad)
 
+    def test_behavior_summary_uses_existing_wallboard_proxy(self):
+        module=load("finish_behavior_monitoring")
+        calls=[]
+        class Monitor:
+            def http_json(self, url):
+                calls.append(url)
+                return 200, [{"status":"collecting_baseline", "stale":False}]
+        summary=module.read_behavior_summary(Monitor())
+        self.assertEqual("collecting_baseline", summary[0]["status"])
+        self.assertEqual([module.BASE+"/summary"], calls)
+
     def test_read_only_installation_probe_accepts_one_executor_two_passive_reserves(self):
         module=load("verify_resilience_installation")
         cfg=json.loads((ROOT/"deploy/ha/gateway.example.json").read_text())

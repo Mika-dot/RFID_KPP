@@ -102,11 +102,19 @@ class Controller:
                         fence_previous(self.cfg, nid, fence_epoch)
                         self.store.confirm_fence(nid, fence_epoch)
                     fenced = self.store.lease()
-                    allow_target(self.cfg, chosen, fenced["epoch"])
+                    # The subsequent owner grant advances the SQL epoch once
+                    # more. Authorize the epoch that the target will actually
+                    # receive; authorizing ``fenced["epoch"]`` leaves a
+                    # hardware receipt bound to the demoted-owner epoch.
+                    target_epoch = fenced["epoch"] + 1
+                    allow_target(self.cfg, chosen, target_epoch)
                 if not self.store.claim_controller():
                     return
                 self.store.grant(chosen)
                 assigned = self.store.lease()
+                if (self.cfg.get("hardware_fencing_required", False)
+                        and assigned["epoch"] != target_epoch):
+                    raise RuntimeError("HardwareFenceEpochMismatch")
                 self.handoff = (chosen, assigned["epoch"])
                 self.telemetry.event("handoff_granted", target=chosen, epoch=assigned["epoch"])
                 if hasattr(self.policy, "proven"):

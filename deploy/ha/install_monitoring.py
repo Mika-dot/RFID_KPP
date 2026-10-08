@@ -27,6 +27,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHand
 
 NODES = {"physical": "172.31.0.188", "perimetr": "172.31.0.134", "comparator": "172.31.0.192"}
 LABELS = {"physical": "Физика", "perimetr": "Perimetr", "comparator": "Comparator"}
+OBSERVER_STATUS = "http://127.0.0.1:19153/status"
 MARKER = "Managed by Perimeter HA external observer v1"
 UNIT = "perimeter-ha-monitor.service"
 SCRIPT = Path("/usr/local/lib/perimeter-ha-monitor/monitor.py")
@@ -44,7 +45,9 @@ class NoRedirects(HTTPRedirectHandler):
 def http_json(url, token=None, body=None, method=None, accept_degraded=False, ha_token=None):
     if token and urlsplit(url).netloc != "127.0.0.1:3000":
         raise ValueError("CredentialDestinationRefused")
-    if ha_token and (token or url not in {"http://"+ip+":18200/status" for ip in NODES.values()}):
+    allowed_ha_destinations = {"http://"+ip+":18200/status" for ip in NODES.values()}
+    allowed_ha_destinations.add(OBSERVER_STATUS)
+    if ha_token and (token or url not in allowed_ha_destinations):
         raise ValueError("CredentialDestinationRefused")
     headers = {"Accept": "application/json"}
     if token:
@@ -262,7 +265,7 @@ def proxy_wallboard(source):
                     def do_GET(self):
                         if self.path in ("/perimeter-behavior/status","/perimeter-behavior/summary","/perimeter-behavior/metrics"):
                             try:
-                                value=http_json("http://127.0.0.1:19153/status",ha_token=observer_token())[1]
+                                value=http_json(OBSERVER_STATUS,ha_token=observer_token())[1]
                             except Exception:
                                 value={"status":"collector_error","stale":True,"metrics":{}}
                             if self.path.endswith("/summary"):

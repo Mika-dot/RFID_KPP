@@ -37,6 +37,23 @@ class ControllerTests(unittest.TestCase):
         controller.tick()
         self.assertEqual([None,"perimetr"],[c.args[0] for c in store.grant.call_args_list])
 
+    @patch.dict("os.environ",{"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_hardware_target_receipt_matches_new_owner_epoch(self,get):
+        controller,store=self.build()
+        controller.cfg["hardware_fencing_required"] = True
+        store.lease.side_effect=[
+            {"owner":"physical","valid":True,"enabled":True,"age":200,"epoch":10},
+            {"owner":None,"valid":False,"enabled":True,"age":0,"epoch":11},
+            {"owner":"perimetr","valid":True,"enabled":True,"age":0,"epoch":12},
+        ]
+        store.pending_fences.return_value=[]
+        store.claim_controller.return_value=True
+        controller.poll=lambda node:(node["id"],{} if node["id"]=="physical" else {"prepared":True})
+        with patch("guardian.hardware_fence.allow_target") as allow:
+            controller.tick()
+        allow.assert_called_once_with(controller.cfg,"perimetr",12)
+
     def test_no_valid_reserve_means_no_new_owner(self):
         controller,store=self.build()
         controller.poll=lambda node:(node["id"],{})

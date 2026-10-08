@@ -17,7 +17,7 @@ from urllib.error import HTTPError
 
 from common.replicated_ingest import ReplicaJournal, ReplicatedDelivery, envelope, replay_local
 from gateway.server import Router, create_server
-from guardian.node import Node
+from guardian.node import Node, advance_replica_cursor
 from guardian.probation import BusinessProbation
 from guardian.recovery import RecoveryTimings
 from observer.behavior import BehaviorObserver, cross_source, hypotheses
@@ -61,6 +61,14 @@ class ReplicaTests(unittest.TestCase):
         self.assertEqual(1,len(self.calls))
         restarted=ReplicaJournal(self.root/"perimetr.sqlite","perimetr")
         self.assertEqual(record,restarted.page()["items"][0]["record"])
+
+    def test_empty_peer_page_keeps_high_water_cursor(self):
+        cursors={"perimetr": 240}
+        advance_replica_cursor(cursors, "perimetr", {"items": [], "cursor": 240})
+        self.assertEqual(240, cursors["perimetr"])
+        with self.assertRaisesRegex(ValueError, "CursorRegression"):
+            advance_replica_cursor(cursors, "perimetr", {"items": [], "cursor": 0})
+        self.assertEqual(240, cursors["perimetr"])
 
     def test_lost_origin_disk_recovers_original_uuid_time_tid_and_sequence(self):
         from RFID_reader_v4.rfid_to_sql_v4 import Spool

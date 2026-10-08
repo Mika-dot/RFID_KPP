@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 SPEC = importlib.util.spec_from_file_location("ha_monitor_install", Path(__file__).parents[1] / "deploy/ha/install_monitoring.py")
 m = importlib.util.module_from_spec(SPEC)
@@ -128,6 +128,14 @@ class MonitorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CredentialDestinationRefused"):
             m.http_json("http://127.0.0.1:3000", ha_token="ha-secret")
         self.assertIsNone(m.NoRedirects().redirect_request(None, None, 302, "", {}, "http://external.invalid"))
+
+    def test_observer_token_can_reach_local_behavior_service(self):
+        response=MagicMock();response.__enter__.return_value=response
+        response.code=200;response.read.return_value=b"{}"
+        opener=Mock();opener.open.return_value=response
+        with patch.object(m, "build_opener", return_value=opener):
+            code, payload=m.http_json(m.OBSERVER_STATUS, ha_token="a"*64)
+        self.assertEqual((200, {}), (code, payload))
 
     def test_dashboard_update_preserves_existing_panels_and_is_idempotent(self):
         original = {"uid": "existing", "version": 16, "panels": [{"id": 900, "type": "volkovlabs-echarts-panel", "options": {"script": "original"}, "gridPos": {"x": 0, "y": 0, "w": 24, "h": 28}}]}

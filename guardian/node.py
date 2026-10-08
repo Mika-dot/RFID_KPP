@@ -17,6 +17,23 @@ from guardian.sql import FENCING_PROTOCOL
 from guardian.update import Updates
 
 
+def advance_replica_cursor(cursors, peer_id, page):
+    """Keep a peer's high-water cursor across empty replica pages.
+
+    A peer may legitimately return an empty page at the current cursor. A
+    cursor reset would rescan the journal from zero on every poll and can
+    prevent recovery from reaching new records. Reject regressions while
+    preserving the last known cursor when a stale/invalid response is seen.
+    """
+    if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+        raise ValueError("InvalidReplicaPage")
+    cursor = page.get("cursor")
+    current = cursors.get(peer_id, 0)
+    if type(cursor) is not int or cursor < current:
+        raise ValueError("ReplicaCursorRegression")
+    cursors[peer_id] = cursor
+
+
 class Node:
     def __init__(self, cfg, store, telemetry, stop):
         self.cfg, self.store, self.telemetry, self.stop = cfg, store, telemetry, stop
@@ -149,7 +166,7 @@ class Node:
                                     if item["state"] == "SENT":
                                         r = item["record"]
                                         self.replica.sent(r["stream"], r["uuid"], r["digest"])
-                                cursors[peer["id"]] = data["cursor"] if data["items"] else 0
+                                advance_replica_cursor(cursors, peer["id"], data)
                             except Exception:
                                 continue
                         # SQL/role may have changed during peer I/O; recheck.

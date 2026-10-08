@@ -18,6 +18,14 @@ BASE="http://127.0.0.1:19150/perimeter-behavior"
 DS={"type":"yesoreyeram-infinity-datasource","uid":"wallboard-api"}
 
 
+def read_behavior_summary(monitor):
+    """Read the observer through the existing wallboard proxy contract."""
+    code, summary = monitor.http_json(BASE+"/summary")
+    if code != 200 or not isinstance(summary, list) or not summary or not isinstance(summary[0], dict):
+        raise RuntimeError("BehaviorBackendUnavailable")
+    return summary
+
+
 def panels(dashboard):
     d=copy.deepcopy(dashboard);old=d.get("panels",[]);ids={191530,191531,191532}
     if any(p.get("id") in ids and p.get("description")!=MARKER for p in old):
@@ -47,7 +55,7 @@ def apply():
     if code!=200 or not response.get("meta",{}).get("canSave"):raise RuntimeError("ExistingDashboardNotWritable")
     original=response["dashboard"];updated=panels(original)
     # Require real observer data before publishing panels.
-    _,summary=monitor.http_json(BASE+"/summary")
+    summary=read_behavior_summary(monitor)
     if not summary or summary[0].get("stale") or summary[0].get("status")=="collector_error":raise RuntimeError("BehaviorBackendUnavailable")
     folder=Path("/var/lib/perimeter-ha-monitor/backups")/("behavior-"+uuid.uuid4().hex);folder.mkdir(parents=True,mode=0o700)
     file=folder/"dashboard.json";file.write_text(json.dumps(original),encoding="utf-8");file.chmod(0o600)
