@@ -24,6 +24,58 @@ class Controller:
         except Exception:
             return node["id"], {}
 
+    def _rollback_hardware_handoff(self, chosen, assigned_epoch=None):
+        """Fail closed if the new owner cannot be given reader access.
+
+        The SQL lease is committed before the external unfence call so the
+        receipt is bound to the actual owner epoch.  If that call fails, clear
+        the lease, persist a fence obligation for the candidate, and make a
+        best-effort immediate fence.  The durable obligation is retried on the
+        next controller cycle or after restart; the candidate is quarantined
+        so it cannot be selected again before repair.
+        """
+        from guardian.hardware_fence import fence_previous
+
+        rollback_epoch = None
+        try:
+            self.store.grant(None, fence_previous=chosen)
+            for node_id, fence_epoch in self.store.pending_fences():
+                if node_id != chosen:
+                    continue
+                rollback_epoch = fence_epoch
+                try:
+                    fence_previous(self.cfg, node_id, fence_epoch)
+                    self.store.confirm_fence(node_id, fence_epoch)
+                except Exception as exc:
+                    self.telemetry.event("hardware_fence_pending", target=node_id,
+                                         epoch=fence_epoch, error=type(exc).__name__)
+        except Exception as exc:
+            self.telemetry.event("hardware_handoff_rollback_error", target=chosen,
+                                 error=type(exc).__name__)
+            # If SQL rollback itself failed, still try the external fence with
+            # the next epoch.  This is best effort; SQL retry remains the
+            # authority when the controller regains its lease.
+            if assigned_epoch is not None:
+                try:
+                    fence_previous(self.cfg, chosen, int(assigned_epoch) + 1)
+                except Exception as fence_exc:
+                    self.telemetry.event("hardware_fence_pending", target=chosen,
+                                         epoch=int(assigned_epoch) + 1,
+                                         error=type(fence_exc).__name__)
+        try:
+            self.store.fault(chosen)
+        except Exception as exc:
+            self.telemetry.event("hardware_handoff_quarantine_error", target=chosen,
+                                 error=type(exc).__name__)
+        try:
+            node = next(n for n in self.cfg["nodes"] if n["id"] == chosen)
+            get_json(node["url"].rstrip("/") + "/demote", os.environ["PERIMETER_HA_TOKEN"],
+                     timeout=8, body={})
+        except Exception:
+            pass
+        self.telemetry.event("hardware_handoff_rolled_back", target=chosen,
+                             epoch=rollback_epoch if rollback_epoch is not None else assigned_epoch)
+
     def run(self):
         while not self.stop.is_set():
             try:
@@ -95,26 +147,28 @@ class Controller:
                 except Exception:
                     pass
             if chosen:
+                hardware_required = self.cfg.get("hardware_fencing_required", False)
                 if self.cfg.get("hardware_fencing_required", False):
-                    from guardian.hardware_fence import fence_previous, allow_target
+                    from guardian.hardware_fence import fence_previous
                     # A failed fence survives controller restart and owner=None.
                     for nid, fence_epoch in self.store.pending_fences():
                         fence_previous(self.cfg, nid, fence_epoch)
                         self.store.confirm_fence(nid, fence_epoch)
-                    fenced = self.store.lease()
-                    # The subsequent owner grant advances the SQL epoch once
-                    # more. Authorize the epoch that the target will actually
-                    # receive; authorizing ``fenced["epoch"]`` leaves a
-                    # hardware receipt bound to the demoted-owner epoch.
-                    target_epoch = fenced["epoch"] + 1
-                    allow_target(self.cfg, chosen, target_epoch)
                 if not self.store.claim_controller():
                     return
                 self.store.grant(chosen)
                 assigned = self.store.lease()
-                if (self.cfg.get("hardware_fencing_required", False)
-                        and assigned["epoch"] != target_epoch):
-                    raise RuntimeError("HardwareFenceEpochMismatch")
+                if hardware_required:
+                    from guardian.hardware_fence import allow_target
+                    try:
+                        if assigned.get("owner") != chosen or not assigned.get("valid"):
+                            raise RuntimeError("HardwareFenceLeaseMismatch")
+                        # Authorize only after SQL has committed the new owner;
+                        # the receipt must carry that committed epoch.
+                        allow_target(self.cfg, chosen, assigned["epoch"])
+                    except Exception:
+                        self._rollback_hardware_handoff(chosen, assigned.get("epoch"))
+                        raise
                 self.handoff = (chosen, assigned["epoch"])
                 self.telemetry.event("handoff_granted", target=chosen, epoch=assigned["epoch"])
                 if hasattr(self.policy, "proven"):
