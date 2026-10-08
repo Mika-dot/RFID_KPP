@@ -49,6 +49,7 @@ class Node:
                                      if self.operator_path.exists() else False)
         self.restart_requested = False
         self.last_sample = 0
+        self.controller_status = {"owner": None, "valid": False, "at": 0}
         self.resources = {}
         self.preflight_at = 0
         self.preflight_result = {"ok": False, "checks": {"starting": False}}
@@ -61,6 +62,18 @@ class Node:
                        "prepared": False, "epoch": 0, "faulted": False}
         self.rate_path = Path(cfg["state_dir"]) / "repair-rate.json"
         self.replica = None
+        self.fallback = None
+        self.mirror = None
+        self.mirror_status = {"enabled": False}
+        self.last_mirror_sync = 0
+        if cfg.get("fallback_enabled", False):
+            from common.fallback_store import FallbackStore
+            from common.metadata_mirror import MetadataMirror
+            self.fallback = FallbackStore(Path(cfg["state_dir"]) / "fallback.sqlite",
+                                          cfg.get("fallback_retention_days", 93))
+            self.mirror = MetadataMirror(Path(cfg["state_dir"]) / "metadata.sqlite",
+                                         cfg.get("fallback_retention_days", 93))
+            self.mirror_status = {"enabled": True, **self.mirror.stats()}
         self.bus_metrics = {}
         self.bus_metrics_at = 0
         from guardian.probation import BusinessProbation
@@ -84,6 +97,12 @@ class Node:
             result["fencing_protocol"] = FENCING_PROTOCOL
             result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
             result["replication_enabled"] = getattr(self, "replica", None) is not None
+            result["fallback_enabled"] = getattr(self, "fallback", None) is not None
+            result["metadata_mirror"] = dict(getattr(self, "mirror_status", {"enabled": False}))
+            result["controller"] = dict(getattr(self, "controller_status", {"owner": None, "valid": False, "at": 0}))
+            env = dict(os.environ, **getattr(self, "cfg", {}).get("env", {}))
+            result["correlation"] = {"mode": env.get("KPP_ADAPTIVE_WINDOWS_MODE", "shadow")
+                                     if env.get("KPP_ADAPTIVE_WINDOWS_ENABLED", "0") == "1" else "off"}
             result["bus_metrics"] = dict(getattr(self, "bus_metrics", {}))
             result["bus_sample_age"] = time.monotonic()-getattr(self, "bus_metrics_at", 0)
             counts=getattr(self.telemetry,"kind_counts",{})
@@ -93,6 +112,53 @@ class Node:
             if self.stop.is_set() or self.maintenance or result["operator_maintenance"]:
                 result.update(prepared=False, healthy=False)
             return result
+
+    def archive_replica(self, record, committed=False):
+        """Keep peer metadata for 93 days without carrying images into the cache."""
+        fallback = getattr(self, "fallback", None)
+        if fallback is not None:
+            saved = fallback.put(record["stream"], record["uuid"], record["payload"])
+            if committed:
+                fallback.mark_committed(record["stream"], record["uuid"], saved["digest"])
+
+    def sync_mirror(self):
+        mirror = getattr(self, "mirror", None)
+        if mirror is None or time.monotonic() - getattr(self, "last_mirror_sync", 0) < 60:
+            return
+        self.last_mirror_sync = time.monotonic()
+        try:
+            status = self.store.controller_status()
+            if isinstance(status, dict):
+                with self.lock:
+                    self.controller_status = {**status, "at": time.time()}
+        except Exception:
+            with self.lock:
+                self.controller_status = {"owner": None, "valid": False, "at": time.time()}
+        from observer.mirror import sync_metadata
+        error = None
+        try:
+            sync_metadata(mirror, batch_size=self.cfg.get("mirror_batch_size", 500))
+        except Exception as exc:
+            error = type(exc).__name__
+            self.telemetry.event("mirror_sync_error", error=error)
+        with self.lock:
+            self.mirror_status = {"enabled": True, **mirror.stats(), "error": error}
+
+    def recent_events(self):
+        mirror = getattr(self, "mirror", None)
+        if mirror is None:
+            return {"configured": False, "source": "unconfigured", "stale": True, "events": []}
+        stats = mirror.stats()
+        info = stats["streams"].get("events", {})
+        events = mirror.recent("events", 20)
+        for event in events:
+            warehouse = mirror.lookup("warehouse", event.get("WarehouseId")) if event.get("WarehouseId") else None
+            if warehouse:
+                event["SeriesNumber"] = warehouse.get("SeriesNumber")
+        return {"configured": True, "source": "local_metadata_mirror", "node": self.cfg["node_id"],
+                "at": info.get("synced_at"), "stale": info.get("age_sec", 999999) > 130 or bool(self.mirror_status.get("error")),
+                "caught_up": info.get("caught_up", False), "events": events,
+                "counts": mirror.counts_24h() if info.get("caught_up") else {}}
 
     def diagnostics(self):
         # A read-only endpoint must remain available on the active executor.
@@ -143,6 +209,14 @@ class Node:
                     metrics[stream+"_oldest_pending_sec"] = max(0, (datetime.now()-datetime.fromisoformat(oldest)).total_seconds()) if oldest else 0
                 except Exception:
                     continue
+            fallback = getattr(self, "fallback", None)
+            if fallback is not None:
+                try:
+                    metrics.update({"fallback_" + key: value for key, value in fallback.stats().items()})
+                    fallback.maintenance()
+                except Exception as exc:
+                    self.telemetry.event("fallback_error", error=type(exc).__name__)
+            self.sync_mirror()
             with self.lock:
                 self.bus_metrics = metrics
                 self.bus_metrics_at = time.monotonic()
@@ -163,6 +237,7 @@ class Node:
                                     if item["state"] not in {"PENDING", "SENT"}:
                                         raise ValueError("InvalidReplicaState")
                                     self.replica.put(item["record"])
+                                    self.archive_replica(item["record"], item["state"] == "SENT")
                                     if item["state"] == "SENT":
                                         r = item["record"]
                                         self.replica.sent(r["stream"], r["uuid"], r["digest"])
@@ -398,6 +473,10 @@ class Node:
                     return self.send(200, node.diagnostics())
                 if self.path == "/replica/stats" and getattr(node, "replica", None) is not None:
                     return self.send(200, node.replica.stats())
+                if self.path == "/fallback/stats" and getattr(node, "fallback", None) is not None:
+                    return self.send(200, node.fallback.stats())
+                if self.path == "/events/recent":
+                    return self.send(200, node.recent_events())
                 if self.path.startswith("/replica/page?") and getattr(node, "replica", None) is not None:
                     from urllib.parse import parse_qs, urlsplit
                     try:
@@ -424,10 +503,14 @@ class Node:
                             import shutil
                             if shutil.disk_usage(node.cfg["state_dir"]).free < node.cfg.get("replica_min_free_bytes", 128*1024*1024):
                                 raise RuntimeError("ReplicaDiskFull")
-                            return self.send(200, node.replica.put(data))
+                            receipt = node.replica.put(data)
+                            node.archive_replica(data)
+                            return self.send(200, receipt)
                         if set(data) != {"stream", "uuid", "digest"}:
                             raise ValueError("InvalidReplicaCommit")
                         node.replica.sent(data["stream"], data["uuid"], data["digest"])
+                        record = node.replica.get(data["stream"], data["uuid"])
+                        node.archive_replica(record, committed=True)
                         return self.send(200, {"committed": True})
                     if self.path == "/repair" and set(data) == {"action", "service"}:
                         return self.send(200, node.repair(data["action"], data["service"]))

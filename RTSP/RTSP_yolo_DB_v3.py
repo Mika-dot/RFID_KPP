@@ -556,8 +556,8 @@ class DBWriter(threading.Thread):
             try:
                 copied = self.replication.ensure("video", payload, image)
                 self.insert(payload, image)
-                self.spool.mark_sent(event_uuid)
                 self.replication.committed(copied)
+                self.spool.mark_sent(event_uuid)
                 self.delivered_total += 1
                 self.last_success_at = datetime.now()
                 self.sent_since_maintenance += 1

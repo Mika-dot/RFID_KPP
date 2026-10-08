@@ -256,8 +256,8 @@ END
                         quality,
                     )
                     conn.commit()
-                self.spool.mark_sent(client_uuid)
                 self.replication.committed(copied)
+                self.spool.mark_sent(client_uuid)
                 self.delivered_total += 1
                 self.last_success_at = datetime.now()
                 self.last_error = ""

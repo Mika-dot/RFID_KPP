@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,7 @@ from common.warehouse_identity import (  # noqa: E402
     MATCH_IDS,
     MATCH_TAG,
 )
+from common.adaptive_windows import AdaptiveWindowModel, TravelObservation  # noqa: E402
 
 
 class RecordingCursor:
@@ -119,6 +120,66 @@ class WarehouseAggregatorTests(unittest.TestCase):
         self.assertIn("ISNULL(RfidReadCount,0)>0", query)
         self.assertNotIn("IsReel=1", query)
         self.assertIn("ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'", query)
+
+    def test_adaptive_profile_searches_backwards_from_warehouse_time(self):
+        obj = self.make_production_aggregator()
+        obj.ADAPTIVE_WINDOWS_ENABLED = True
+        obj.ADAPTIVE_WINDOWS_MODE = "active"
+        obj.adaptive_windows = AdaptiveWindowModel(min_samples=1, margin_sec=0)
+        obj.accepted_windows = obj.adaptive_windows
+        obj.adaptive_windows.observe(
+            TravelObservation(
+                self.dt - timedelta(seconds=300),
+                self.dt,
+                event_id=1,
+                warehouse_id=101,
+            )
+        )
+        cur = RecordingCursor(rows=[(44,)])
+        self.assertEqual(44, obj._find_kpp_event(cur, self.tag, self.dt, 101))
+        _query, params = cur.executions[0]
+        self.assertEqual(params[0], self.tag)
+        self.assertEqual(params[1], 101)
+        self.assertLessEqual(params[2], self.dt - timedelta(seconds=300))
+        self.assertLessEqual(params[3], self.dt)
+        self.assertGreater(params[3], self.dt - timedelta(seconds=361))
+
+    def test_shadow_learns_without_narrowing_the_production_window(self):
+        obj = self.make_production_aggregator()
+        obj.ADAPTIVE_WINDOWS_ENABLED = True
+        obj.ADAPTIVE_WINDOWS_MODE = "shadow"
+        obj.adaptive_windows = AdaptiveWindowModel(min_samples=1)
+        obj.adaptive_windows.observe(TravelObservation(self.dt - timedelta(seconds=300), self.dt))
+        start, end = obj._warehouse_search_interval(self.dt)
+        self.assertEqual(self.dt - timedelta(hours=24), start)
+        self.assertEqual(self.dt + timedelta(hours=24), end)
+
+    def test_retrospective_raw_evidence_does_not_claim_a_physical_passage(self):
+        obj = self.make_production_aggregator()
+        obj.ADAPTIVE_WINDOWS_ENABLED = True
+        obj.ADAPTIVE_WINDOWS_MODE = "shadow"
+        obj.adaptive_windows = AdaptiveWindowModel(min_samples=1)
+        raw_at = self.dt - timedelta(hours=25)
+        cur = RecordingCursor(rows=[(99, raw_at, 2, -51.0)])
+        evidence = obj._retrospective_evidence(cur, self.tag, self.dt)
+        self.assertEqual(1, evidence["outside_legacy_window"])
+        self.assertFalse(evidence["physical_passage_confirmed"])
+        self.assertFalse(evidence["learning_eligible"])
+        query, _params = cur.executions[0]
+        self.assertTrue(query.lstrip().startswith("SELECT"))
+
+    def test_active_link_records_that_it_must_not_train_the_next_profile(self):
+        obj = self.make_aggregator()
+        obj.ADAPTIVE_WINDOWS_ENABLED = True
+        obj.ADAPTIVE_WINDOWS_MODE = "active"
+        obj.accepted_windows = AdaptiveWindowModel(min_samples=1)
+        obj.accepted_windows.observe(TravelObservation(self.dt - timedelta(seconds=300), self.dt))
+        cur = RecordingCursor(rows=[(44,)])
+        obj._find_kpp_event(cur, self.tag, self.dt, 101)
+        obj._enrich_existing_event(cur, 44, 101, self.dt, self.guid, "7734/26", None, MATCH_TAG)
+        evidence = __import__("json").loads(cur.executions[-1][1][-2])
+        self.assertTrue(evidence["adaptive_match"])
+        self.assertFalse(evidence["learning_eligible"])
 
     def test_production_existing_link_accepts_unknown_rfid_but_not_synthetic(self):
         obj = self.make_production_aggregator()

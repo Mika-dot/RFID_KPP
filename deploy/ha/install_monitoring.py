@@ -46,6 +46,7 @@ def http_json(url, token=None, body=None, method=None, accept_degraded=False, ha
     if token and urlsplit(url).netloc != "127.0.0.1:3000":
         raise ValueError("CredentialDestinationRefused")
     allowed_ha_destinations = {"http://"+ip+":18200/status" for ip in NODES.values()}
+    allowed_ha_destinations.update("http://" + ip + ":18200/events/recent" for ip in NODES.values())
     allowed_ha_destinations.add(OBSERVER_STATUS)
     if ha_token and (token or url not in allowed_ha_destinations):
         raise ValueError("CredentialDestinationRefused")
@@ -123,6 +124,7 @@ def probe(pair):
             sha = full.get("release_sha", "")
             result["release"] = sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else "НЕИЗВЕСТНО"
             age = full.get("sample_age")
+            result["snapshot_fresh"] = type(age) in (int, float) and 0 <= age <= 10
             if type(age) not in (int, float) or not 0 <= age <= 20:
                 result.update(severity=2 if result["active"] else 1, detail="Снимок агента устарел")
             elif not result["healthy"] and result["active"]:
@@ -134,6 +136,23 @@ def probe(pair):
                 result["detail"] += "; preflight: " + ", ".join(failed)
             detail = full.get("services", {}).get("RfidReader", {}).get("detail", {})
             result["business_level"], result["business"] = business_status(detail)
+            result["services"] = {}
+            for name in ("RfidReader", "RusGuardSync", "Yolo", "Aggregator", "WebDashboard"):
+                service = full.get("services", {}).get(name, {})
+                dependencies = service.get("detail", {}).get("dependencies", {})
+                result["services"][name] = {
+                    "ok": service.get("ok") is True,
+                    "observed": "ok" in service,
+                    "dependencies": {key: value.get("status", "unknown") for key, value in dependencies.items()
+                                     if isinstance(value, dict)},
+                }
+            result["bus"] = {key: value for key, value in full.get("bus_metrics", {}).items()
+                             if type(value) in (int, float) and value >= 0}
+            result["bus_age"] = full.get("bus_sample_age", 999999)
+            result["mirror"] = full.get("metadata_mirror", {"enabled": False})
+            result["controller"] = full.get("controller", {})
+            result["update"] = full.get("update", {})
+            result["correlation"] = full.get("correlation", {})
     except Exception as exc:
         result["severity"] = 2 if result["active"] else 1
         result["detail"] = error_code(exc)
@@ -202,16 +221,163 @@ def collect():
         business = (owner["business_level"], owner["business"]) if "business_level" in owner else business_probe(owner["node"])
     else:
         business = (1, "Нет готового ведущего")
-    return summarize(nodes, business)
+    data = summarize(nodes, business)
+    try:
+        code, health = http_json("http://" + NODES["comparator"] + ":5051/health/ready", accept_degraded=True)
+        data["gateway"] = {"ready": code == 200 and health.get("status") == "ok", "observed": True}
+    except Exception:
+        data["gateway"] = {"ready": False, "observed": False}
+    token = observer_token()
+    data["recent"] = {"configured": False, "stale": True, "events": []}
+    if token:
+        def fetch_recent(pair):
+            node, ip = pair
+            try:
+                code, value = http_json("http://" + ip + ":18200/events/recent", ha_token=token)
+                if (code == 200 and value.get("configured") is True and value.get("node") == node
+                        and type(value.get("at")) in (int, float) and isinstance(value.get("events"), list)):
+                    return value
+            except Exception:
+                pass
+            return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            available = [value for value in pool.map(fetch_recent, NODES.items()) if value]
+        if available:
+            data["recent"] = max(available, key=lambda value: value["at"])
+    recent = data["recent"]
+    for key in ("in_24h", "out_24h", "warehouse_only_24h", "recheck_24h"):
+        data[key] = recent.get("counts", {}).get(key) if not recent.get("stale", True) and recent.get("caught_up") else None
+    return data
 
 
 def freshness(data, now=None):
     value = copy.deepcopy(data)
     if (time.time() if now is None else now) - value["timestamp"] > 25:
+        value["stale"] = True
         value.update(severity=2, detail="Данные наблюдателя устарели", business_level=1, business="НЕИЗВЕСТНО")
         for node in value["nodes"].values():
             node.update(severity=2, role="НЕИЗВЕСТНО", detail="Устаревшие данные")
+        if "recent" in value:
+            value["recent"]["stale"] = True
     return value
+
+
+def queue_rows(data):
+    output = []
+    for node in NODES:
+        value = data["nodes"].get(node, {})
+        fresh = not data.get("stale") and value.get("snapshot_fresh") and value.get("bus_age", 999999) <= 15
+        bus = value.get("bus", {}) if fresh else {}
+        mirror = value.get("mirror", {})
+        streams = mirror.get("streams", {})
+        output.append({"node": LABELS[node], "role": value.get("role", "НЕИЗВЕСТНО"),
+                       "rfid": bus.get("rfid_pending"), "video": bus.get("video_pending"),
+                       "fallback_pending": bus.get("fallback_pending"),
+                       "archive_records": bus.get("fallback_records"),
+                       "cache_days": mirror.get("retention_days") if mirror.get("enabled") else None,
+                       "cache_rows": sum(row.get("records", 0) for row in streams.values()) if streams else None,
+                       "cache_age": max((row.get("age_sec", 999999) for row in streams.values()), default=None),
+                       "version": value.get("release", "НЕИЗВЕСТНО")[:8],
+                       "state": "СВЕЖИЕ" if fresh else "НЕТ СВЕЖИХ ДАННЫХ"})
+    return output
+
+
+def recent_rows(data):
+    feed = data.get("recent", {})
+    output = []
+    stale = data.get("stale") or feed.get("stale", True)
+    for row in feed.get("events", [])[:12]:
+        if not isinstance(row, dict):
+            continue
+        physical = bool(row.get("RfidReadCount", 0)) and row.get("SessionCloseReason") != "WAREHOUSE_ONLY"
+        direction = {"IN": "ВЪЕЗД", "OUT": "ВЫЕЗД"}.get(row.get("FinalDirection"), "НЕ ОПРЕДЕЛЕНО") if physical else "СКЛАД"
+        warnings = str(row.get("WarningFlags") or "")
+        state = "УСТАРЕЛО" if stale else "КОНФЛИКТ" if "DIRECTION_CONFLICT" in warnings else "ПЕРЕПРОВЕРКА" if row.get("NeedRecheck") else "RFID" if physical else "ТОЛЬКО СКЛАД"
+        output.append({"time": row.get("FirstSeen"), "direction": direction,
+                       "reel": row.get("SeriesNumber") or str(row.get("SourceTag") or "—")[-16:],
+                       "tag": row.get("SourceTag"), "reads": row.get("RfidReadCount"),
+                       "video": "●" if row.get("VideoMatched") else "—",
+                       "warehouse": row.get("WarehouseDt") or "—", "state": state,
+                       "node": feed.get("node", "—"), "event_id": row.get("EventId")})
+    return output or [{"time": "—", "direction": "НЕТ ДАННЫХ", "reel": "—", "reads": None,
+                       "video": "—", "warehouse": "—", "state": "Копия не настроена или пуста", "event_id": None}]
+
+
+def diagram_rows(data):
+    """Flat Grafana data frame: explicit cards and directed edges, no HTML."""
+    rows = []
+    nodes = data["nodes"]
+    active = [node for node in NODES if nodes.get(node, {}).get("reachable") and nodes[node].get("active")]
+    owner = active[0] if len(active) == 1 and nodes[active[0]].get("severity") == 0 and not data.get("stale") else None
+    def card(key, label, detail, state, x, y, w=350, h=42, kind="card"):
+        rows.append(dict(id=key, kind=kind, label=label, detail=detail, state=state, x=x, y=y, w=w, h=h))
+    def edge(key, source, target, enabled=False, control=False):
+        rows.append(dict(id=key, kind="edge", source=source, target=target,
+                         state="control" if enabled and control else "active" if enabled else "off"))
+    def dependency(service, name):
+        status = nodes.get(owner, {}).get("services", {}).get(service, {}).get("dependencies", {}).get(name) if owner else None
+        return "active" if status == "ok" else "critical" if status == "unavailable" else "warning" if status == "degraded" else "unknown"
+    card("source-rfid", "RFID • 4 антенны", "считыватель", dependency("RfidReader", "rfid_reader"), 60, 8, h=38)
+    camera_states = [dependency("Yolo", "camera_0"), dependency("Yolo", "camera_1")]
+    camera_state = "active" if all(s == "active" for s in camera_states) else "critical" if "critical" in camera_states else "unknown"
+    card("source-video", "Камеры 0 + 1", "YOLO • погрузчик / катушка", camera_state, 525, 8, h=38)
+    card("source-skud", "RusGuard", "источник СКУД", dependency("RusGuardSync", "source_database"), 990, 8, h=38)
+    for index, node in enumerate(NODES):
+        value = nodes.get(node, {})
+        x = 60 + index * 465
+        state = "unknown" if data.get("stale") or "reachable" not in value else "critical" if not value.get("reachable") else "active" if node == owner else "critical" if value.get("faulted") or value.get("active") else "ready" if value.get("prepared") else "warning"
+        card(node, LABELS[node] + " • " + ("1" if index == 0 else "2" if index == 1 else "3"),
+             value.get("role", "НЕИЗВЕСТНО") + "  |  " + NODES[node] + "  |  " + value.get("release", "—")[:8], state, x, 80, h=48, kind="header")
+        for name, label, offset in (("RfidReader", "RFID", 0), ("Yolo", "YOLO", 120), ("RusGuardSync", "СКУД", 240)):
+            service = value.get("services", {}).get(name, {})
+            observed = value.get("snapshot_fresh") and service.get("observed") and not data.get("stale")
+            status = "active" if observed and service.get("ok") and value.get("active") else "critical" if observed and value.get("active") and not service.get("ok") else "off" if state == "ready" else "unknown"
+            key = node + "-" + name
+            card(key, label, "работает" if status == "active" else "резерв" if status == "off" else "нет данных" if status == "unknown" else "отказ", status, x + offset, 152, w=110)
+            edge("input-" + key, {"RfidReader": "source-rfid", "Yolo": "source-video", "RusGuardSync": "source-skud"}[name], key, node == owner and status == "active")
+            edge("queue-" + key, key, node + "-queue", node == owner and status == "active")
+        local_fresh = value.get("reachable") and value.get("snapshot_fresh") and not data.get("stale")
+        bus = value.get("bus", {}) if value.get("bus_age", 999999) <= 15 and local_fresh else {}
+        count = bus.get("rfid_pending", 0) + bus.get("video_pending", 0)
+        mirror = value.get("mirror", {}) if local_fresh else {}
+        queues_known = "rfid_pending" in bus and "video_pending" in bus
+        detail = ("RFID " + str(bus["rfid_pending"]) + "  /  YOLO " + str(bus["video_pending"])) if queues_known else "Очереди: нет данных"
+        detail += "  •  " + str(mirror.get("retention_days", "—")) + " дней копии"
+        card(node + "-queue", "Очереди + локальная копия", detail,
+             "warning" if queues_known and count else "active" if queues_known and node == owner else "ready" if mirror.get("enabled") and mirror.get("streams") else "unknown", x, 220, h=48)
+        for name, label, y in (("Aggregator", "Сопоставление", 362), ("WebDashboard", "WEB • 5050", 500)):
+            service = value.get("services", {}).get(name, {})
+            observed = value.get("snapshot_fresh") and service.get("observed") and not data.get("stale")
+            status = "active" if observed and service.get("ok") and node == owner else "critical" if observed and value.get("active") and not service.get("ok") else "off" if state == "ready" else "unknown"
+            card(node + "-" + name, label, "RFID + видео + СКУД + склад" if name == "Aggregator" else "итоговые проходы и снимки", status, x, y)
+    database = dependency("Aggregator", "database")
+    card("sql-input", "SQL • исходные данные", "единая база • входная шина", database, 525, 292)
+    card("sql-result", "SQL • итоговые события", "идентичность / направление / склад", database, 525, 430)
+    mirror = nodes.get(owner, {}).get("mirror", {}) if owner else {}
+    wh = mirror.get("streams", {}).get("warehouse", {})
+    wh_state = "active" if wh.get("caught_up") and wh.get("age_sec", 999999) <= 130 and not data.get("stale") else "warning" if wh else "unknown"
+    card("warehouse", "Склад + 1C", "TAG → IDS → SERIES", wh_state, 60, 292)
+    controllers = [value.get("controller", {}) for value in nodes.values()]
+    controllers = [value for value in controllers if value.get("valid") is True and value.get("owner") in NODES
+                   and 0 <= time.time() - value.get("at", 0) <= 130 and not data.get("stale")]
+    control_owner = controllers[0]["owner"] if controllers and len({v["owner"] for v in controllers}) == 1 else None
+    card("lease", "HA • lease / epoch", "контроллер: " + LABELS.get(control_owner, "НЕИЗВЕСТНО"), "control" if control_owner else "unknown", 990, 292)
+    correlation = nodes.get(owner, {}).get("correlation", {}) if owner else {}
+    mode = correlation.get("mode", "не опубликовано")
+    card("windows", "Окна КПП → склад", mode, "warning" if mode == "shadow" else "active" if mode == "active" else "unknown", 60, 430)
+    card("repair", "Ремонт + проверка обновлений", "LLM только ремонт • release / rollback", "unknown", 990, 430)
+    gateway = data.get("gateway", {})
+    gateway_state = "active" if gateway.get("ready") and owner and not data.get("stale") else "warning" if gateway.get("observed") else "unknown"
+    card("gateway", "WEB • постоянный адрес", "Comparator :5051 • независимый сервис", gateway_state, 525, 572, h=44)
+    edge("warehouse-sql", "warehouse", "sql-input", wh_state == "active" and database == "active")
+    edge("lease-sql", "lease", "sql-input", bool(control_owner), control=True)
+    for node in NODES:
+        edge(node + "-raw-sql", node + "-queue", "sql-input", node == owner and database == "active")
+        edge(node + "-sql-agg", "sql-input", node + "-Aggregator", node == owner and database == "active")
+        edge(node + "-agg-result", node + "-Aggregator", "sql-result", node == owner and database == "active")
+        edge(node + "-result-web", "sql-result", node + "-WebDashboard", node == owner and database == "active")
+        edge(node + "-web-gateway", node + "-WebDashboard", "gateway", node == owner and gateway_state == "active")
+    return rows
 
 
 def serve():
@@ -233,9 +399,15 @@ def serve():
             if self.path == "/status":
                 value = data
             elif self.path == "/summary":
-                value = [{k: v for k, v in data.items() if k != "nodes"}]
+                value = [{k: v for k, v in data.items() if k not in {"nodes", "recent"}}]
             elif self.path == "/nodes":
                 value = list(data["nodes"].values())
+            elif self.path == "/diagram":
+                value = diagram_rows(data)
+            elif self.path == "/recent":
+                value = recent_rows(data)
+            elif self.path == "/queues":
+                value = queue_rows(data)
             else:
                 self.send_error(404)
                 return
@@ -276,7 +448,8 @@ def proxy_wallboard(source):
                             self.send_response(200);self.send_header("Content-Type","application/json")
                             self.send_header("Content-Length",str(len(raw)));self.send_header("Cache-Control","no-store")
                             self.end_headers();self.wfile.write(raw);return
-                        if self.path not in ("/perimeter-ha/status", "/perimeter-ha/summary", "/perimeter-ha/nodes"):
+                        if self.path not in ("/perimeter-ha/status", "/perimeter-ha/summary", "/perimeter-ha/nodes",
+                                             "/perimeter-ha/diagram", "/perimeter-ha/recent", "/perimeter-ha/queues"):
                             return super().do_GET()
                         route = self.path.removeprefix("/perimeter-ha")
                         try:
@@ -284,7 +457,10 @@ def proxy_wallboard(source):
                         except Exception:
                             data = summarize([probe_result(n) for n in NODES])
                             data.update(severity=2, detail="Наблюдатель HA недоступен")
-                            value = data if route == "/status" else list(data["nodes"].values()) if route == "/nodes" else [{k: v for k, v in data.items() if k != "nodes"}]
+                            value = (diagram_rows(data) if route == "/diagram" else recent_rows(data) if route == "/recent"
+                                     else queue_rows(data) if route == "/queues" else data if route == "/status"
+                                     else list(data["nodes"].values()) if route == "/nodes"
+                                     else [{k: v for k, v in data.items() if k not in {"nodes", "recent"}}])
                         raw = json.dumps(value, ensure_ascii=False).encode()
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")

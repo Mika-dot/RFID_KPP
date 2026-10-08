@@ -82,6 +82,12 @@ SELECT Id FROM dbo.KPP_HA_Controller
 WHERE Id=1 AND Token=? AND ExpiresAt>SYSUTCDATETIME()
 """, self.token).fetchone() is not None
 
+    def controller_status(self):
+        with self.connect() as conn:
+            row = conn.execute("""SELECT Owner,CASE WHEN ExpiresAt>SYSUTCDATETIME() THEN 1 ELSE 0 END
+                FROM dbo.KPP_HA_Controller WHERE Id=1""").fetchone()
+            return {"owner": row[0], "valid": bool(row[1])} if row else {"owner": None, "valid": False}
+
     def grant(self, owner, ttl=15, fence_previous=None):
         # A renewal cannot change Enabled, Owner, Epoch or StartedAt. It needs
         # only a brief row update; taking the epoch barrier would starve it behind

@@ -109,6 +109,10 @@ class Processes:
                        PERIMETER_REPLICA_NODES=json.dumps(self.cfg["nodes"]))
         else:
             env["PERIMETER_REPLICA_ENABLED"] = "0"
+        if self.cfg.get("fallback_enabled", False):
+            env.update(PERIMETER_FALLBACK_ENABLED="1",
+                       PERIMETER_FALLBACK_PATH=str(Path(self.cfg["state_dir"]) / "fallback.sqlite"),
+                       PERIMETER_FALLBACK_RETENTION_DAYS=str(max(93, int(self.cfg.get("fallback_retention_days", 93)))))
         registry = []
         try:
             for name, (_, script) in SERVICES.items():

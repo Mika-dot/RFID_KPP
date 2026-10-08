@@ -145,6 +145,11 @@ class ReplicaJournal:
             db.execute("UPDATE replica SET state='SENT',sent=COALESCE(sent,?) WHERE stream=? AND uuid=?",
                        (time.time(), stream, key))
 
+    def get(self, stream, key):
+        with self.connect() as db:
+            row = db.execute("SELECT record FROM replica WHERE stream=? AND uuid=?", (stream, key)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def page(self, after=0, limit=100, pending=False):
         if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("ReplicaPageInvalid")
@@ -177,18 +182,27 @@ class ReplicaJournal:
 
 
 class ReplicatedDelivery:
-    def __init__(self, journal=None, nodes=(), request=None):
-        self.journal, self.nodes = journal, list(nodes)
+    def __init__(self, journal=None, nodes=(), request=None, fallback=None):
+        self.journal, self.nodes, self.fallback = journal, list(nodes), fallback
         self.request = request or self.http
         self.peer_retry = {}
+        self.last_fallback_maintenance = 0
 
     @classmethod
     def from_env(cls):
+        fallback = None
+        if os.getenv("PERIMETER_FALLBACK_ENABLED", "0") == "1":
+            from common.fallback_store import FallbackStore
+            state_dir = Path(os.environ.get("PERIMETER_HA_STATE_DIR", "."))
+            fallback = FallbackStore(
+                os.environ.get("PERIMETER_FALLBACK_PATH", str(state_dir / "fallback.sqlite")),
+                int(os.getenv("PERIMETER_FALLBACK_RETENTION_DAYS", "93")),
+            )
         if os.getenv("PERIMETER_REPLICA_ENABLED", "0") != "1":
-            return cls()
+            return cls(fallback=fallback)
         node_id = os.environ["PERIMETER_HA_NODE"]
         nodes = validate_peers(json.loads(os.environ["PERIMETER_REPLICA_NODES"]), node_id)
-        return cls(ReplicaJournal(Path(os.environ["PERIMETER_HA_STATE_DIR"])/"replica.sqlite", node_id), nodes)
+        return cls(ReplicaJournal(Path(os.environ["PERIMETER_HA_STATE_DIR"])/"replica.sqlite", node_id), nodes, fallback=fallback)
 
     @staticmethod
     def http(url, body=None):
@@ -197,9 +211,11 @@ class ReplicatedDelivery:
         return json_request(url, os.environ["PERIMETER_HA_TOKEN"], body=body, timeout=2, max_bytes=MAX_BODY)
 
     def ensure(self, stream, payload, image=None):
+        record = envelope(stream, payload, image) if self.journal is not None or self.fallback is not None else None
+        if self.fallback is not None:
+            self.fallback.put(stream, record["uuid"], payload)
         if self.journal is None:
-            return None
-        record = envelope(stream, payload, image)
+            return record
         self.journal.put(record)
         if self.journal.ack_count(record) >= 2:
             return record
@@ -227,7 +243,16 @@ class ReplicatedDelivery:
     def committed(self, record):
         if record is None:
             return
-        self.journal.sent(record["stream"], record["uuid"], record["digest"])
+        if self.journal is not None:
+            self.journal.sent(record["stream"], record["uuid"], record["digest"])
+        if self.fallback is not None:
+            saved = self.fallback.put(record["stream"], record["uuid"], record["payload"])
+            self.fallback.mark_committed(record["stream"], record["uuid"], saved["digest"])
+            if time.monotonic() - self.last_fallback_maintenance >= 60:
+                self.fallback.maintenance()
+                self.last_fallback_maintenance = time.monotonic()
+        if self.journal is None:
+            return
         body = {k: record[k] for k in ("stream", "uuid", "digest")}
         for peer in self.nodes:
             if peer["id"] != self.journal.node_id:

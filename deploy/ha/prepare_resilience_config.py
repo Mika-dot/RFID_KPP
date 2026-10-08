@@ -22,7 +22,8 @@ def prepare(cfg,environment=None):
         # pathlib on the actual target OS determines its absolute path semantics.
         if not Path(value).is_absolute():raise ValueError("ExistingAbsoluteSpoolPathsRequired")
         env[key]=value
-    result.update(replication_enabled=True,probation_sec=180,probation_stall_sec=120)
+    result.update(replication_enabled=True,fallback_enabled=True,fallback_retention_days=93,
+                  probation_sec=180,probation_stall_sec=120)
     result.setdefault("hardware_fencing_required",False)
     return result
 

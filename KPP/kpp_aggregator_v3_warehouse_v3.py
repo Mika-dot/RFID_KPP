@@ -92,29 +92,7 @@ ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)),EventId DESC;
         """
         if not tag:
             return None
-        start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
-        end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
-        cur.execute(
-            f"""
-SELECT TOP(1) EventId
-FROM {Config.EVENT_TABLE}
-WHERE UPPER(LTRIM(RTRIM(SourceTag)))=?
-  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
-  AND ISNULL(RfidReadCount,0)>0
-  AND (WarehouseId IS NULL OR WarehouseId=?)
-  AND FirstSeen BETWEEN ? AND ?
-ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
-         ABS(DATEDIFF(SECOND,FirstSeen,?)), EventId DESC;
-""",
-            tag,
-            warehouse_id,
-            start,
-            end,
-            warehouse_id,
-            dt,
-        )
-        row = cur.fetchone()
-        return int(row[0]) if row else None
+        return super()._find_kpp_event(cur, tag, dt, warehouse_id)
 
     def _enrich_existing_event(
         self,

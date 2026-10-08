@@ -3,7 +3,7 @@ on:
   push:
     branches: [main, feature/perimeter-ha-guardian]
   pull_request:
-    branches: [main]
+    branches: [main, feature/ha-resilience-2026-10-07]
 permissions:
   contents: read
 jobs:

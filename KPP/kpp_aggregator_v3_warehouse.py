@@ -31,6 +31,7 @@ from common.warehouse_identity import (
     normalize_value,
     resolve_warehouse_identity,
 )
+from common.adaptive_windows import AdaptiveWindowModel, TravelObservation
 
 
 class Aggregator(BaseAggregator):
@@ -39,6 +40,20 @@ class Aggregator(BaseAggregator):
     WAREHOUSE_RECHECK_SEC = float(os.getenv("KPP_WAREHOUSE_RECHECK_SEC", "60"))
     WAREHOUSE_RECHECK_HOURS = float(os.getenv("KPP_WAREHOUSE_RECHECK_HOURS", "168"))
     WAREHOUSE_RECHECK_BATCH = int(os.getenv("KPP_WAREHOUSE_RECHECK_BATCH", "500"))
+    # Adaptive KPP -> Warehouse windows are opt-in until a replay/shadow run
+    # has accepted the learned profile. The legacy symmetric window remains
+    # the safe default for an untrained/cold model.
+    ADAPTIVE_WINDOWS_ENABLED = os.getenv("KPP_ADAPTIVE_WINDOWS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+    ADAPTIVE_WINDOWS_MODE = os.getenv("KPP_ADAPTIVE_WINDOWS_MODE", "shadow").strip().lower()
+    ADAPTIVE_WINDOW_ACCEPTED_PROFILE = os.getenv("KPP_ADAPTIVE_WINDOW_ACCEPTED_PROFILE", "")
+    ADAPTIVE_WINDOW_MIN_SAMPLES = int(os.getenv("KPP_ADAPTIVE_WINDOW_MIN_SAMPLES", "8"))
+    ADAPTIVE_WINDOW_DEFAULT_LOWER_SEC = float(os.getenv("KPP_ADAPTIVE_WINDOW_DEFAULT_LOWER_SEC", "0"))
+    ADAPTIVE_WINDOW_DEFAULT_UPPER_SEC = float(os.getenv("KPP_ADAPTIVE_WINDOW_DEFAULT_UPPER_SEC", "86400"))
+    ADAPTIVE_WINDOW_HARD_MAX_SEC = float(os.getenv("KPP_ADAPTIVE_WINDOW_HARD_MAX_SEC", "604800"))
+    ADAPTIVE_WINDOW_MARGIN_SEC = float(os.getenv("KPP_ADAPTIVE_WINDOW_MARGIN_SEC", "30"))
+    ADAPTIVE_WINDOW_LOOKBACK_DAYS = int(os.getenv("KPP_ADAPTIVE_WINDOW_LOOKBACK_DAYS", "180"))
+    ADAPTIVE_WINDOW_REFRESH_SEC = float(os.getenv("KPP_ADAPTIVE_WINDOW_REFRESH_SEC", "900"))
+    ADAPTIVE_WINDOW_STATE_KEY = "KPP_ADAPTIVE_TRAVEL_MODEL_V1"
     # New cursor intentionally replays Warehouse from Id=0 once. Older builds
     # advanced their cursor past nullable-Tag rows after marking them invalid.
     WAREHOUSE_STATE_KEY = "LAST_WAREHOUSE_ID_V3_4_5_RECHECK"
@@ -47,10 +62,29 @@ class Aggregator(BaseAggregator):
         super().__init__()
         self.last_warehouse_reconcile = datetime.min
         self.last_warehouse_recheck = datetime.min
+        self.last_adaptive_refresh = datetime.min
+        if self.ADAPTIVE_WINDOWS_MODE not in {"off", "shadow", "active"}:
+            raise ValueError("AdaptiveWindowModeInvalid")
+        self.accepted_windows = None
+        self._adaptive_link_evidence = {}
+        self.adaptive_windows = self._new_adaptive_model()
+        if self.ADAPTIVE_WINDOWS_ENABLED and self.ADAPTIVE_WINDOWS_MODE == "active":
+            from deploy.ha.tune_adaptive_windows import load_accepted_profile
+            self.accepted_windows = load_accepted_profile(self.ADAPTIVE_WINDOW_ACCEPTED_PROFILE)
+
+    def _new_adaptive_model(self):
+        return AdaptiveWindowModel(
+            default_lower_sec=self.ADAPTIVE_WINDOW_DEFAULT_LOWER_SEC,
+            default_upper_sec=self.ADAPTIVE_WINDOW_DEFAULT_UPPER_SEC,
+            hard_max_sec=self.ADAPTIVE_WINDOW_HARD_MAX_SEC,
+            margin_sec=self.ADAPTIVE_WINDOW_MARGIN_SEC,
+            min_samples=self.ADAPTIVE_WINDOW_MIN_SAMPLES,
+        )
 
     def bootstrap(self) -> None:
         super().bootstrap()
         with self.connect() as conn:
+            self._load_adaptive_model(conn)
             cur = conn.cursor()
             cur.execute(
                 f"""
@@ -76,6 +110,121 @@ WHERE SessionCloseReason='WAREHOUSE_ONLY'
                 self.WAREHOUSE_RECHECK_HOURS,
             )
             conn.commit()
+
+    def _load_adaptive_model(self, conn) -> None:
+        """Load the last shadow model; it never authorizes active matching."""
+        raw = self.state_get(conn, self.ADAPTIVE_WINDOW_STATE_KEY)
+        if not raw:
+            return
+        try:
+            self.adaptive_windows = AdaptiveWindowModel.loads(raw)
+        except Exception as exc:
+            log.warning("Adaptive travel model ignored: %s", type(exc).__name__)
+
+    def _refresh_adaptive_model(self, conn, force: bool = False) -> bool:
+        """Learn only from persisted physical KPP events already linked to Warehouse.
+
+        This query is read-only apart from persisting the compact model in the
+        runtime state table. Warehouse-only rows and direction conflicts never
+        become training labels. Repeated scans are idempotent by event/warehouse
+        identifiers held by ``AdaptiveWindowModel``.
+        """
+        if not self.ADAPTIVE_WINDOWS_ENABLED or self.ADAPTIVE_WINDOWS_MODE == "off":
+            return False
+        now = datetime.now()
+        if not force and (now - self.last_adaptive_refresh).total_seconds() < self.ADAPTIVE_WINDOW_REFRESH_SEC:
+            return False
+        self.last_adaptive_refresh = now
+        cur = conn.cursor()
+        lookback_days = max(1, int(self.ADAPTIVE_WINDOW_LOOKBACK_DAYS))
+        cur.execute(
+            f"""
+SELECT TOP ({max(1, int(self.WAREHOUSE_RECHECK_BATCH * 10))})
+       EventId,WarehouseId,FirstSeen,WarehouseDt,TransportMode,FinalDirection,WarningFlags
+FROM {Config.EVENT_TABLE}
+WHERE WarehouseId IS NOT NULL
+  AND ISNULL(RfidReadCount,0)>0
+  AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND FirstSeen IS NOT NULL
+  AND WarehouseDt IS NOT NULL
+  AND WarehouseDt>=DATEADD(day,-?,SYSDATETIME())
+  AND JSON_VALUE(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,'$.warehouse.adaptive_match') IS NULL
+  AND JSON_VALUE(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,'$.warehouse.match_method') IN ('TAG','IDS')
+ORDER BY WarehouseDt DESC,EventId DESC;
+""",
+            lookback_days,
+        )
+        candidate = self._new_adaptive_model()
+        for row in reversed(cur.fetchall()):
+            direction = str(row[5] or "").strip().upper()
+            warnings = str(row[6] or "").upper()
+            # A warehouse outbound fact must not train on an explicitly
+            # conflicting physical direction. UNKNOWN is retained only when
+            # Warehouse is the sole positive evidence and the RFID event is
+            # still a real read (RfidReadCount>0).
+            if direction == "IN" or "DIRECTION_CONFLICT" in warnings:
+                continue
+            candidate.observe(
+                TravelObservation(
+                    kpp_at=row[2],
+                    warehouse_at=row[3],
+                    transport=row[4] or "UNKNOWN",
+                    event_id=int(row[0]),
+                    warehouse_id=int(row[1]),
+                    confirmed=True,
+                )
+            )
+        changed = candidate.dumps() != self.adaptive_windows.dumps()
+        if changed:
+            self.state_set(conn, self.ADAPTIVE_WINDOW_STATE_KEY, candidate.dumps())
+            self.adaptive_windows = candidate
+        return changed
+
+    def _warehouse_search_interval(self, warehouse_dt: datetime, transport: str = "UNKNOWN") -> tuple[datetime, datetime]:
+        """Return a safe search interval for a possible KPP event."""
+        if not self.ADAPTIVE_WINDOWS_ENABLED or self.ADAPTIVE_WINDOWS_MODE != "active":
+            span = timedelta(hours=Config.TASK_WINDOW_HOURS)
+            return warehouse_dt - span, warehouse_dt + span
+        model = self.accepted_windows
+        if model is None:
+            raise ValueError("ActiveAdaptiveProfileRequired")
+        start, end, bounds = model.backward_interval(warehouse_dt, transport)
+        if bounds.confidence == "cold_start":
+            # Do not narrow a cold model and silently hide historical events.
+            span = timedelta(hours=Config.TASK_WINDOW_HOURS)
+            return warehouse_dt - span, warehouse_dt + span
+        return start, end
+
+    def _retrospective_evidence(self, cur, tag, warehouse_dt):
+        """Audit raw inputs backwards; never manufacture an RFID passage."""
+        if not tag or not self.ADAPTIVE_WINDOWS_ENABLED or self.ADAPTIVE_WINDOWS_MODE == "off":
+            return None
+        bounds = self.adaptive_windows.bounds_for(warehouse_dt)
+        expected_start, expected_end = bounds.backward_interval(warehouse_dt)
+        recovery_start = warehouse_dt - timedelta(seconds=self.ADAPTIVE_WINDOW_HARD_MAX_SEC)
+        legacy_start = warehouse_dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
+        legacy_end = warehouse_dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
+        cur.execute(f"""
+SELECT TOP(200) Id,COALESCE(SourceReaderTime,RecordTime),Antenna,RSSI
+FROM {Config.RFID_TABLE}
+WHERE UPPER(LTRIM(RTRIM(EPC)))=? AND UPPER(LTRIM(RTRIM(ISNULL(TID,''))))=?
+  AND COALESCE(SourceReaderTime,RecordTime) BETWEEN ? AND ?
+ORDER BY ABS(DATEDIFF(SECOND,COALESCE(SourceReaderTime,RecordTime),?)),Id;
+""", tag[:24], tag[24:], recovery_start, warehouse_dt,
+            warehouse_dt - timedelta(seconds=bounds.center_sec))
+        rows = cur.fetchall()
+        return {
+            "version": 1, "status": "RAW_CANDIDATES" if rows else "NO_RAW_CANDIDATE",
+            "expected_window": [expected_start.isoformat(), expected_end.isoformat()],
+            "recovery_window": [recovery_start.isoformat(), warehouse_dt.isoformat()],
+            "model_bucket": bounds.bucket, "model_samples": bounds.sample_count,
+            "model_status": bounds.confidence, "page_limit": 200,
+            "raw_candidates_in_page": len(rows),
+            "outside_legacy_window": sum(not legacy_start <= row[1] <= legacy_end for row in rows),
+            "raw_candidates": [{"id": int(row[0]), "at": row[1].isoformat(),
+                                "antenna": row[2], "rssi": row[3]} for row in rows],
+            "learning_eligible": False, "physical_passage_confirmed": False,
+        }
 
     def _load_task_candidates(
         self,
@@ -151,6 +300,7 @@ SELECT TOP(1) EventId,SourceTag
 FROM {Config.EVENT_TABLE}
 WHERE WarehouseId=?
   AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND ISNULL(RfidReadCount,0)>0
   AND IsReel=1
 ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)),EventId DESC;
 """,
@@ -163,14 +313,24 @@ ORDER BY ABS(DATEDIFF(SECOND,FirstSeen,?)),EventId DESC;
     def _find_kpp_event(self, cur, tag: str, dt: datetime, warehouse_id: int) -> Optional[int]:
         if not tag:
             return None
-        start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
-        end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
+        start, end = self._warehouse_search_interval(dt)
+        target_dt = dt
+        profile_evidence = None
+        if self.ADAPTIVE_WINDOWS_ENABLED and self.ADAPTIVE_WINDOWS_MODE == "active":
+            bounds = self.accepted_windows.bounds_for(dt)
+            target_dt = dt - timedelta(seconds=bounds.center_sec)
+            if bounds.confidence != "cold_start":
+                profile_evidence = {"adaptive_match": True, "learning_eligible": False,
+                                    "window_start": start.isoformat(), "window_end": end.isoformat(),
+                                    "bucket": bounds.bucket, "sample_count": bounds.sample_count,
+                                    "profile_status": bounds.confidence}
         cur.execute(
             f"""
 SELECT TOP(1) EventId
 FROM {Config.EVENT_TABLE}
 WHERE UPPER(LTRIM(RTRIM(SourceTag)))=?
   AND ISNULL(SessionCloseReason,'')<>'WAREHOUSE_ONLY'
+  AND ISNULL(RfidReadCount,0)>0
   AND (WarehouseId IS NULL OR WarehouseId=?)
   AND FirstSeen BETWEEN ? AND ?
 ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
@@ -181,9 +341,13 @@ ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
             start,
             end,
             warehouse_id,
-            dt,
+            target_dt,
         )
         row = cur.fetchone()
+        if row is not None and profile_evidence is not None:
+            if not hasattr(self, "_adaptive_link_evidence"):
+                self._adaptive_link_evidence = {}
+            self._adaptive_link_evidence[int(row[0])] = profile_evidence
         return int(row[0]) if row else None
 
     def _enrich_existing_event(
@@ -209,6 +373,7 @@ ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
                 "series_number": series_number,
                 "match_method": match_method,
                 "link_status": link_status,
+                **getattr(self, "_adaptive_link_evidence", {}).pop(event_id, {}),
             },
             ensure_ascii=False,
         )
@@ -479,6 +644,13 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
             match_method,
             link_status,
         )
+        evidence = self._retrospective_evidence(cur, identity.preferred_tag, warehouse_dt)
+        if evidence is not None:
+            cur.execute(f"""UPDATE {Config.EVENT_TABLE}
+SET EvidenceJson=JSON_MODIFY(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+    '$.retrospective',JSON_QUERY(?)),UpdatedAt=SYSDATETIME()
+WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;""",
+                        json.dumps(evidence, ensure_ascii=False), warehouse_id)
         return "warehouse_only", identity.series_ambiguous
 
     def reconcile_warehouse(self, force: bool = False) -> int:
@@ -490,6 +662,7 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
         conn = self.connect()
         try:
             saved = self.state_get(conn, self.WAREHOUSE_STATE_KEY)
+            self._refresh_adaptive_model(conn)
             last_id = int(saved or 0)
             cur = conn.cursor()
             cur.execute(
@@ -503,6 +676,7 @@ ORDER BY Id ASC;
             )
             rows = cur.fetchall()
             if not rows:
+                conn.commit()
                 return 0
 
             max_id = last_id
