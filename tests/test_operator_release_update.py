@@ -68,8 +68,8 @@ class OperatorUpdateTests(unittest.TestCase):
         cfg["env"]["RFID_READER_LOCK_FILE"]="existing.lock"
         runtime=self.root/"actual-runtime"
         prepared=update.candidate_config(cfg,{},runtime)
-        self.assertEqual(str(runtime/"existing.sqlite"),prepared["env"]["RFID_SPOOL_PATH"])
-        self.assertEqual(str(runtime/"existing.lock"),prepared["env"]["RFID_READER_LOCK_FILE"])
+        self.assertEqual((runtime/"existing.sqlite").resolve(),Path(prepared["env"]["RFID_SPOOL_PATH"]).resolve())
+        self.assertEqual((runtime/"existing.lock").resolve(),Path(prepared["env"]["RFID_READER_LOCK_FILE"]).resolve())
         self.assertEqual("existing.sqlite",cfg["env"]["RFID_SPOOL_PATH"])
 
     def test_active_upgrade_without_handoff_is_rejected_without_service_changes(self):

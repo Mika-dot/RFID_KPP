@@ -179,7 +179,9 @@ class Updates:
         candidate_cfg = dict(self.cfg, root=str(target))
         report = preflight(candidate_cfg, self.store, active=True)
         if not report["ok"]:
-            self.reject_candidate(sha, "CandidatePreflightFailed")
+            # Live SQL/network/resources/configuration can recover without a new
+            # commit. Deterministic code defects were checked above offline.
+            self.telemetry.event("update_candidate_deferred", sha=sha, reason="CandidatePreflightFailed")
             raise RuntimeError("CandidatePreflightFailed")
         with self.lock:
             if self.state["current"]["sha"] != current:

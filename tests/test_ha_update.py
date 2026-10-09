@@ -57,6 +57,31 @@ class UpdateTests(unittest.TestCase):
             self.updates.rollback()
 
     @patch("guardian.update.subprocess.run")
+    def test_transient_live_preflight_retries_same_sha_after_agent_restart(self, run):
+        def qualified(command, **kwargs):
+            if "--report" in command:
+                Path(command[command.index("--report")+1]).write_text(json.dumps({"status":"passed"}),encoding="utf-8")
+            return Mock(returncode=0)
+        run.side_effect=qualified
+        def git(*args,**kwargs):
+            if args==("rev-parse","FETCH_HEAD"):return "b"*40
+            if args==("show","b"*40+":"+MANIFEST):return json.dumps(BASE_FLOOR)
+            if args[:2]==("diff","--name-only"):return "common/business_flow.py\n"
+            return ""
+        self.updates.git=git
+        with patch("guardian.update.preflight",return_value={"ok":False,"checks":{"exception":"TimeoutError"}}):
+            with self.assertRaisesRegex(RuntimeError,"CandidatePreflightFailed"):
+                self.updates.stage()
+        self.assertIsNone(self.updates.staged)
+        self.assertNotIn("b"*40,self.updates.quarantined)
+        self.assertNotIn("b"*40,self.updates.state.get("rejected",[]))
+        self.updates.telemetry.event.assert_called_with("update_candidate_deferred",sha="b"*40,reason="CandidatePreflightFailed")
+        restored=Updates(self.cfg,Mock(),Mock());restored.git=git
+        with patch("guardian.update.preflight",return_value={"ok":True}):
+            restored.stage()
+        self.assertEqual("b"*40,restored.staged["sha"])
+
+    @patch("guardian.update.subprocess.run")
     def test_protocol_two_deployment_rejects_main_without_epoch_barrier_before_running_candidate(self, run):
         self.updates.state["fencing_protocol_min"] = 2
         def git(*args, **kwargs):

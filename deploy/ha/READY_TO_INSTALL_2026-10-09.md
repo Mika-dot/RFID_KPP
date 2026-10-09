@@ -23,6 +23,7 @@
 | Hardware adapter | IF-MIB / Net-SNMP v3 authPriv, admin/oper readback, epoch до/после | Нужны реальные отдельные reader-access interfaces |
 | Dashboard | Локальный gateway health, Behavior, визуальная схема, две страницы, playlist 1m | Existing Grafana objects, backend frames, receipt и экран |
 | Общий финал | GET-only сверка трёх Guardian + Gateway + Observer | Exact SHA, пять workers, один owner, два резерва, шесть caught-up зеркал |
+| Safe auto-update | Live preflight failure откладывает candidate с повторной попыткой того же SHA | После восстановления SQL/network/resources SHA не остаётся permanently rejected; code defects по-прежнему quarantined |
 
 ## Общие условия
 

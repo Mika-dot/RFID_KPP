@@ -10,11 +10,11 @@
   "qualified_against": "4c9e6d367a3014ca770b45cddc1330bdf2217789",
   "date": "2026-10-09",
   "unit_tests": {
-    "total": 603,
+    "total": 604,
     "failures": 0,
     "errors": 0,
     "skipped": 15,
-    "executed": 588,
+    "executed": 589,
     "python": "3.12.14",
     "platform": "Linux",
     "operator_tests_after_ownership_change": 9
@@ -23,5 +23,10 @@
   "compileall": "passed",
   "diff_check": "passed",
   "factory_installation": "not_performed",
-  "physical_business_acceptance": "not_measured"
+  "physical_business_acceptance": "not_measured",
+  "review_continuation": {
+    "permanent_rejection_after_live_preflight_failure": "fixed: retry same SHA after dependency recovery and agent restart",
+    "task_db_comment": "covered by independent source tests",
+    "windows_short_path_fixture": "fixed: compare resolved paths"
+  }
 }
