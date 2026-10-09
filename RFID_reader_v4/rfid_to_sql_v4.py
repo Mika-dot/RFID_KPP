@@ -229,6 +229,7 @@ class SQLWriter(threading.Thread):
                     tid=tid or "", time_quality=quality))
                 batch_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, epoch))
                 source_dt = datetime.fromisoformat(source_time)
+                sql_started = time.monotonic()
                 with pyodbc.connect(Config.DB_CONN, autocommit=False, timeout=10) as conn:
                     cur = conn.cursor()
                     cur.execute(
@@ -256,6 +257,8 @@ END
                         quality,
                     )
                     conn.commit()
+                from common.bus_statistics import record
+                record("rfid_sql_insert_latency", time.monotonic() - sql_started)
                 self.replication.committed(copied)
                 self.spool.mark_sent(client_uuid)
                 self.delivered_total += 1
@@ -332,6 +335,8 @@ def main() -> int:
         while True:
             epoch = str(uuid.uuid4())
             reconnect_at = datetime.now()
+            from common.bus_statistics import record
+            record("rfid_reconnect_rate")
             rc = lib.TCPConnect(Config.READER_IP.encode("utf-8"), Config.READER_PORT)
             if rc != 0:
                 log.error("TCPConnect code=%s", rc)

@@ -7,6 +7,7 @@ import html
 import http.client
 import json
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -101,7 +102,7 @@ def cached_page(data):
             + "</tbody></table></html>").encode("utf-8")
 
 
-def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None):
+def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None, release=None):
     slots = threading.BoundedSemaphore(16)
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.0"
@@ -152,7 +153,7 @@ def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None):
             if not self.path.startswith("/") or self.path.startswith("//") or "\r" in self.path or "\n" in self.path:
                 return self.unavailable(400)
             if self.path in {"/health", "/health/live"} and self.command in {"GET", "HEAD"}:
-                return self.send_local(b'{"status":"live"}')
+                return self.send_local(json.dumps(dict(status="live",**({"release_sha":release} if release else {}))).encode())
             if not slots.acquire(blocking=False):
                 return self.unavailable()
             conn = None
@@ -162,7 +163,7 @@ def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None):
                 except Exception:
                     return self.fallback()
                 if self.path in {"/health", "/health/ready"}:
-                    raw = b'{"status":"ok"}'
+                    raw = json.dumps(dict(status="ok",**({"release_sha":release} if release else {}))).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(raw)))
@@ -190,6 +191,11 @@ def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None):
                     response = conn.getresponse()
                     raw = response.read(MAX_RESPONSE+1)
                 except (OSError, http.client.HTTPException):
+                    failed, conn = conn, None
+                    try:
+                        failed.close()
+                    except OSError:
+                        pass
                     return self.fallback()
                 if len(raw) > MAX_RESPONSE or not router.unchanged(identity):
                     return self.unavailable()
@@ -226,10 +232,20 @@ def main(argv=None):
     cfg = json.loads(args.config.read_text(encoding="utf-8-sig"))
     validate_public_url(cfg)
     from guardian.sql import SqlStore
+    if cfg.get("lease_source", "sql") == "guardians":
+        from gateway.observed_lease import ObservedLease
+        store = ObservedLease(cfg["nodes"], os.environ["PERIMETER_HA_TOKEN"])
+    elif cfg.get("lease_source", "sql") == "sql":
+        store = SqlStore()
+    else:
+        raise ValueError("UnknownGatewayLeaseSource")
     credentials = (os.getenv("KPP_WEB_AUTH_USER"), os.getenv("KPP_WEB_AUTH_PASSWORD"))
-    server = create_server(Router(cfg["nodes"], SqlStore(), os.environ["PERIMETER_HA_TOKEN"]),
+    release = os.getenv("PERIMETER_RELEASE_SHA")
+    if release and not re.fullmatch(r"[0-9a-f]{40}",release):
+        raise ValueError("InvalidInstalledReleaseMetadata")
+    server = create_server(Router(cfg["nodes"], store, os.environ["PERIMETER_HA_TOKEN"]),
                            cfg.get("listen", "0.0.0.0"), cfg.get("port", 5051),
-                           fallback_auth=credentials if all(credentials) else None)
+                           fallback_auth=credentials if all(credentials) else None, release=release)
     try:
         server.serve_forever()
     finally:

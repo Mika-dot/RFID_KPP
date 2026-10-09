@@ -4,6 +4,8 @@ import os
 import tempfile
 import unittest
 import copy
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +18,17 @@ def load(name):
 
 
 class InstallationTests(unittest.TestCase):
+    def test_gateway_and_observer_verification_require_exact_installed_release(self):
+        module=load("verify_resilience_installation")
+        with tempfile.TemporaryDirectory() as folder:
+            config=Path(folder)/"nodes.json";config.write_text('{"nodes":[]}',encoding="utf-8")
+            argv=["--nodes-config",str(config),"--release","a"*40,"--gateway-url","http://127.0.0.1:5051"]
+            with patch.dict(os.environ,{"PERIMETER_HA_TOKEN":"private"}),patch.object(module,"verify",return_value={}),patch.object(module,"json_request",return_value=(200,dict(status="ok",release_sha="b"*40))):
+                with self.assertRaisesRegex(RuntimeError,"WrongRelease"):module.main(argv)
+            snapshot=dict(release_sha="a"*40,stale=False,status="collecting_baseline",unavailable_sources=[])
+            with patch.dict(os.environ,{"PERIMETER_HA_TOKEN":"private"}),patch.object(module,"verify",return_value={}),patch.object(module,"json_request",side_effect=[(200,dict(release_sha="a"*40)),(200,snapshot)]),redirect_stdout(io.StringIO()):
+                self.assertEqual(0,module.main(argv+["--observer-url","http://127.0.0.1:19153"]))
+
     def test_local_copy_gate_rejects_missing_stale_incomplete_and_short_retention(self):
         module = load("verify_resilience_installation")
         node = {"id": "physical", "url": "http://physical"}

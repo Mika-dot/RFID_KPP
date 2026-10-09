@@ -25,13 +25,16 @@ def run(argv, check=True):
     return subprocess.run(argv,check=check,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30)
 
 
-def unit(root,python,config,env_file,kind,user="perimeter-observer"):
+def unit(root,python,config,env_file,kind,user="perimeter-observer",release=None):
     for path in (root,python,config,env_file):
         if not Path(path).is_absolute() or re.search(r"[\s%\"'\\]",str(path)):
             raise ValueError("SimpleAbsoluteDeploymentPathsRequired")
+    if release is not None and not re.fullmatch(r"[0-9a-f]{40}",release):
+        raise ValueError("ExactReleaseRequired")
+    metadata = ("Environment=PERIMETER_RELEASE_SHA="+release,) if release else ()
     return "\n".join(("[Unit]","Description=Perimeter "+kind,"After=network-online.target","Wants=network-online.target",
         "[Service]","Type=simple","User="+user,"Group="+user,"WorkingDirectory="+str(root),
-        "EnvironmentFile="+str(env_file),"Environment=PYTHONUTF8=1","ExecStart="+str(python)+" -m "+SERVICES[kind][0]+" --config "+str(config),
+        "EnvironmentFile="+str(env_file),"Environment=PYTHONUTF8=1",*metadata,"ExecStart="+str(python)+" -m "+SERVICES[kind][0]+" --config "+str(config),
         "Restart=always","RestartSec=5","TimeoutStopSec=15","NoNewPrivileges=true","PrivateTmp=true","UMask=0077",
         "[Install]","WantedBy=multi-user.target",""))
 
@@ -76,7 +79,7 @@ def install(root,python,configs,env_file,release):
                      "active":run(["systemctl","is-active",name],False).returncode==0}
         if target.exists():shutil.copyfile(target,backup/name)
     try:
-        for kind,config in configs.items():saved[kind]["path"].write_text(unit(root,python,config,env_file,kind),encoding="utf-8")
+        for kind,config in configs.items():saved[kind]["path"].write_text(unit(root,python,config,env_file,kind,release=release),encoding="utf-8")
         run(["systemctl","daemon-reload"])
         for kind,entry in saved.items():
             run(["systemctl","enable",entry["name"]]);run(["systemctl","restart",entry["name"]])

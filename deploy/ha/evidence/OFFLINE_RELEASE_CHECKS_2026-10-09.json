@@ -1,0 +1,27 @@
+{
+  "adapter_contracts": 6,
+  "golden_traces": 27,
+  "ha_model_scenarios": 8,
+  "mode": "offline_recorded_inputs_no_production_connections",
+  "python_files_parsed": 125,
+  "shadow_differences": 0,
+  "status": "passed",
+  "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096",
+  "qualified_against": "4c9e6d367a3014ca770b45cddc1330bdf2217789",
+  "date": "2026-10-09",
+  "unit_tests": {
+    "total": 603,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 15,
+    "executed": 588,
+    "python": "3.12.14",
+    "platform": "Linux",
+    "operator_tests_after_ownership_change": 9
+  },
+  "protected_business_checks": 15,
+  "compileall": "passed",
+  "diff_check": "passed",
+  "factory_installation": "not_performed",
+  "physical_business_acceptance": "not_measured"
+}

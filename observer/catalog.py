@@ -41,6 +41,12 @@ RUNTIME_FIELDS = {
     "Aggregator": ("aggregator_runtime", ("last_rfid_id", "consecutive_failures")),
 }
 
+RUNTIME_METRICS = ("rfid_sql_insert_latency", "rfid_reconnect_rate", "camera_0_fresh_fps", "camera_1_fresh_fps",
+    "camera_0_stale_ratio", "camera_1_stale_ratio", "video_detection_rate", "video_tracks_per_min",
+    "video_class_distribution", "video_confidence_distribution", "processing_exception_rate",
+    "skud_cursor_velocity", "skud_sync_lag")
+NOT_INSTRUMENTED = {"ha_physical_business_rto"}
+
 
 def coverage(values):
     rows = []
@@ -54,5 +60,9 @@ def coverage(values):
             rows.append({"bus": "HA", "metric": key, "state": "observed" if key in values else "unavailable",
                          "value": values.get(key)})
     for group, metrics in PLANNED_METRICS.items():
-        rows.extend({"bus": group, "metric": key, "state": "not_instrumented", "value": None} for key in metrics)
+        for key in metrics:
+            components = {name:value for name,value in values.items() if name.startswith(key + "_")}
+            rows.append({"bus": group, "metric": key,
+                "state": "not_instrumented" if key in NOT_INSTRUMENTED else "observed" if key in values or components else "unavailable",
+                "value": values.get(key), **({"components":components} if components else {})})
     return rows

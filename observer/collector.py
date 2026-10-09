@@ -13,56 +13,162 @@ def table(value):
     return value
 
 
-def sql_metrics(connection=None):
+def sql_metrics(connection=None, task_connection=None, row_limit=20000):
+    """SELECT-only, independent sources; a failed optional bus stays unknown."""
+    from observer.detailed import summarize, number
+    if type(row_limit) is not int or not 1 <= row_limit <= 50000:
+        raise ValueError("InvalidObserverRowLimit")
     if connection is None:
         import pyodbc
         connection = pyodbc.connect(os.environ["PERIMETER_OBSERVER_SQL"], timeout=3, autocommit=True, readonly=True)
+    output, failures = {}, []
     try:
         connection.timeout = 3
         connection.execute("SET LOCK_TIMEOUT 2000")
+        destination = os.getenv("PERIMETER_OBSERVER_TASK_SQL") or os.getenv("KPP_TASK_CONN_STR")
+        tasks_db = task_connection if task_connection is not None else connection
+        try:
+            if task_connection is None and destination:
+                import pyodbc
+                task_connection = pyodbc.connect(destination, timeout=3, autocommit=True, readonly=True)
+                tasks_db = task_connection
+            if tasks_db is not connection:
+                tasks_db.timeout = 3
+                tasks_db.execute("SET LOCK_TIMEOUT 2000")
+        except Exception as exc:
+            tasks_db = None  # Never silently query the wrong database.
+            failures.append("task_connection:" + type(exc).__name__)
         start, end = connection.execute("SELECT DATEADD(minute,-5,SYSDATETIME()),SYSDATETIME()").fetchone()
-        output = {}
-        for name, env, default, column in (
-            ("rfid_reads_5min", "OBSERVER_RFID_TABLE", "dbo.RFID_Tags", "RecordTime"),
-            ("video_events_5min", "OBSERVER_VIDEO_TABLE", "dbo.ReelTransitions", "CapturedAt"),
-            ("skud_events_5min", "OBSERVER_SKUD_TABLE", "dbo.RusGuardLogs", "CreatedAt"),
-            ("warehouse_rows_5min", "OBSERVER_WAREHOUSE_TABLE", "dbo.Warehouse", "Dt"),
-            ("task_rows_5min", "OBSERVER_TASK_TABLE", "dbo.RfidTags", "Dt")):
-            source = table(os.getenv(env, default))
-            output[name] = int(connection.execute(f"SELECT COUNT_BIG(*) FROM {source} WHERE {column}>=? AND {column}<?", start, end).fetchone()[0])
-        events = table(os.getenv("OBSERVER_EVENTS_TABLE", "dbo.KPP_ReelEvents"))
-        row = connection.execute(f"""SELECT COUNT_BIG(*),COUNT(DISTINCT CASE WHEN RfidReadCount>0 THEN PassageGroupKey END),
-            SUM(CASE WHEN IsReel=1 AND RfidReadCount>0 THEN 1 ELSE 0 END),SUM(CONVERT(bigint,NeedRecheck)),
-            SUM(CASE WHEN FinalDirection='UNKNOWN' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN IsReel=1 AND RfidReadCount>0 AND VideoMatched=1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN IsReel=1 AND RfidReadCount>0 AND SkudMatched=1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN SessionCloseReason='WAREHOUSE_ONLY' THEN 1 ELSE 0 END)
-            FROM {events} WHERE LastSeen>=? AND LastSeen<?""", start, end).fetchone()
-        for key, value in zip(("final_events_5min", "rfid_groups_5min", "rfid_reels_5min", "need_recheck_5min", "unknown_direction_5min", "video_matched_5min", "skud_matched_5min", "warehouse_only_5min"), row):
-            output[key] = int(value or 0)
-        raw = table(os.getenv("OBSERVER_RFID_TABLE", "dbo.RFID_Tags"))
-        row = connection.execute(f"""SELECT COUNT(DISTINCT EPC),COUNT(DISTINCT CONCAT(EPC,TID)),AVG(TRY_CONVERT(float,RSSI)),
-            SUM(CASE WHEN Antenna=1 THEN 1 ELSE 0 END),SUM(CASE WHEN Antenna=2 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN Antenna=3 THEN 1 ELSE 0 END),SUM(CASE WHEN Antenna=4 THEN 1 ELSE 0 END)
-            FROM {raw} WHERE RecordTime>=? AND RecordTime<?""",start,end).fetchone()
-        for key,value in zip(("rfid_unique_epc_5min","rfid_unique_epc_tid_5min","rfid_avg_rssi","rfid_antenna1_reads","rfid_antenna2_reads","rfid_antenna3_reads","rfid_antenna4_reads"),row):
-            if value is not None:output[key]=float(value)
-        wh=table(os.getenv("OBSERVER_WAREHOUSE_TABLE","dbo.Warehouse"))
-        tasks=table(os.getenv("OBSERVER_TASK_TABLE","dbo.RfidTags"))
-        row=connection.execute(f"""SELECT
-            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(w.Tag)),'') IS NOT NULL AND UPPER(w.Tag)=UPPER(e.SourceTag) THEN 1 ELSE 0 END),
-            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(w.Tag)),'') IS NULL AND w.Ids=t.Ids THEN 1 ELSE 0 END),
-            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(w.Tag)),'') IS NULL AND ISNULL(w.Ids,'')<>ISNULL(t.Ids,'') AND w.SeriesNumber=t.SeriesNumber THEN 1 ELSE 0 END)
-            FROM {events} e JOIN {wh} w ON w.Id=e.WarehouseId LEFT JOIN {tasks} t ON t.Id=e.Task1CId
-            WHERE e.LastSeen>=? AND e.LastSeen<?""",start,end).fetchone()
-        for key,value in zip(("warehouse_tag_links_5min","warehouse_ids_links_5min","warehouse_series_links_5min"),row):
-            output[key]=int(value or 0)
-        maximum = connection.execute(f"SELECT ISNULL(MAX(Id),0) FROM {raw}").fetchone()[0]
-        cursor = connection.execute("SELECT TRY_CONVERT(bigint,StateValue) FROM dbo.KPP_RuntimeState WHERE StateKey='LAST_RFID_ID_V3'").fetchone()
-        if cursor and cursor[0] is not None:
-            output["cursor_lag"] = max(0, int(maximum)-int(cursor[0]))
+        sources = {
+            "rfid": (connection, table(os.getenv("OBSERVER_RFID_TABLE", "dbo.RFID_Tags")), "RecordTime", "Id,RecordTime,Antenna,RSSI,EPC,TID,TimeQuality,ReceivedAt"),
+            "video": (connection, table(os.getenv("OBSERVER_VIDEO_TABLE", "dbo.ReelTransitions")), "CapturedAt", "Id,CapturedAt,ReceivedAt,ToCamera,TimeDiffSec,ReelCount"),
+            "skud": (connection, table(os.getenv("OBSERVER_SKUD_TABLE", "dbo.RusGuardLogs")), "CreatedAt", "ExternalId2,CreatedAt,ReceivedAt,Direction,PersonControlDeviceName,CASE WHEN ExternalUserGuid IS NOT NULL AND PassExternalId2 IS NOT NULL THEN 1 ELSE 0 END AS HasIdentity"),
+            "events": (connection, table(os.getenv("OBSERVER_EVENTS_TABLE", "dbo.KPP_ReelEvents")), "LastSeen", "EventId,FirstSeen,LastSeen,CompletedAt,UpdatedAt,RfidReadCount,IsReel,PassageGroupKey,NeedRecheck,FinalDirection,VideoMatched,SkudMatched,SessionCloseReason,WarningFlags,ConfidencePct,WarehouseId,WarehouseDt,VideoTimeDeltaMs/1000.0 AS VideoTimeDiffSec,SkudTimeDeltaMs/1000.0 AS SkudTimeDiffSec,SourceTag,Task1CId"),
+            "warehouse": (tasks_db, table(os.getenv("OBSERVER_WAREHOUSE_TABLE", "dbo.Warehouse")), "Dt", "Id,Dt,Tag,Ids,SeriesNumber"),
+            "tasks": (tasks_db, table(os.getenv("OBSERVER_TASK_TABLE", "dbo.RfidTags")), "Dt", "Id,Dt,Tag,Ids,SeriesNumber"),
+        }
+        populations = {}
+        count_names = {"rfid":"rfid_reads_5min", "video":"video_events_5min", "skud":"skud_events_5min", "events":"final_events_5min", "warehouse":"warehouse_rows_5min", "tasks":"task_rows_5min"}
+        for stream, (db, source, stamp, fields) in sources.items():
+            try:
+                output[count_names[stream]] = int(db.execute(f"SELECT COUNT_BIG(*) FROM {source} WHERE [{stamp}]>=? AND [{stamp}]<?", start, end).fetchone()[0])
+                cursor = db.execute(f"SELECT TOP ({row_limit + 1}) {fields} FROM {source} WHERE [{stamp}]>=? AND [{stamp}]<? ORDER BY [{stamp}]", start, end)
+                rows = cursor.fetchall()
+                if len(rows) > row_limit:
+                    failures.append(stream + ":population_truncated")
+                    continue
+                names = [column[0] for column in cursor.description]
+                population = [dict(zip(names, row)) for row in rows]
+                populations[stream] = population
+                output.update(summarize(stream, population))
+            except Exception as exc:
+                failures.append(stream + ":" + type(exc).__name__)
+        events = populations.get("events")
+        if events is not None:
+            physical = [r for r in events if r.get("IsReel") and (r.get("RfidReadCount") or 0) > 0]
+            output.update(rfid_groups_5min=len({r["PassageGroupKey"] for r in events if (r.get("RfidReadCount") or 0)>0 and r.get("PassageGroupKey")}),
+                rfid_reels_5min=len(physical), need_recheck_5min=sum(bool(r.get("NeedRecheck")) for r in events),
+                unknown_direction_5min=sum(r.get("FinalDirection") == "UNKNOWN" for r in events),
+                video_matched_5min=sum(bool(r.get("VideoMatched")) for r in physical),
+                skud_matched_5min=sum(bool(r.get("SkudMatched")) for r in physical),
+                warehouse_only_5min=sum(r.get("SessionCloseReason") == "WAREHOUSE_ONLY" for r in events))
+        raw = populations.get("rfid")
+        if raw is not None:
+            output["rfid_unique_epc_5min"] = len({r["EPC"] for r in raw if r.get("EPC")})
+            output["rfid_unique_epc_tid_5min"] = len({(r["EPC"], r.get("TID")) for r in raw if r.get("EPC")})
+            rssi = [v for v in (number(r.get("RSSI")) for r in raw) if v is not None]
+            if rssi:
+                output["rfid_avg_rssi"] = sum(rssi) / len(rssi)
+            for antenna in range(1,5):
+                output[f"rfid_antenna{antenna}_reads"] = sum(r.get("Antenna") == antenna for r in raw)
+        # Link lookup is by stored IDs across databases, never a local DB join.
+        def linked_rows(stream, ids):
+            db, source, _stamp, _fields = sources[stream]
+            if db is None:
+                raise RuntimeError("TaskConnectionUnavailable")
+            ids = sorted({int(value) for value in ids if value is not None})
+            result = {}
+            for offset in range(0, len(ids), 500):
+                batch = ids[offset:offset+500]
+                rows = db.execute(f"SELECT Id,Tag,Ids,SeriesNumber FROM {source} WHERE Id IN ({','.join('?' for _ in batch)})", *batch).fetchall()
+                result.update({int(r[0]):dict(zip(("Id","Tag","Ids","SeriesNumber"),r)) for r in rows})
+            return result
+        if events is not None:
+            try:
+                warehouse = linked_rows("warehouse", (r.get("WarehouseId") for r in events))
+                tasks = linked_rows("tasks", (r.get("Task1CId") for r in events))
+                links = {"tag":0,"ids":0,"series":0}
+                norm = lambda value: str(value or "").strip().upper()
+                for event in events:
+                    w, t = warehouse.get(event.get("WarehouseId")), tasks.get(event.get("Task1CId"))
+                    if not w:
+                        continue
+                    if norm(w["Tag"]) and norm(w["Tag"]) == norm(event.get("SourceTag")):
+                        links["tag"] += 1
+                    elif not norm(w["Tag"]) and t:
+                        if norm(w["Ids"]) and norm(w["Ids"]) == norm(t["Ids"]):
+                            links["ids"] += 1
+                        elif norm(w["SeriesNumber"]) and norm(w["SeriesNumber"]) == norm(t["SeriesNumber"]):
+                            links["series"] += 1
+                output.update({"warehouse_"+kind+"_links_5min":count for kind,count in links.items()})
+            except Exception as exc:
+                failures.append("identity_links:"+type(exc).__name__)
+        # Full history link existence checks are bounded by recent source IDs.
+        if "warehouse" in populations:
+            try:
+                if tasks_db is None:
+                    raise RuntimeError("TaskConnectionUnavailable")
+                from datetime import timedelta
+                from observer.detailed import ambiguous_series_count
+                hours = float(os.getenv("KPP_TASK_MATCH_WINDOW_HOURS", "24"))
+                if not 0 < hours <= 168:
+                    raise ValueError("AmbiguityWindowInvalid")
+                wanted = [r for r in populations["warehouse"] if not r.get("Tag") and r.get("SeriesNumber")]
+                candidates = []
+                series = sorted({r["SeriesNumber"] for r in wanted})
+                if wanted:
+                    lower = min(r["Dt"] for r in wanted) - timedelta(hours=hours)
+                    upper = max(r["Dt"] for r in wanted) + timedelta(hours=hours)
+                    task_table = sources["tasks"][1]
+                    for offset in range(0,len(series),500):
+                        batch = series[offset:offset+500]
+                        rows = tasks_db.execute(f"SELECT TOP ({row_limit+1}) Tag,SeriesNumber,Dt FROM {task_table} WHERE SeriesNumber IN ({','.join('?' for _ in batch)}) AND Dt>=? AND Dt<=?",*batch,lower,upper).fetchall()
+                        candidates.extend(rows)
+                        if len(candidates) > row_limit:
+                            raise RuntimeError("AmbiguityPopulationTruncated")
+                output["warehouse_ambiguous_series_count"] = ambiguous_series_count(wanted,candidates,hours)
+            except Exception as exc:
+                failures.append("warehouse_ambiguity:"+type(exc).__name__)
+        for stream, field, metric in (("video","VideoEventId","video_unmatched_ratio"), ("warehouse","WarehouseId","warehouse_unlinked_ratio")):
+            if populations.get(stream):
+                try:
+                    ids = [r["Id"] for r in populations[stream]]
+                    linked = set()
+                    event_table = sources["events"][1]
+                    for offset in range(0,len(ids),500):
+                        batch = ids[offset:offset+500]
+                        query = f"SELECT DISTINCT {field} FROM {event_table} WHERE {field} IN ({','.join('?' for _ in batch)})"
+                        linked.update(int(r[0]) for r in connection.execute(query,*batch).fetchall())
+                        if stream == "video":
+                            link_table = table(os.getenv("KPP_VIDEO_LINK_TABLE", "dbo.KPP_EventVideoLinks"))
+                            query = f"SELECT DISTINCT VideoEventId FROM {link_table} WHERE VideoEventId IN ({','.join('?' for _ in batch)})"
+                            linked.update(int(r[0]) for r in connection.execute(query,*batch).fetchall())
+                    output[metric] = sum(value not in linked for value in ids)/len(ids)
+                except Exception as exc:
+                    failures.append(metric+":"+type(exc).__name__)
+        try:
+            raw_table=sources["rfid"][1]
+            maximum=connection.execute(f"SELECT ISNULL(MAX(Id),0) FROM {raw_table}").fetchone()[0]
+            cursor=connection.execute("SELECT TRY_CONVERT(bigint,StateValue) FROM dbo.KPP_RuntimeState WHERE StateKey='LAST_RFID_ID_V3'").fetchone()
+            if cursor and cursor[0] is not None:
+                output["cursor_lag"]=max(0,int(maximum)-int(cursor[0]))
+        except Exception as exc:
+            failures.append("cursor:"+type(exc).__name__)
+        output["_unavailable_sources"] = failures
         return output
     finally:
+        if task_connection is not None and task_connection is not connection:
+            task_connection.close()
         connection.close()
 
 
@@ -70,7 +176,8 @@ def cluster_metrics(nodes, token, request=json_request):
     def fetch(node):
         try:
             code, status = request(node["url"].rstrip("/")+"/status", token, timeout=2)
-            if (code != 200 or status.get("node") != node["id"] or type(status.get("sample_age")) not in (int, float)
+            if (code != 200 or status.get("node") != node["id"] or type(status.get("fencing_protocol")) is not int
+                    or status["fencing_protocol"] != 2 or type(status.get("sample_age")) not in (int, float)
                     or not 0 <= status["sample_age"] <= 10):
                 return node["id"], None
             return node["id"], status
@@ -86,6 +193,10 @@ def cluster_metrics(nodes, token, request=json_request):
         s = statuses[node["id"]]
         if not s:
             continue
+        for key in ("lease_renew_jitter", "controller_renew_jitter", "worker_restarts"):
+            value = s.get("ha_runtime_metrics", {}).get(key)
+            if type(value) in (int, float) and value >= 0:
+                metrics[key + "_" + node["id"]] = value
         metrics["ha_faulted_"+node["id"]] = int(s.get("faulted", False))
         update = s.get("update", {})
         metrics["ha_quarantined_"+node["id"]] = update.get("quarantined", 0)
@@ -125,4 +236,13 @@ def cluster_metrics(nodes, token, request=json_request):
                 value = detail.get("metrics", {}).get(key)
                 if type(value) in (int, float) and value >= 0:
                     metrics[prefix + "_" + key] = value
+        from observer.catalog import RUNTIME_METRICS
+        for service in status.get("services", {}).values():
+            detail = service.get("detail", {}).get("metrics", {})
+            for key, value in detail.items():
+                if any(key == stem or key.startswith(stem + "_") for stem in RUNTIME_METRICS):
+                    if type(value) in (int, float):
+                        import math
+                        if math.isfinite(value) and value >= 0:
+                            metrics[key] = value
     return metrics, statuses

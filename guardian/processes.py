@@ -20,6 +20,7 @@ class Processes:
         self.children = {}
         self.logs = {}
         self.epoch = None
+        self.launch_counts = {}
         self.registry = Path(cfg["state_dir"]) / "children.json"
 
     def reap_orphans(self):
@@ -123,6 +124,7 @@ class Processes:
                        cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, **options)
                 self.children[name] = p
+                self.launch_counts[name] = self.launch_counts.get(name, 0) + 1
                 thread = threading.Thread(target=self.capture, args=(p,logdir/(name+".log")), daemon=True)
                 self.logs[name] = thread
                 thread.start()

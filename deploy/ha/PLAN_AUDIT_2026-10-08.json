@@ -80,9 +80,11 @@
       "status": "PARTIAL",
       "evidence": [
         "guardian/hardware_fence.py",
-        "tests/test_ha_qualification.py"
+        "tests/test_ha_qualification.py",
+        "deploy/ha/switch_fence.py",
+        "tests/test_switch_fence.py"
       ],
-      "remaining": "Verified interface/rollback реализованы; адаптер конкретного switch/relay не подключён"
+      "remaining": "IF-MIB/Net-SNMP v3 authPriv adapter реализован и offline проверен; нужны actual exclusive switch interfaces/private credentials и подключение на обоих controllers. Shared uplinks/trunks не поддерживаются."
     },
     {
       "id": "2.4",
@@ -393,9 +395,12 @@
       "requirement": "Постоянный независимый Web адрес",
       "status": "SOFTWARE_READY",
       "evidence": [
-        "gateway/server.py"
+        "gateway/server.py",
+        "gateway/observed_lease.py",
+        "deploy/ha/gateway.ub22.example.json",
+        "tests/test_observed_lease.py"
       ],
-      "remaining": "Установка/адрес; для отказа Comparator независимая инфраструктура"
+      "remaining": "Подготовлен независимый Web на ub22 с fresh SQL witnesses; остаются установка и actual публичный LAN/DNS адрес ub22."
     },
     {
       "id": "A4",
@@ -462,5 +467,15 @@
     "not_instrumented_definitions": 43,
     "live_measurements": "not_observed_from_this_environment",
     "note": "Section 5 metric wishlist exceeds section 7 checklist; all missing instrumentation is explicitly listed in observer/catalog.py, not considered measured."
+  },
+  "continuation_2026_10_09": {
+    "published_parent": "4c9e6d367a3014ca770b45cddc1330bdf2217789",
+    "runbook": "deploy/ha/READY_TO_INSTALL_2026-10-09.md",
+    "wishlist_instrumented": 42,
+    "wishlist_total": 43,
+    "physical_business_rto": "not_measured",
+    "installation_performed": false,
+    "factory_current_state": "unknown",
+    "note": "Original status counts are unchanged: physical acceptance, actual infrastructure, independent factory labels and elapsed baseline cannot be closed by offline tools."
   }
 }

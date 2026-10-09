@@ -104,10 +104,17 @@ class Node:
             result["fallback_enabled"] = getattr(self, "fallback", None) is not None
             result["metadata_mirror"] = dict(getattr(self, "mirror_status", {"enabled": False}))
             result["controller"] = dict(getattr(self, "controller_status", {"owner": None, "valid": False, "at": 0}))
+            observed = getattr(self, "observed_lease", None)
+            result["observed_lease"] = dict(observed, age_sec=time.monotonic()-self.observed_lease_at) if observed else {}
             env = dict(os.environ, **getattr(self, "cfg", {}).get("env", {}))
             result["correlation"] = {"mode": env.get("KPP_ADAPTIVE_WINDOWS_MODE", "shadow")
                                      if env.get("KPP_ADAPTIVE_WINDOWS_ENABLED", "0") == "1" else "off"}
             result["bus_metrics"] = dict(getattr(self, "bus_metrics", {}))
+            from common.bus_statistics import snapshot as runtime_statistics
+            result["ha_runtime_metrics"] = runtime_statistics()
+            launch_counts = getattr(getattr(self, "processes", None), "launch_counts", {})
+            if isinstance(launch_counts, dict) and launch_counts:
+                result["ha_runtime_metrics"]["worker_restarts"] = sum(max(0, count - 1) for count in launch_counts.values())
             result["bus_sample_age"] = time.monotonic()-getattr(self, "bus_metrics_at", 0)
             counts=getattr(self.telemetry,"kind_counts",{})
             result["event_counts"] = dict(counts) if isinstance(counts,dict) else {}
@@ -302,6 +309,10 @@ class Node:
 
     def tick(self):
         lease = self.store.lease()
+        with self.lock:
+            keys = ("owner", "epoch", "valid", "enabled", "remaining_sec")
+            self.observed_lease = {key:lease[key] for key in keys} if all(key in lease for key in keys) else {}
+            self.observed_lease_at = time.monotonic()
         state = self.store.node_state(self.cfg["node_id"])
         owned = lease["valid"] and lease["owner"] == self.cfg["node_id"]
         with self.mutation:

@@ -28,7 +28,9 @@ class Service:
         failures = []
         if os.getenv("PERIMETER_OBSERVER_SQL"):
             try:
-                values.update(sql_metrics())
+                collected = sql_metrics()
+                failures.extend(collected.pop("_unavailable_sources", []))
+                values.update(collected)
             except Exception as exc:
                 failures.append("sql:"+type(exc).__name__)
         else:
@@ -42,6 +44,7 @@ class Service:
         severe = any(v["status"] == "critical" for v in results.values())
         status = "critical" if critical or severe else "warning" if warning or any(v["status"] == "warning" for v in results.values()) else "collecting_baseline" if any(not v["baseline_ready"] for v in results.values()) else "normal"
         snapshot = {"at": now, "status": status, "metrics": results, "unavailable_sources": failures,
+                    "release_sha": os.getenv("PERIMETER_RELEASE_SHA"),
                     "hypotheses": hypotheses(results), "baseline_days_required": self.cfg.get("baseline_days", 7)}
         snapshot["metric_coverage"] = coverage(observed_values)
         with self.lock:

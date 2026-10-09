@@ -60,19 +60,39 @@ OUTPUT inserted.Token
 WHERE Id=1 AND (ExpiresAt<=SYSUTCDATETIME() OR Token=?);
 """, self.controller, self.token, ttl, self.token).fetchone()
             conn.commit()
+            if row:
+                self._renew_sample("controller_renew_jitter", self.controller)
             return bool(row)
 
+    def _renew_sample(self, key, identity):
+        import time
+        from common.bus_statistics import record
+        now = time.monotonic()
+        previous = getattr(self, "_renew_samples", {}).get(key)
+        if previous and previous[1] == identity and now - previous[0] < .5:
+            return  # Extra authority confirmation during a handoff is not a renewal interval.
+        if previous and previous[1] == identity:
+            record(key, abs(now - previous[0] - 2))
+        if not hasattr(self, "_renew_samples"):
+            self._renew_samples = {}
+        self._renew_samples[key] = (now, identity)
+
     def lease(self):
+        import time
+        started = time.monotonic()
         with self.connect() as conn:
             row = conn.execute("""
 SELECT Owner,Epoch,CASE WHEN Enabled=1 AND ExpiresAt>SYSUTCDATETIME()
-THEN 1 ELSE 0 END, DATEDIFF(second,StartedAt,SYSUTCDATETIME()),Enabled
+THEN 1 ELSE 0 END, DATEDIFF(second,StartedAt,SYSUTCDATETIME()),Enabled,
+CASE WHEN Enabled=1 AND ExpiresAt>SYSUTCDATETIME()
+THEN DATEDIFF_BIG(millisecond,SYSUTCDATETIME(),ExpiresAt)/1000.0 ELSE 0 END
 FROM dbo.KPP_HA_Lease WHERE Id=1
 """).fetchone()
             if row is None:
                 raise RuntimeError("HA schema not installed")
             return {"owner": row[0], "epoch": int(row[1]), "valid": bool(row[2]),
-                    "age": int(row[3]), "enabled": bool(row[4])}
+                    "age": int(row[3]), "enabled": bool(row[4]),
+                    "remaining_sec": max(0, float(row[5]) - (time.monotonic() - started)) if len(row) > 5 else 0}
 
     def controller_owned(self):
         # Repair must observe ownership, never renew it on behalf of election.
@@ -105,6 +125,7 @@ WHERE Id=1 AND Enabled=1 AND Owner=? AND ExpiresAt>SYSUTCDATETIME()
 """, ttl, owner).fetchone()
                 if row is not None:
                     conn.commit()
+                    self._renew_sample("lease_renew_jitter", owner)
                     return
             # Close the unsuccessful renewal transaction before acquiring the
             # barrier. Writers acquire the barrier before reading the lease.

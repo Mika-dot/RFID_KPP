@@ -28,6 +28,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHand
 NODES = {"physical": "172.31.0.188", "perimetr": "172.31.0.134", "comparator": "172.31.0.192"}
 LABELS = {"physical": "Физика", "perimetr": "Perimetr", "comparator": "Comparator"}
 OBSERVER_STATUS = "http://127.0.0.1:19153/status"
+GATEWAY_HEALTH = "http://127.0.0.1:5051/health/ready"  # Independent gateway on ub22.
 MARKER = "Managed by Perimeter HA external observer v1"
 UNIT = "perimeter-ha-monitor.service"
 SCRIPT = Path("/usr/local/lib/perimeter-ha-monitor/monitor.py")
@@ -228,7 +229,7 @@ def collect():
         business = (1, "Нет готового ведущего")
     data = summarize(nodes, business)
     try:
-        code, health = http_json("http://" + NODES["comparator"] + ":5051/health/ready", accept_degraded=True)
+        code, health = http_json(GATEWAY_HEALTH, accept_degraded=True)
         data["gateway"] = {"ready": code == 200 and health.get("status") == "ok", "observed": True}
     except Exception:
         data["gateway"] = {"ready": False, "observed": False}

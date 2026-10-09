@@ -42,8 +42,8 @@ def verify(nodes,release,token,request=json_request,require_local_copies=False):
     for node in nodes:
         code,status=request(node["url"].rstrip("/")+"/status",token,timeout=3)
         if (code!=200 or status.get("node")!=node["id"] or status.get("release_sha")!=release
-            or status.get("fencing_protocol")!=2 or status.get("replication_enabled") is not True
-            or not 0<=status.get("sample_age",999)<=10 or status.get("faulted") is not False
+            or type(status.get("fencing_protocol")) is not int or status["fencing_protocol"]!=2 or status.get("replication_enabled") is not True
+            or type(status.get("sample_age")) not in (int,float) or not 0<=status["sample_age"]<=10 or status.get("faulted") is not False
             or status.get("operator_maintenance") is not False or status.get("prepared") is not True):
             raise RuntimeError("NodeInstallationNotReady")
         if status.get("active"):
@@ -65,19 +65,28 @@ def verify(nodes,release,token,request=json_request,require_local_copies=False):
 def main(argv=None):
     p=argparse.ArgumentParser();p.add_argument("--nodes-config",type=Path,required=True);p.add_argument("--release",required=True)
     p.add_argument("--gateway-url");p.add_argument("--observer-url");p.add_argument("--output",type=Path)
+    p.add_argument("--token-file",type=Path,help="Existing private token file; value is never printed")
     p.add_argument("--require-local-copies", action="store_true", help="Require fresh caught-up six-stream mirrors and >=93-day journals on all nodes")
     a=p.parse_args(argv)
     if not re.fullmatch(r"[0-9a-f]{40}",a.release):raise ValueError("ExactReleaseRequired")
-    token=os.environ["PERIMETER_HA_TOKEN"]
+    if a.token_file:
+        if (a.token_file.is_symlink() or not a.token_file.is_file()
+                or (os.name!="nt" and (a.token_file.stat().st_mode & 0o077 or a.token_file.stat().st_uid!=os.geteuid()))):
+            raise RuntimeError("PrivateTokenFileRequired")
+        token=a.token_file.read_text(encoding="utf-8-sig").strip()
+        if len(token)<32 or token.startswith("CHANGE_"):
+            raise ValueError("ExistingClusterCredentialsRequired")
+    else:
+        token=os.environ["PERIMETER_HA_TOKEN"]
     proof=verify(json.loads(a.nodes_config.read_text(encoding="utf-8-sig"))["nodes"],a.release,token,
                  require_local_copies=a.require_local_copies)
     if a.gateway_url:
-        code,_=json_request(a.gateway_url.rstrip("/")+"/health/ready",timeout=3)
-        if code!=200:raise RuntimeError("GatewayNotReady")
+        code,status=json_request(a.gateway_url.rstrip("/")+"/health/ready",timeout=5)
+        if code!=200 or status.get("release_sha")!=a.release:raise RuntimeError("GatewayNotReadyOrWrongRelease")
         proof["gateway_ready"]=True
     if a.observer_url:
         code,snapshot=json_request(a.observer_url.rstrip("/")+"/status",token,timeout=3)
-        if code!=200 or snapshot.get("stale") or snapshot.get("unavailable_sources") or snapshot.get("status") in {"starting","collector_error","critical"}:
+        if code!=200 or snapshot.get("release_sha")!=a.release or snapshot.get("stale") is not False or snapshot.get("unavailable_sources") or snapshot.get("status") in {"starting","collector_error","critical"}:
             raise RuntimeError("BehaviorObserverNotReady")
         proof["observer_ready"]=True;proof["baseline_status"]=snapshot["status"]
     if a.output:
