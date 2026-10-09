@@ -226,6 +226,37 @@ class WarehouseAggregatorTests(unittest.TestCase):
         obj._enrich_existing_event(cur, 44, 101, self.dt, self.guid, "7734/26", None, MATCH_IDS)
         self.assertEqual(cur.executions[-1][1][:2], ("UNKNOWN", 0))
 
+    def test_replayed_link_preserves_adaptive_provenance_and_excludes_learning(self):
+        import json
+        obj = self.make_aggregator()
+        previous = {"id": 101, "adaptive_match": True, "learning_eligible": False,
+                    "bucket": "global", "window_start": "previous-start"}
+        cur = RecordingCursor(rows=[(json.dumps(previous),)])
+        obj._enrich_existing_event(cur, 44, 101, self.dt, self.guid, "7734/26", None, MATCH_IDS)
+        evidence = json.loads(cur.executions[-1][1][-2])
+        self.assertTrue(evidence["adaptive_match"])
+        self.assertFalse(evidence["learning_eligible"])
+        self.assertEqual("previous-start", evidence["window_start"])
+        self.assertEqual(MATCH_IDS, evidence["match_method"])
+
+    def test_delayed_ids_and_series_identity_share_adaptive_search_envelope(self):
+        obj = self.make_aggregator()
+        obj.ADAPTIVE_WINDOWS_ENABLED, obj.ADAPTIVE_WINDOWS_MODE = True, "active"
+        obj.accepted_windows = AdaptiveWindowModel(min_samples=1, margin_sec=30)
+        obj.accepted_windows.observe(TravelObservation(self.dt - timedelta(hours=48), self.dt))
+        task_dt = self.dt - timedelta(hours=48)
+        cur = RecordingCursor(rows=[(7, task_dt, self.tag, self.guid, "7734/26")])
+        result = obj._resolve_identity(cur, "", self.guid, "7734/26", self.dt)
+        self.assertEqual(self.tag, result.preferred_tag)
+        self.assertEqual(MATCH_IDS, result.primary_method)
+        self.assertLessEqual(cur.executions[0][1][0], task_dt)
+        # Expanded series lookup must still refuse ambiguous physical identity.
+        cur = RecordingCursor(rows=[(7, task_dt, self.tag, "", "7734/26"),
+                                    (8, task_dt, "B" * 32, "", "7734/26")])
+        result = obj._resolve_identity(cur, "", self.guid, "7734/26", self.dt)
+        self.assertTrue(result.series_ambiguous)
+        self.assertEqual((), result.candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

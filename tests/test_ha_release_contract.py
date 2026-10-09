@@ -89,6 +89,14 @@ class ReleaseAdmissionTests(unittest.TestCase):
         restored = Updates(self.cfg, Mock(), Mock())
         self.assertEqual(sha, restored.state["trusted_main_sha"])
         self.assertEqual(self.base, restored.state["current"]["sha"])
+        for updater in (self.updates, restored):
+            updater.git = self.updates.git
+            with patch.object(updater, "git", wraps=updater.git) as git:
+                updater.stage()
+            self.assertEqual([("fetch", "origin", "main"), ("rev-parse", "FETCH_HEAD")],
+                             [call.args for call in git.call_args_list])
+            self.assertEqual(self.base, updater.main_sha)
+        self.assertEqual(1, sum(call.args[0] == "update_docs_only" for call in self.telemetry.event.call_args_list))
 
     @patch("guardian.update.preflight", return_value={"ok": True})
     def test_operator_script_change_is_runtime_even_inside_documentation_folder(self, preflight):
@@ -189,7 +197,7 @@ class ReleaseAdmissionTests(unittest.TestCase):
             restarted.stage()
 
     def test_installed_business_checks_keep_both_factory_hotfixes(self):
-        self.assertEqual(12, verify_business(self.repo))
+        self.assertEqual(15, verify_business(self.repo))
 
     def test_candidate_green_suite_cannot_hide_wrong_warehouse_direction(self):
         path = self.repo / "common/warehouse_direction.py"
@@ -211,6 +219,25 @@ class ReleaseAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "CandidateProtectedBusinessChecksFailed"):
             self.updates.stage()
         self.assertIn(sha, self.updates.quarantined)
+
+    def test_candidate_cannot_remove_production_watchdog_evidence_even_with_green_tests(self):
+        path = "deploy/monitored_rfid_recovery.py"
+        self.write(path, (self.repo / path).read_text().replace("video_history_complete=True,", ""))
+        sha = self.candidate()
+        with self.assertRaisesRegex(RuntimeError, "CandidateProtectedBusinessChecksFailed"):
+            self.updates.stage()
+        self.assertIn(sha, self.updates.quarantined)
+
+    def test_both_adapter_paths_require_latch_provenance_and_causal_timestamps(self):
+        from guardian.release_contract import verify_watchdog_wiring
+        for relative in ("deploy/monitored_rfid.py", "deploy/monitored_rfid_recovery.py"):
+            original = (self.repo / relative).read_text()
+            for before, after in (("last_fault_detail=self.state.last_fault_detail,", ""),
+                                  ("video_at=video_at,", "video_at=now,")):
+                self.write(relative, original.replace(before, after))
+                with self.assertRaisesRegex(RuntimeError, "EvidenceWiringChanged"):
+                    verify_watchdog_wiring(self.repo)
+                self.write(relative, original)
 
 
 if __name__ == "__main__":

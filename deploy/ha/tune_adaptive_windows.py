@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -23,12 +25,14 @@ def model_hash(model):
     return hashlib.sha256(model.dumps().encode()).hexdigest()
 
 
-def metrics(model, rows, baseline=False):
+def metrics(model, rows, baseline=False, legacy_window_hours=24):
     tp = fp = positives = negatives = 0
     for row in rows:
         seconds = row["observation"].travel_seconds
-        bounds = model.bounds_for(row["observation"].warehouse_at, row["observation"].transport)
-        accepted = seconds <= 86400 if baseline or bounds.confidence == "cold_start" else bounds.lower_sec <= seconds <= bounds.upper_sec
+        # The matcher has no trusted transport before selecting a passage.
+        # Qualify the UNKNOWN hierarchy it actually uses, never labelled transport.
+        bounds = model.bounds_for(row["observation"].warehouse_at, "UNKNOWN")
+        accepted = seconds <= legacy_window_hours * 3600 if baseline or bounds.confidence == "cold_start" else bounds.lower_sec <= seconds <= bounds.upper_sec
         if row["label"] == "confirmed":
             positives += 1
             tp += int(accepted)
@@ -41,7 +45,9 @@ def metrics(model, rows, baseline=False):
             "positives": positives, "negatives": negatives}
 
 
-def train(rows, min_samples=8, margin_sec=30):
+def train(rows, min_samples=8, margin_sec=30, legacy_window_hours=24):
+    if not math.isfinite(legacy_window_hours) or legacy_window_hours <= 0:
+        raise ValueError("LegacyWindowInvalid")
     prepared, seen = [], set()
     for row in rows:
         if row.get("label") not in {"confirmed", "rejected"}:
@@ -77,10 +83,12 @@ def train(rows, min_samples=8, margin_sec=30):
             result = model.fit_gradient_descent(labels["confirmed"], labels["rejected"],
                                                 bucket=key, steps=1000, learning_rate=1)
             optimized.append({"bucket": key, **result})
-    baseline, candidate = metrics(model, validation, baseline=True), metrics(model, validation)
+    baseline = metrics(model, validation, baseline=True, legacy_window_hours=legacy_window_hours)
+    candidate = metrics(model, validation, legacy_window_hours=legacy_window_hours)
     accepted = candidate["recall"] >= max(.95, baseline["recall"]) and candidate["false_positive_rate"] <= min(.05, baseline["false_positive_rate"])
     digest = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    return {"version": 1, "model": model.to_dict(), "model_sha256": model_hash(model),
+    return {"version": 2, "model": model.to_dict(), "model_sha256": model_hash(model),
+            "legacy_window_hours": legacy_window_hours, "matching_transport": "UNKNOWN",
             "source_sha256": digest, "split": "chronological_70_30",
             "training_samples": len(training), "validation_samples": len(validation),
             "optimized_buckets": optimized, "baseline": baseline, "candidate": candidate,
@@ -89,12 +97,15 @@ def train(rows, min_samples=8, margin_sec=30):
                      "no_recall_regression": True}}
 
 
-def load_accepted_profile(path):
+def load_accepted_profile(path, legacy_window_hours=24):
     if not path:
         raise ValueError("ActiveAdaptiveProfileRequired")
     value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if value.get("version") != 1 or value.get("gate", {}).get("status") != "accepted":
+    if value.get("version") != 2 or value.get("gate", {}).get("status") != "accepted":
         raise ValueError("AdaptiveProfileNotAccepted")
+    if (value.get("legacy_window_hours") != legacy_window_hours
+            or value.get("matching_transport") != "UNKNOWN"):
+        raise ValueError("AdaptiveProfileRuntimeMismatch")
     model = AdaptiveWindowModel.from_dict(value["model"])
     if value.get("model_sha256") != model_hash(model):
         raise ValueError("AdaptiveProfileHashMismatch")
@@ -117,10 +128,13 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--min-samples", type=int, default=8)
     parser.add_argument("--margin-sec", type=float, default=30)
+    parser.add_argument("--legacy-window-hours", type=float,
+                        default=float(os.getenv("KPP_TASK_MATCH_WINDOW_HOURS", "24")))
     args = parser.parse_args(argv)
     if args.output.resolve() == args.input.resolve():
         raise ValueError("SeparateOutputRequired")
-    report = train(json.loads(args.input.read_text(encoding="utf-8")), args.min_samples, args.margin_sec)
+    report = train(json.loads(args.input.read_text(encoding="utf-8")), args.min_samples, args.margin_sec,
+                   args.legacy_window_hours)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({key: report[key] for key in ("training_samples", "validation_samples", "gate", "candidate")}, ensure_ascii=False))

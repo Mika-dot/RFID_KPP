@@ -9,6 +9,15 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+def effective_direction_sql(prefix: str = "") -> str:
+    if prefix not in {"", "e."}:
+        raise ValueError("UnsupportedDirectionAlias")
+    direction = f"UPPER(LTRIM(RTRIM(ISNULL({prefix}FinalDirection,'UNKNOWN'))))"
+    consensus = f"UPPER(LTRIM(RTRIM(ISNULL({prefix}ConsensusCode,''))))"
+    return (f"(CASE WHEN {prefix}WarehouseId IS NOT NULL AND {direction} NOT IN ('IN','OUT') "
+            f"AND {consensus}<>'CONFLICT' THEN 'OUT' ELSE {direction} END)")
+
+
 def warehouse_direction_fields(record: Mapping[str, Any]) -> dict[str, Any]:
     direction = str(record.get("FinalDirection") or "UNKNOWN").strip().upper()
     consensus = str(record.get("ConsensusCode") or "").strip().upper()

@@ -54,7 +54,7 @@ class BehaviorObserver:
             db.close()
 
     def observe(self, ts, values):
-        if not math.isfinite(ts) or any(not isinstance(k, str) or not k.replace("_", "").isalnum() for k in values):
+        if not math.isfinite(ts) or any(not isinstance(k, str) or not k.replace("_", "").replace("-", "").isalnum() for k in values):
             raise ValueError("InvalidBehaviorSample")
         output = {}
         with self.connect() as db:

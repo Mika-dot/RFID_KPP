@@ -71,6 +71,9 @@ class Updates:
             if sha == current:
                 self.main_sha = sha
                 return
+            if sha == self.state.get("docs_only_sha") == self.state.get("observed_main_sha"):
+                self.main_sha = current
+                return
             if sha in self.quarantined or (self.staged and self.staged["sha"] == sha):
                 return
         # Initial branch deployment may precede main; require the HA protocol to exist.

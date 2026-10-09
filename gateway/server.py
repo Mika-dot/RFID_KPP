@@ -185,9 +185,12 @@ def create_server(router, host="127.0.0.1", port=5051, fallback_auth=None):
                 headers = {k: v for k, v in self.headers.items() if k.lower() in REQUEST_HEADERS}
                 # Browser authentication passes only to this configured Web backend;
                 # the HA bearer token is used solely in Router.resolve().
-                conn.request(self.command, self.path, body=body, headers=headers)
-                response = conn.getresponse()
-                raw = response.read(MAX_RESPONSE+1)
+                try:
+                    conn.request(self.command, self.path, body=body, headers=headers)
+                    response = conn.getresponse()
+                    raw = response.read(MAX_RESPONSE+1)
+                except (OSError, http.client.HTTPException):
+                    return self.fallback()
                 if len(raw) > MAX_RESPONSE or not router.unchanged(identity):
                     return self.unavailable()
                 self.send_response(response.status)

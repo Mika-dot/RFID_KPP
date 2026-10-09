@@ -39,7 +39,7 @@ def json_value(value):
     return str(value)
 
 
-def sync_metadata(mirror, connection=None, batch_size=500):
+def sync_metadata(mirror, connection=None, batch_size=500, task_connection=None):
     if type(batch_size) is not int or not 1 <= batch_size <= 2000:
         raise ValueError("MirrorBatchInvalid")
     if connection is None:
@@ -50,19 +50,27 @@ def sync_metadata(mirror, connection=None, batch_size=500):
     try:
         connection.timeout = 3
         connection.execute("SET LOCK_TIMEOUT 2000")
+        task_destination = os.getenv("PERIMETER_OBSERVER_TASK_SQL") or os.getenv("KPP_TASK_CONN_STR")
+        if task_connection is None and task_destination:
+            import pyodbc
+            task_connection = pyodbc.connect(task_destination, timeout=3, autocommit=True, readonly=True)
+        if task_connection is not None and task_connection is not connection:
+            task_connection.timeout = 3
+            task_connection.execute("SET LOCK_TIMEOUT 2000")
         for stream, env, default, fields, id_column, time_column in STREAMS:
+            source_connection = (task_connection or connection) if stream in {"tasks", "warehouse"} else connection
             source = table(os.getenv(env, default))
             saved = mirror.watermark(stream)
             # A restored/rolled-back primary must not make a newer local cache
             # appear current merely because the incremental SELECT is empty.
             # Deleted anchors also require operator reconciliation, not a reset.
-            if saved:
+            if saved and (stream != "events" or int(saved[1]) > 0):
                 if stream == "events":
-                    anchor = connection.execute(
+                    anchor = source_connection.execute(
                         f"SELECT EventId FROM {source} WHERE EventId=? AND UpdatedAt>=?",
                         int(saved[1]), saved[0]).fetchone()
                 else:
-                    anchor = connection.execute(
+                    anchor = source_connection.execute(
                         f"SELECT {id_column} FROM {source} WHERE {id_column}=?", int(saved)).fetchone()
                 if not anchor:
                     raise RuntimeError("MirrorSourceHistoryChanged:" + stream)
@@ -72,11 +80,11 @@ def sync_metadata(mirror, connection=None, batch_size=500):
                     WHERE FirstSeen>=DATEADD(day,-?,SYSDATETIME())
                     AND (UpdatedAt>? OR (UpdatedAt=? AND EventId>?))
                     ORDER BY UpdatedAt,EventId"""
-                rows = connection.execute(sql, mirror.retention_days, stamp, stamp, source_id).fetchall()
+                rows = source_connection.execute(sql, mirror.retention_days, stamp, stamp, source_id).fetchall()
                 position = [json_value(rows[-1][3]), int(rows[-1][0])] if rows else [stamp, source_id]
             else:
                 source_id = int(saved or 0)
-                rows = connection.execute(f"""SELECT TOP ({batch_size}) {','.join(fields)} FROM {source}
+                rows = source_connection.execute(f"""SELECT TOP ({batch_size}) {','.join(fields)} FROM {source}
                     WHERE {id_column}>? AND [{time_column}]>=DATEADD(day,-?,SYSDATETIME()) ORDER BY {id_column}""",
                     source_id, mirror.retention_days).fetchall()
                 position = int(rows[-1][0]) if rows else source_id
@@ -86,4 +94,6 @@ def sync_metadata(mirror, connection=None, batch_size=500):
         mirror.maintenance()
         return result
     finally:
+        if task_connection is not None and task_connection is not connection:
+            task_connection.close()
         connection.close()

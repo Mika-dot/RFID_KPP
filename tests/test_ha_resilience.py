@@ -166,6 +166,29 @@ class ReplicaTests(unittest.TestCase):
         self.assertEqual(200,json_request(url+"/replica/commit",TOKEN,body={k:record[k] for k in ("stream","uuid","digest")})[0])
         self.assertEqual(0,restarted.stats()["pending"])
 
+    @patch.dict(os.environ,{"PERIMETER_HA_TOKEN":TOKEN})
+    def test_peer_archive_failure_keeps_replica_pending_until_commit_retry(self):
+        from common.fallback_store import FallbackStore
+        node = Node.__new__(Node)
+        node.cfg = {"state_dir":str(self.root),"listen":"127.0.0.1","port":0}
+        node.replica, node.fallback = self.journals["perimetr"], FallbackStore(self.root / "fallback.sqlite")
+        record = envelope("rfid", rfid_payload())
+        node.replica.put(record)
+        node.archive_replica(record)
+        url = start_server(self, node.server())
+        body = {key:record[key] for key in ("stream", "uuid", "digest")}
+        with patch.object(node.fallback, "mark_committed", side_effect=sqlite3.OperationalError("busy")):
+            self.assertEqual(409, json_request(url + "/replica/commit", TOKEN, body=body)[0])
+        self.assertEqual(1, node.replica.stats()["pending"])
+        self.assertEqual(1, node.fallback.stats()["pending"])
+        body["digest"] = "bad-digest"
+        self.assertEqual(409, json_request(url + "/replica/commit", TOKEN, body=body)[0])
+        self.assertEqual(1, node.fallback.stats()["pending"])
+        body["digest"] = record["digest"]
+        self.assertEqual(200, json_request(url + "/replica/commit", TOKEN, body=body)[0])
+        self.assertEqual(0, node.replica.stats()["pending"])
+        self.assertEqual(0, node.fallback.stats()["pending"])
+
 
 class GatewayTests(unittest.TestCase):
     def setUp(self):
@@ -273,6 +296,14 @@ class ObserverTests(unittest.TestCase):
     def test_nonmonotonic_or_nan_sample_is_rejected(self):
         with self.assertRaises(ValueError):self.engine.observe(self.at,{"cursor_lag":100})
         with self.assertRaises(ValueError):self.engine.observe(self.at+12*60,{"cursor_lag":float("nan")})
+
+    def test_hyphenated_node_metrics_do_not_discard_other_sources(self):
+        values = {"ha_faulted_node-a": 0, "ha_prepared_node_b": 1, "cursor_lag": 12}
+        result = self.engine.observe(self.at + 12*60, values)
+        self.assertEqual(set(values), set(result))
+        self.assertEqual(0, result["ha_faulted_node-a"]["value"])
+        with self.assertRaisesRegex(ValueError, "InvalidBehaviorSample"):
+            self.engine.observe(self.at + 13*60, {"ha_faulted_node/a": 0})
 
     def test_alerts_deduplicate_recover_and_retry_durably(self):
         alerts=AlertOutbox(self.root/"alerts.sqlite")

@@ -119,6 +119,9 @@ def probe(pair):
             _, full = http_json("http://"+ip+":18200/status", ha_token=token)
             if full.get("node") != node:
                 raise ValueError("NodeIdentityMismatch")
+            if type(full.get("fencing_protocol")) is not int or full.get("fencing_protocol") != 2:
+                result.update(severity=2, role="НЕСОВМЕСТИМ", detail="FencingProtocolMismatch")
+                return result
             if full.get("epoch") != result["epoch"] or any(type(full.get(k)) is not bool or int(full[k]) != result[k] for k in ("active", "healthy", "prepared", "faulted")):
                 raise ValueError("AgentChangedDuringProbe")
             sha = full.get("release_sha", "")
@@ -560,7 +563,7 @@ def make_panels(dashboard):
              "datasource": DS, "gridPos": {"x": i*8, "y": 0, "w": 8, "h": 4},
              "fieldConfig": {"defaults": {"noValue": "НЕТ ДАННЫХ", "color": {"mode": "thresholds"}, "mappings": mappings,
                   "thresholds": {"mode": "absolute", "steps": [{"value": None, "color": "yellow"}, {"value": 0, "color": "green"}, {"value": 1, "color": "yellow"}, {"value": 2, "color": "red"}]}}, "overrides": []},
-             "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": False}, "colorMode": "background", "textMode": "value"},
+             "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "/.*/", "values": False}, "colorMode": "background", "textMode": "value"},
              "targets": [target("/summary", [(field, field, kind)])]}
         new.append(p)
     new.append({"id": 191523, "type": "table", "title": "Периметр — физика и резервы", "description": MARKER,

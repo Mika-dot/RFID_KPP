@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from common.metadata_mirror import MetadataMirror
 from observer.mirror import EVENT_FIELDS, STREAMS, REQUIRED_STREAMS, sync_metadata
@@ -92,6 +92,49 @@ class MirrorTests(unittest.TestCase):
             self.assertNotIn(excluded, sql)
         self.assertEqual(6, sql.count("TOP (100)"))
         self.assertEqual([10], [row["ExternalId2"] for row in self.mirror.recent("skud")])
+
+    def test_empty_event_cursor_can_sync_twice_then_receive_first_event(self):
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = []
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR": "", "PERIMETER_OBSERVER_TASK_SQL": ""}):
+            sync_metadata(self.mirror, connection)
+            sync_metadata(self.mirror, connection)
+        queries = [call.args[0] for call in connection.execute.call_args_list]
+        self.assertFalse(any("WHERE EventId=?" in sql for sql in queries))
+        row = {key: None for key in EVENT_FIELDS}
+        row.update(EventId=1, FirstSeen=self.now, UpdatedAt=self.now)
+        cursor = Mock()
+        cursor.fetchall.return_value = [tuple(row[key] for key in EVENT_FIELDS)]
+        empty = Mock()
+        empty.fetchall.return_value = []
+        connection.execute.side_effect = [Mock(), cursor] + [empty] * 5
+        sync_metadata(self.mirror, connection)
+        self.assertEqual(1, self.mirror.recent()[0]["EventId"])
+
+    def test_registries_use_separate_readonly_task_database(self):
+        event_conn, task_conn = Mock(), Mock()
+        for connection in (event_conn, task_conn):
+            connection.execute.return_value.fetchall.return_value = []
+        result = sync_metadata(self.mirror, event_conn, task_connection=task_conn)
+        self.assertEqual(set(REQUIRED_STREAMS), set(result))
+        task_sql = " ".join(call.args[0] for call in task_conn.execute.call_args_list)
+        event_sql = " ".join(call.args[0] for call in event_conn.execute.call_args_list)
+        for name in ("dbo.Warehouse", "dbo.RfidTags"):
+            self.assertIn(name, task_sql)
+            self.assertNotIn(name, event_sql)
+        self.assertNotIn("dbo.RFID_Tags", task_sql)
+        for connection in (event_conn, task_conn):
+            connection.close.assert_called_once()
+
+    def test_partial_backfill_is_stale_on_node_recent_endpoint(self):
+        from guardian.node import Node
+        self.mirror.commit_batch("events", [(1, self.now, {"EventId": 1})], [self.now.isoformat(), 1], False)
+        node = Node.__new__(Node)
+        node.cfg, node.mirror, node.mirror_status = {"node_id": "physical"}, self.mirror, {}
+        self.assertTrue(node.recent_events()["stale"])
+        self.assertEqual({}, node.recent_events()["counts"])
+        self.mirror.commit_batch("events", [], [self.now.isoformat(), 1], True)
+        self.assertFalse(node.recent_events()["stale"])
 
 
 if __name__ == "__main__":

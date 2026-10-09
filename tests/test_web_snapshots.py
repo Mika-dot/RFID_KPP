@@ -88,6 +88,19 @@ class WebSnapshotTests(unittest.TestCase):
         self.addCleanup(auth.stop)
         self.client = self.base.app.test_client()
 
+    def test_list_direction_filter_summary_and_chart_use_same_warehouse_projection(self):
+        from common.warehouse_direction import effective_direction_sql
+        clauses, params = self.base._event_filters(direction="OUT")
+        self.assertIn(effective_direction_sql("e.") + " = ?", clauses)
+        self.assertEqual(["OUT"], params)
+        conn = FakeConnection([([], [(0,) * 15]), ([], [])])
+        with patch.object(self.base, "db_connect", return_value=conn):
+            self.base.fetch_summary(24)
+            self.base.fetch_chart_series(3)
+        for query, _params in conn.executions:
+            self.assertIn(effective_direction_sql() + " = 'OUT'", query)
+            self.assertIn(effective_direction_sql() + " = 'UNKNOWN'", query)
+
     def image_response(self, row):
         conn = FakeConnection([(["ImageData", "ImageBase64"], [] if row is None else [row])])
         with patch.object(self.base, "db_connect", return_value=conn):

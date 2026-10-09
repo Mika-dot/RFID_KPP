@@ -63,6 +63,43 @@ class ProfileTests(unittest.TestCase):
         report = train(rows)
         self.assertEqual("rejected", report["gate"]["status"])
 
+    def test_transport_specific_success_cannot_qualify_unknown_runtime_path(self):
+        rows = labelled_rows()
+        for i, row in enumerate(rows):
+            row["transport"] = "FORKLIFT" if i % 4 < 2 else "TRUCK"
+            short = (row["transport"] == "FORKLIFT") == (row["label"] == "confirmed")
+            warehouse = datetime.fromisoformat(row["warehouse_at"])
+            row["kpp_at"] = (warehouse - timedelta(seconds=300 if short else 2400)).isoformat()
+        report = train(rows)
+        self.assertEqual("UNKNOWN", report["matching_transport"])
+        self.assertEqual("rejected", report["gate"]["status"])
+
+    def test_baseline_uses_actual_legacy_window_and_activation_rejects_different_config(self):
+        rows = labelled_rows()
+        for row in rows:
+            if row["label"] == "confirmed":
+                warehouse = datetime.fromisoformat(row["warehouse_at"])
+                row["kpp_at"] = (warehouse - timedelta(hours=48)).isoformat()
+        report = train(rows, legacy_window_hours=72)
+        self.assertEqual(72, report["legacy_window_hours"])
+        self.assertEqual(1, report["baseline"]["recall"])
+        accepted = train(labelled_rows(), legacy_window_hours=72)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "profile.json"
+            path.write_text(json.dumps(accepted))
+            load_accepted_profile(path, legacy_window_hours=72)
+            with self.assertRaisesRegex(ValueError, "RuntimeMismatch"):
+                load_accepted_profile(path, legacy_window_hours=24)
+
+    def test_old_profile_must_be_requalified_for_runtime_matching_path(self):
+        report = train(labelled_rows())
+        report["version"] = 1
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "profile.json"
+            path.write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "NotAccepted"):
+                load_accepted_profile(path)
+
 
 if __name__ == "__main__":
     unittest.main()

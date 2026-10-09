@@ -28,17 +28,18 @@ class Aggregator(WarehouseAggregator):
 UPDATE {Config.EVENT_TABLE}
 SET FinalDirection='OUT',
     ConfidencePct=CASE WHEN ISNULL(ConfidencePct,0)<100 THEN 100 ELSE ConfidencePct END,
-    WarningFlags=CASE
+    WarningFlags=CONCAT(CASE
         WHEN CHARINDEX('OUT_CONFIRMED_BY_WAREHOUSE',ISNULL(WarningFlags,''))>0 THEN WarningFlags
         WHEN ISNULL(WarningFlags,'')='' THEN 'OUT_CONFIRMED_BY_WAREHOUSE'
         ELSE CONCAT(WarningFlags,' | OUT_CONFIRMED_BY_WAREHOUSE')
-    END,
+    END, CASE WHEN CHARINDEX('WAREHOUSE_DIRECTION_INFERRED',ISNULL(WarningFlags,''))>0
+              THEN '' ELSE ' | WAREHOUSE_DIRECTION_INFERRED' END),
     ProcessingVersion='3.4.6-warehouse-evidence',
     UpdatedAt=SYSDATETIME()
 WHERE IsReel=1
   AND WarehouseId IS NOT NULL
-  AND (FinalDirection IS NULL OR FinalDirection='UNKNOWN')
-  AND ISNULL(ConsensusCode,'')<>'CONFLICT';
+  AND UPPER(LTRIM(RTRIM(ISNULL(FinalDirection,'UNKNOWN')))) NOT IN ('IN','OUT')
+  AND UPPER(LTRIM(RTRIM(ISNULL(ConsensusCode,''))))<>'CONFLICT';
 """
             )
             repaired = int(cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0)

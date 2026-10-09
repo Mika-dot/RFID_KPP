@@ -70,7 +70,8 @@ class Aggregator(BaseAggregator):
         self.adaptive_windows = self._new_adaptive_model()
         if self.ADAPTIVE_WINDOWS_ENABLED and self.ADAPTIVE_WINDOWS_MODE == "active":
             from deploy.ha.tune_adaptive_windows import load_accepted_profile
-            self.accepted_windows = load_accepted_profile(self.ADAPTIVE_WINDOW_ACCEPTED_PROFILE)
+            self.accepted_windows = load_accepted_profile(
+                self.ADAPTIVE_WINDOW_ACCEPTED_PROFILE, legacy_window_hours=Config.TASK_WINDOW_HOURS)
 
     def _new_adaptive_model(self):
         return AdaptiveWindowModel(
@@ -240,8 +241,8 @@ ORDER BY ABS(DATEDIFF(SECOND,COALESCE(SourceReaderTime,RecordTime),?)),Id;
         series_number: str,
         dt: datetime,
     ) -> List[IdentityRecord]:
-        start = dt - timedelta(hours=Config.TASK_WINDOW_HOURS)
-        end = dt + timedelta(hours=Config.TASK_WINDOW_HOURS)
+        span = timedelta(hours=self._identity_window_hours(dt))
+        start, end = dt - span, dt + span
         clauses = []
         params: List[object] = [start, end]
         if tag:
@@ -294,8 +295,16 @@ WHERE Dt BETWEEN ? AND ?
             series_number,
             dt,
             rows,
-            Config.TASK_WINDOW_HOURS,
+            self._identity_window_hours(dt),
         )
+
+    def _identity_window_hours(self, dt):
+        # Task timestamps need not equal passage timestamps. Use a conservative
+        # envelope, then retain TAG/IDS/SERIES ambiguity checks in the resolver.
+        start, end = self._warehouse_search_interval(dt)
+        return max(Config.TASK_WINDOW_HOURS,
+                   abs((dt - start).total_seconds()) / 3600,
+                   abs((end - dt).total_seconds()) / 3600)
 
     def _find_existing_linked_event(
         self, cur, warehouse_id: int, warehouse_dt: datetime
@@ -371,15 +380,29 @@ ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
         task_dt = task.dt if task else None
         task_doc = task.ids if task else None
         link_status = f"MATCH_{match_method}"
+        cur.execute(f"SELECT JSON_QUERY(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,"
+                    f"'$.warehouse') FROM {Config.EVENT_TABLE} "
+                    "WITH (UPDLOCK) WHERE EventId=?", event_id)
+        previous = cur.fetchone()
+        previous_evidence = {}
+        if previous and isinstance(previous[0], str):
+            try:
+                previous_evidence = json.loads(previous[0])
+            except ValueError:
+                pass
+        provenance = getattr(self, "_adaptive_link_evidence", {}).pop(event_id, {})
+        if isinstance(previous_evidence, dict) and previous_evidence.get("adaptive_match") is True:
+            provenance = {**previous_evidence, **provenance,
+                          "adaptive_match": True, "learning_eligible": False}
         warehouse_evidence = json.dumps(
             {
+                **provenance,
                 "id": warehouse_id,
                 "dt": warehouse_dt.isoformat(),
                 "doc_ids": warehouse_doc_ids,
                 "series_number": series_number,
                 "match_method": match_method,
                 "link_status": link_status,
-                **getattr(self, "_adaptive_link_evidence", {}).pop(event_id, {}),
             },
             ensure_ascii=False,
         )

@@ -45,6 +45,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from common.single_instance import SingleInstanceLock  # noqa: E402
 from common.video_images import decode_video_image  # noqa: E402
+from common.warehouse_direction import effective_direction_sql  # noqa: E402
 
 
 # ============================================================================
@@ -258,7 +259,8 @@ def fetch_runtime_state() -> Dict[str, Any]:
 
 
 def fetch_summary(hours: int) -> Dict[str, Any]:
-    query = """
+    direction_sql = effective_direction_sql()
+    query = f"""
     WITH src AS (
         SELECT *
         FROM dbo.KPP_ReelEvents
@@ -272,9 +274,9 @@ def fetch_summary(hours: int) -> Dict[str, Any]:
         SUM(CASE WHEN VideoMatched = 1 THEN 1 ELSE 0 END)        AS VideoMatched,
         SUM(CASE WHEN SkudMatched = 1 THEN 1 ELSE 0 END)         AS SkudMatched,
         AVG(CAST(ConfidencePct AS FLOAT)) AS AvgConfidence,
-        SUM(CASE WHEN FinalDirection = 'IN' THEN 1 ELSE 0 END)   AS DirIn,
-        SUM(CASE WHEN FinalDirection = 'OUT' THEN 1 ELSE 0 END)  AS DirOut,
-        SUM(CASE WHEN FinalDirection = 'UNKNOWN' THEN 1 ELSE 0 END) AS DirUnknown,
+        SUM(CASE WHEN {direction_sql} = 'IN' THEN 1 ELSE 0 END)   AS DirIn,
+        SUM(CASE WHEN {direction_sql} = 'OUT' THEN 1 ELSE 0 END)  AS DirOut,
+        SUM(CASE WHEN {direction_sql} = 'UNKNOWN' THEN 1 ELSE 0 END) AS DirUnknown,
         SUM(CASE WHEN TaskMatchType IN ('FULL_TAG_BOTH','FULL_TAG_1C','FULL_TAG_WAREHOUSE') THEN 1 ELSE 0 END) AS MatchFullTag,
         SUM(CASE WHEN TaskMatchType IN ('EPC_UNIQUE_1C','EPC_UNIQUE_WAREHOUSE') THEN 1 ELSE 0 END) AS MatchEpcOnly,
         SUM(CASE WHEN TaskMatchType = 'NOT_REEL' THEN 1 ELSE 0 END) AS MatchNotFound,
@@ -339,12 +341,13 @@ def fetch_health() -> Dict[str, Any]:
 
 
 def fetch_chart_series(days: int) -> Dict[str, Any]:
-    query = """
+    direction_sql = effective_direction_sql()
+    query = f"""
     SELECT
         CONVERT(varchar(16), DATEADD(minute, DATEDIFF(minute, 0, FirstSeen) / 30 * 30, 0), 120) AS Bucket,
-        SUM(CASE WHEN FinalDirection = 'IN' THEN 1 ELSE 0 END) AS DirIn,
-        SUM(CASE WHEN FinalDirection = 'OUT' THEN 1 ELSE 0 END) AS DirOut,
-        SUM(CASE WHEN FinalDirection = 'UNKNOWN' THEN 1 ELSE 0 END) AS DirUnknown,
+        SUM(CASE WHEN {direction_sql} = 'IN' THEN 1 ELSE 0 END) AS DirIn,
+        SUM(CASE WHEN {direction_sql} = 'OUT' THEN 1 ELSE 0 END) AS DirOut,
+        SUM(CASE WHEN {direction_sql} = 'UNKNOWN' THEN 1 ELSE 0 END) AS DirUnknown,
         SUM(CASE WHEN NeedRecheck = 1 THEN 1 ELSE 0 END) AS Pending,
         AVG(CAST(ConfidencePct AS FLOAT)) AS AvgConfidence
     FROM dbo.KPP_ReelEvents
@@ -411,7 +414,7 @@ def _event_filters(
     if objects != "all":
         where.append("e.IsReel = 1")
     if direction:
-        where.append("e.FinalDirection = ?"); params.append(direction)
+        where.append(effective_direction_sql("e.") + " = ?"); params.append(direction)
     if consensus:
         where.append("e.ConsensusCode = ?"); params.append(consensus)
     if match_type:

@@ -8,7 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from tools.audit_reconciliation_export import VIDEO_COLUMNS, VideoExport, video_metadata
+from tools.audit_reconciliation_export import VIDEO_COLUMNS, VideoExport, csv_records, video_metadata
 
 
 AT = "2026-10-07 07:54:00.555"
@@ -103,6 +103,24 @@ class VideoArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ZipCrcOrSizeMismatch"):
             list(source.rows())
         self.assertNotIn("archive_crc_verified", source.inventory)
+
+    def test_quoted_multiline_notes_and_images_across_single_byte_chunks(self):
+        values = [920649, AT, "0>1", 0, 1, "forklift", 5.82, 1, "jpg", 2,
+                  'notes with "quotes"\nand newline', "base64\nwrapped", UUID, AT, AT, AT,
+                  "binary\r\nimage", 2, '["track"]', "CAPTURE_TIMESTAMP"]
+        raw = (csv_fields(VIDEO_COLUMNS) + "\r\n" + csv_fields(values) + "\r\n").encode()
+        records = list(csv_records(bytes([byte]) for byte in raw))
+        self.assertEqual(2, len(records))
+        self.assertEqual(UUID, video_metadata(records[1].decode())["uuid"])
+        path = self.folder / "multiline.csv"
+        path.write_bytes(raw)
+        source = VideoExport(path)
+        self.assertEqual([920649], [row["id"] for row in source.rows()])
+        self.assertEqual(len(raw), source.inventory["csv_bytes"])
+
+    def test_unterminated_quoted_record_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "Unterminated"):
+            list(csv_records([b'1,"never closed\nnext physical line']))
 
 
 if __name__ == "__main__":

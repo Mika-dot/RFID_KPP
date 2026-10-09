@@ -59,7 +59,11 @@ def apply():
     if not summary or summary[0].get("stale") or summary[0].get("status")=="collector_error":raise RuntimeError("BehaviorBackendUnavailable")
     folder=Path("/var/lib/perimeter-ha-monitor/backups")/("behavior-"+uuid.uuid4().hex);folder.mkdir(parents=True,mode=0o700)
     file=folder/"dashboard.json";file.write_text(json.dumps(original),encoding="utf-8");file.chmod(0o600)
-    body=dict(dashboard=updated,overwrite=True,folderUid=response["meta"].get("folderUid"),message="Managed Perimeter behavior panels")
+    body=dict(dashboard=updated,overwrite=True,message="Managed Perimeter behavior panels")
+    if response["meta"].get("folderUid"):
+        body["folderUid"]=response["meta"]["folderUid"]
+    elif "folderId" in response["meta"]:
+        body["folderId"]=response["meta"]["folderId"]
     code,_=monitor.http_json(api+"/api/dashboards/db",token=token,body=body)
     if code!=200:raise RuntimeError("BehaviorDashboardSaveFailed")
     return {"managed_panels":3,"dashboard":"mositlab-director-wallboard"}

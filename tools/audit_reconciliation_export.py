@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import re
 import struct
@@ -37,7 +38,7 @@ TAIL = re.compile(r',([0-9]+),("(?:[^"\r\n]|"")*"|[^,\r\n]*),([A-Z_]+)\r?\n?$')
 
 
 def video_metadata(line):
-    head = next(csv.reader([line]))[:11]
+    head = next(csv.reader(io.StringIO(line, newline="")))[:11]
     anchors = [m for m in ANCHOR.finditer(line) if m.group(1).strip('"') or any(m.group(i) for i in (2, 3, 4))]
     tail = TAIL.search(line)
     if len(head) != 11 or not head[0].isdigit() or len(anchors) != 1 or tail is None:
@@ -60,6 +61,46 @@ def video_metadata(line):
             "uuid": source_uuid, "captured_at": times[0], "received_at": times[2],
             "reel_count": int(tail.group(1)), "time_quality": tail.group(3),
             "lossy_image_text": "\ufffd" in line}
+
+
+def csv_records(chunks):
+    """Frame bounded logical records; quoted fields may span chunks/newlines.
+
+    Quotes inside unquoted corrupt legacy image text do not open CSV fields.
+    Metadata recovery remains responsible for rejecting ambiguous records.
+    """
+    record = bytearray()
+    quoted = closing_quote = False
+    field_start = True
+    for chunk in chunks:
+        for byte in chunk:
+            record.append(byte)
+            if len(record) > 16 * 1024 * 1024:
+                raise ValueError("VideoRecordTooLarge")
+            if quoted:
+                if closing_quote:
+                    closing_quote = False
+                    if byte == 34:  # doubled quote inside a field
+                        continue
+                    quoted = False
+                else:
+                    closing_quote = byte == 34
+                    continue
+            if byte == 34 and field_start:
+                quoted = True
+                field_start = False
+            elif byte == 44:
+                field_start = True
+            elif byte == 10:
+                yield bytes(record)
+                record.clear()
+                field_start = True
+            elif byte != 13:
+                field_start = False
+    if quoted and not closing_quote:
+        raise ValueError("UnterminatedVideoCsvField")
+    if record:
+        yield bytes(record)
 
 
 class VideoExport:
@@ -137,23 +178,21 @@ class VideoExport:
         self.inventory["archive_crc32"] = f"{crc:08x}"
 
     def rows(self):
-        digest, buffer, total, header_seen = hashlib.sha256(), b"", 0, False
-        for chunk in self.chunks():
-            digest.update(chunk); total += len(chunk); buffer += chunk
-            lines = buffer.split(b"\n")
-            buffer = lines.pop()
-            if len(buffer) > 16 * 1024 * 1024:
-                raise ValueError("VideoRecordTooLarge")
-            for line in lines:
-                text = line.decode("utf-8-sig")
-                if not header_seen:
-                    if next(csv.reader([text])) != VIDEO_COLUMNS:
-                        raise ValueError("UnexpectedVideoColumns")
-                    header_seen = True
-                else:
-                    yield video_metadata(text)
-        if buffer:
-            yield video_metadata(buffer.decode("utf-8"))
+        digest, total, header_seen = hashlib.sha256(), 0, False
+        def measured_chunks():
+            nonlocal total
+            for chunk in self.chunks():
+                digest.update(chunk)
+                total += len(chunk)
+                yield chunk
+        for line in csv_records(measured_chunks()):
+            text = line.decode("utf-8-sig")
+            if not header_seen:
+                if next(csv.reader(io.StringIO(text, newline=""))) != VIDEO_COLUMNS:
+                    raise ValueError("UnexpectedVideoColumns")
+                header_seen = True
+            else:
+                yield video_metadata(text)
         if not header_seen:
             raise ValueError("VideoHeaderMissing")
         self.inventory.update(csv_bytes=total, csv_sha256=digest.hexdigest())

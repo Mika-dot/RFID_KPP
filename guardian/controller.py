@@ -24,6 +24,14 @@ class Controller:
         except Exception:
             return node["id"], {}
 
+    def _drain_pending_fences(self):
+        if not self.cfg.get("hardware_fencing_required", False):
+            return
+        from guardian.hardware_fence import fence_previous
+        for node_id, epoch in self.store.pending_fences():
+            fence_previous(self.cfg, node_id, epoch)
+            self.store.confirm_fence(node_id, epoch)
+
     def _rollback_hardware_handoff(self, chosen, assigned_epoch=None):
         """Fail closed if the new owner cannot be given reader access.
 
@@ -97,6 +105,8 @@ class Controller:
         lease = self.store.lease()
         if not lease["enabled"]:
             return
+        # Retry durable obligations even with owner=None and no ready reserve.
+        self._drain_pending_fences()
         observations = {}
         for node in self.cfg["nodes"]:
             nid = node["id"]
@@ -139,6 +149,7 @@ class Controller:
             else:
                 self.store.grant(None)
             self.telemetry.event("handoff_fenced", target=chosen)
+            self._drain_pending_fences()
             if previous:
                 node = next(n for n in self.cfg["nodes"] if n["id"] == previous)
                 try:
@@ -148,12 +159,6 @@ class Controller:
                     pass
             if chosen:
                 hardware_required = self.cfg.get("hardware_fencing_required", False)
-                if self.cfg.get("hardware_fencing_required", False):
-                    from guardian.hardware_fence import fence_previous
-                    # A failed fence survives controller restart and owner=None.
-                    for nid, fence_epoch in self.store.pending_fences():
-                        fence_previous(self.cfg, nid, fence_epoch)
-                        self.store.confirm_fence(nid, fence_epoch)
                 if not self.store.claim_controller():
                     return
                 self.store.grant(chosen)

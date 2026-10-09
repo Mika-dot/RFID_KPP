@@ -4,7 +4,9 @@ import threading
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+import http.client
+from http.client import HTTPConnection
 
 from gateway.server import Router, cached_page, create_server, validate_public_url
 
@@ -84,6 +86,37 @@ class GatewayFallbackTests(unittest.TestCase):
         validate_public_url(dict(nodes=self.nodes, public_url="http://comparator:5051"))
         with self.assertRaisesRegex(ValueError, "Independent"):
             validate_public_url(dict(nodes=self.nodes, public_url="http://physical:5051"))
+
+    def test_resolved_backend_transport_failure_uses_authenticated_cache(self):
+        for operation in ("request", "getresponse", "read"):
+            for method in ("GET", "HEAD"):
+                with self.subTest(operation=operation, method=method):
+                    connection = Mock()
+                    connection.getresponse.return_value.read.return_value = b""
+                    if operation == "read":
+                        connection.getresponse.return_value.read.side_effect = http.client.IncompleteRead(b"partial", 8)
+                    else:
+                        getattr(connection, operation).side_effect = ConnectionResetError()
+                    with patch.object(self.router, "resolve", return_value=("http://physical:5050", ("physical", 1))), \
+                         patch("gateway.server.http.client.HTTPConnection", side_effect=lambda host, port=None, **kw:
+                               connection if host == "physical" else HTTPConnection(host, port, **kw)):
+                        with self.get("/", login=True, method=method) as response:
+                            self.assertEqual(200, response.code)
+                            self.assertIn("text/html", response.headers["Content-Type"])
+                            if method == "GET":
+                                self.assertIn("Устаревшие данные", response.read().decode())
+                    connection.close.assert_called_once()
+
+    def test_backend_failure_does_not_expose_cache_to_unauthenticated_or_post_requests(self):
+        with patch.object(self.router, "resolve", return_value=("http://physical:5050", ("physical", 1))), \
+             patch("gateway.server.http.client.HTTPConnection", side_effect=lambda host, port=None, **kw:
+                   connection if host == "physical" else HTTPConnection(host, port, **kw)):
+            connection = Mock()
+            connection.request.side_effect = ConnectionRefusedError()
+            with self.get("/") as response:
+                self.assertEqual(401, response.code)
+            with self.get("/", login=True, method="POST") as response:
+                self.assertEqual(503, response.code)
 
 
 if __name__ == "__main__":

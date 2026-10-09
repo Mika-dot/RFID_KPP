@@ -40,7 +40,13 @@ Shadow обучается на уже связанных реальных RFID-�
 `warehouse_at`, необязательный `transport`. Дубли запрещены. Разделение по
 времени 70/30; positive/negative нужны и в train, и в holdout. Принятие:
 recall ≥ max(0.95, legacy recall), false-positive rate ≤ min(0.05, legacy FPR).
-В отчёте метрики/размеры групп/SHA-256 модели и входа.
+В отчёте метрики/размеры групп/SHA-256 модели и входа. С 09.10 профиль имеет
+версию 2: holdout проверяет транспорт `UNKNOWN`, доступный matcher до выбора
+события. Transport buckets остаются для диагностики; они не подменяют рабочую
+проверку. Legacy baseline берётся из `KPP_TASK_MATCH_WINDOW_HOURS` либо
+`--legacy-window-hours`; при active значение должно совпадать с конфигурацией.
+Профили версии 1 необходимо заново квалифицировать. Расширенное окно применяется
+также к выборке задач/identity; неоднозначные SeriesNumber по-прежнему запрещены.
 
 ```bash
 python deploy/ha/tune_adaptive_windows.py --input labelled-pairs.json --output accepted-windows.json
@@ -69,7 +75,10 @@ commit архив становится COMMITTED, затем исходный sp
 checkpoint. Warehouse/1C идут по Id и предполагают неизменность импортированных
 строк; raw RFID/video/СКУД также идут по исходному Id. Фото и персональные поля
 СКУД не зеркалируются. Откат primary/исчезновение anchor выдаёт ошибку, не сбрасывает локальную
-историю и не помечает её свежей. Возраст/размер/очереди публикуются в мониторинг.
+историю и не помечает её свежей. Пустой events cursor не считается потерянным anchor.
+Warehouse/1C читаются через отдельный `PERIMETER_OBSERVER_TASK_SQL` (SELECT-only)
+или существующий `KPP_TASK_CONN_STR`, если он настроен. Возраст/размер/очереди
+публикуются в мониторинг.
 
 Готовность копии требует всех шести caught-up потоков не старше 130 секунд и
 минимума 93 дня configured retention. Незавершённый backfill показывается как

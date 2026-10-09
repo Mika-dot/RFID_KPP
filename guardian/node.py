@@ -160,7 +160,8 @@ class Node:
             if warehouse:
                 event["SeriesNumber"] = warehouse.get("SeriesNumber")
         return {"configured": True, "source": "local_metadata_mirror", "node": self.cfg["node_id"],
-                "at": info.get("synced_at"), "stale": info.get("age_sec", 999999) > 130 or bool(self.mirror_status.get("error")),
+                "at": info.get("synced_at"), "stale": (not info.get("caught_up") or
+                    info.get("age_sec", 999999) > 130 or bool(self.mirror_status.get("error"))),
                 "caught_up": info.get("caught_up", False), "events": events,
                 "counts": mirror.counts_24h() if info.get("caught_up") else {}}
 
@@ -512,9 +513,11 @@ class Node:
                             return self.send(200, receipt)
                         if set(data) != {"stream", "uuid", "digest"}:
                             raise ValueError("InvalidReplicaCommit")
-                        node.replica.sent(data["stream"], data["uuid"], data["digest"])
                         record = node.replica.get(data["stream"], data["uuid"])
+                        if record is None or record["digest"] != data["digest"]:
+                            raise ValueError("InvalidReplicaCommit")
                         node.archive_replica(record, committed=True)
+                        node.replica.sent(data["stream"], data["uuid"], data["digest"])
                         return self.send(200, {"committed": True})
                     if self.path == "/repair" and set(data) == {"action", "service"}:
                         return self.send(200, node.repair(data["action"], data["service"]))

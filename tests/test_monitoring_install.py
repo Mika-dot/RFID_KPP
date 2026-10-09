@@ -94,7 +94,7 @@ class MonitorTests(unittest.TestCase):
 
     def test_authenticated_snapshot_detects_epoch_transition(self):
         raw = dict(node="physical", active=True, healthy=True, prepared=True, faulted=False, epoch=189)
-        full = dict(raw, epoch=190, sample_age=1)
+        full = dict(raw, epoch=190, sample_age=1, fencing_protocol=2)
         with patch.object(m, "observer_token", return_value="a"*64), patch.object(m, "http_json", side_effect=[(200, raw), (200, full)]):
             result = m.probe(("physical", m.NODES["physical"]))
         self.assertEqual(result["severity"], 2)
@@ -103,7 +103,7 @@ class MonitorTests(unittest.TestCase):
     def test_authenticated_data_uses_known_service_ok_field(self):
         raw = dict(node="physical", active=True, healthy=False, prepared=False, faulted=True, epoch=189)
         services = {n: {"ok": n != "Yolo"} for n in ("RfidReader", "RusGuardSync", "Yolo", "Aggregator", "WebDashboard")}
-        full = dict(raw, sample_age=1, services=services, release_sha="a"*40)
+        full = dict(raw, sample_age=1, services=services, release_sha="a"*40, fencing_protocol=2)
         with patch.object(m, "observer_token", return_value="b"*64), patch.object(m, "http_json", side_effect=[(503, raw), (200, full)]):
             result = m.probe(("physical", m.NODES["physical"]))
         self.assertEqual(result["detail"], "Не готовы: Yolo")
@@ -148,6 +148,17 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(preserved["options"], baseline["panels"][0]["options"])
         self.assertEqual(preserved["gridPos"]["y"], 12)
         self.assertTrue(all(t["url"].startswith("http://127.0.0.1:19150/") for p in first["panels"][:4] for t in p["targets"]))
+        self.assertTrue(all(p["options"]["reduceOptions"]["fields"] == "/.*/" for p in first["panels"][:3]))
+
+    def test_incompatible_or_missing_fencing_protocol_cannot_be_green(self):
+        for protocol in (None, 1, "2", 2.0):
+            raw = dict(node="physical", active=True, healthy=True, prepared=True, faulted=False, epoch=189)
+            full = dict(raw, sample_age=1, fencing_protocol=protocol)
+            with patch.object(m, "observer_token", return_value="a"*64), \
+                 patch.object(m, "http_json", side_effect=[(200, raw), (200, full)]):
+                result = m.probe(("physical", m.NODES["physical"]))
+            self.assertEqual(2, result["severity"])
+            self.assertEqual("FencingProtocolMismatch", result["detail"])
 
     def test_existing_panel_id_cannot_be_overwritten(self):
         with self.assertRaisesRegex(ValueError, "DashboardPanelIdCollision"):
