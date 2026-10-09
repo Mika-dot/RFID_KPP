@@ -82,3 +82,23 @@ class WitnessTests(unittest.TestCase):
         with patch("gateway.observed_lease.time.monotonic",side_effect=[10,12]):
             value=ObservedLease(self.nodes,"private",self.request).witness(self.nodes[0])
         self.assertEqual(("physical",7,False,True),value)
+
+    def test_quorum_rechecks_expiry_and_freshness_after_slow_peer_timeout(self):
+        for age,remaining in ((0,1),(7,15)):
+            with self.subTest(age=age,remaining=remaining):
+                now=[0]
+                for node in ("physical","perimetr"):
+                    self.rows[node]["observed_lease"].update(age_sec=age,remaining_sec=remaining)
+                def request(url,token,**kwargs):
+                    if "comparator" in url:
+                        now[0]=2
+                        raise TimeoutError()
+                    return self.request(url,token,**kwargs)
+                pool=Mock();pool.__enter__=Mock(return_value=pool);pool.__exit__=Mock(return_value=False)
+                pool.map.side_effect=lambda function,nodes:[function(node) for node in nodes]
+                store=ObservedLease(self.nodes,"private",request)
+                with patch("gateway.observed_lease.ThreadPoolExecutor",return_value=pool),patch("gateway.observed_lease.time.monotonic",side_effect=lambda:now[0]):
+                    if age:
+                        with self.assertRaisesRegex(RuntimeError,"QuorumUnavailable"):store.lease()
+                    else:
+                        self.assertFalse(store.lease()["valid"])

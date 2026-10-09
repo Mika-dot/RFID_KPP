@@ -17,7 +17,7 @@ class ObservedLease:
         validate_peers(nodes)
         self.nodes,self.token,self.request=nodes,token,request
 
-    def witness(self,node):
+    def evidence(self,node):
         try:
             started = time.monotonic()
             code,row=self.request(node["url"].rstrip("/")+"/status",self.token,timeout=2)
@@ -34,13 +34,22 @@ class ObservedLease:
                     or not math.isfinite(lease["remaining_sec"]) or lease["remaining_sec"] < 0):
                 return None
             valid = lease["valid"] and lease["remaining_sec"] > lease["age_sec"] + elapsed
-            return lease["owner"],lease["epoch"],valid,lease["enabled"]
+            deadline = started + lease["remaining_sec"] - lease["age_sec"]
+            fresh_until = started + min(10-row["sample_age"],8-lease["age_sec"])
+            return lease["owner"],lease["epoch"],valid,lease["enabled"],deadline,fresh_until
         except Exception:
             return None
 
+    def witness(self,node):
+        evidence = self.evidence(node)
+        return evidence[:4] if evidence is not None else None
+
     def lease(self):
         with ThreadPoolExecutor(max_workers=3) as pool:
-            counts=Counter(value for value in pool.map(self.witness,self.nodes) if value is not None)
+            evidence=list(pool.map(self.evidence,self.nodes))
+        now=time.monotonic()
+        # Fast witnesses can expire while another request waits for its timeout.
+        counts=Counter((v[0],v[1],v[2] and v[4]>now,v[3]) for v in evidence if v is not None and v[5]>now)
         agreed=[value for value,count in counts.items() if count>=2]
         if len(agreed)!=1:
             raise RuntimeError("FreshSqlLeaseWitnessQuorumUnavailable")

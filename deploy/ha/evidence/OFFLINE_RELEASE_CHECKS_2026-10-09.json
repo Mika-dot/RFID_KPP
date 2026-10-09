@@ -10,11 +10,11 @@
   "qualified_against": "4c9e6d367a3014ca770b45cddc1330bdf2217789",
   "date": "2026-10-09",
   "unit_tests": {
-    "total": 604,
+    "total": 605,
     "failures": 0,
     "errors": 0,
     "skipped": 15,
-    "executed": 589,
+    "executed": 590,
     "python": "3.12.14",
     "platform": "Linux",
     "operator_tests_after_ownership_change": 9
@@ -27,6 +27,7 @@
   "review_continuation": {
     "permanent_rejection_after_live_preflight_failure": "fixed: retry same SHA after dependency recovery and agent restart",
     "task_db_comment": "covered by independent source tests",
-    "windows_short_path_fixture": "fixed: compare resolved paths"
+    "windows_short_path_fixture": "fixed: compare resolved paths",
+    "witness_collection_deadline": "passed: recheck deadline/freshness after slow peer timeout"
   }
 }
