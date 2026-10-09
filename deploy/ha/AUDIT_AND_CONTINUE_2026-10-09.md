@@ -90,6 +90,9 @@ PR #1/#2/#3/#5/#6 merged; #4 draft; #7/#8/#9 были открыты. Прогр
 - Trace SHA-256: `a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096`.
 - Compileall и `git diff --check` прошли; plan audit counts/evidence проверены.
 - Protected business checker: 15 checks, включая production watchdog wiring.
+- Первый новый Windows CI выявил системную кодировку в двух новых тестах:
+  чтение исходников теперь явно UTF-8. Это исправление тестов, не изменение
+  production-поведения. Финальные Actions смотреть на актуальном head PR #9.
 - Для исходного `d700bec...` все три Actions были success. Для нового SHA
   success не наследуется: проверить новые runs в PR #9 перед установкой.
 

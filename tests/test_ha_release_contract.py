@@ -222,7 +222,7 @@ class ReleaseAdmissionTests(unittest.TestCase):
 
     def test_candidate_cannot_remove_production_watchdog_evidence_even_with_green_tests(self):
         path = "deploy/monitored_rfid_recovery.py"
-        self.write(path, (self.repo / path).read_text().replace("video_history_complete=True,", ""))
+        self.write(path, (self.repo / path).read_text(encoding="utf-8").replace("video_history_complete=True,", ""))
         sha = self.candidate()
         with self.assertRaisesRegex(RuntimeError, "CandidateProtectedBusinessChecksFailed"):
             self.updates.stage()
@@ -231,7 +231,7 @@ class ReleaseAdmissionTests(unittest.TestCase):
     def test_both_adapter_paths_require_latch_provenance_and_causal_timestamps(self):
         from guardian.release_contract import verify_watchdog_wiring
         for relative in ("deploy/monitored_rfid.py", "deploy/monitored_rfid_recovery.py"):
-            original = (self.repo / relative).read_text()
+            original = (self.repo / relative).read_text(encoding="utf-8")
             for before, after in (("last_fault_detail=self.state.last_fault_detail,", ""),
                                   ("video_at=video_at,", "video_at=now,")):
                 self.write(relative, original.replace(before, after))
