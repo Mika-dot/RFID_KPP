@@ -43,6 +43,7 @@ def main() -> int:
     total_rows = 0
     last_cursor = 0
     consecutive_failures = 0
+    previous_cursor_sample = None
     app.log.info("RusGuard Sync v3.4 + observability adapter started")
 
     while True:
@@ -56,6 +57,11 @@ def main() -> int:
             reporter.set_metric("consecutive_failures", 0)
             total_rows += count
             now = time.monotonic()
+            if previous_cursor_sample is not None:
+                previous_at, previous_cursor = previous_cursor_sample
+                if now > previous_at and last_cursor >= previous_cursor:
+                    reporter.set_metric("skud_cursor_velocity", (last_cursor - previous_cursor) / (now - previous_at))
+            previous_cursor_sample = (now, last_cursor)
             if count >= app.BATCH_SIZE:
                 continue
             if now - last_heartbeat >= app.HEARTBEAT_SEC:

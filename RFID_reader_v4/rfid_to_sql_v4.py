@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS reads(
 )
 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS reads_delivery_state ON reads(state,next_attempt)")
         self.maintenance()
 
     @contextmanager
@@ -201,6 +202,8 @@ class SQLWriter(threading.Thread):
     def __init__(self, spool: Spool) -> None:
         super().__init__(name="rfid-sql-writer", daemon=True)
         self.spool = spool
+        from common.replicated_ingest import ReplicatedDelivery
+        self.replication = ReplicatedDelivery.from_env()
         self.running = True
         self.sent_since_maintenance = 0
         self.delivered_total = 0
@@ -220,8 +223,13 @@ class SQLWriter(threading.Thread):
                 continue
             client_uuid, source_time, sequence, epoch, antenna, rssi, epc, tid, quality, attempts = row
             try:
+                copied = self.replication.ensure("rfid", dict(
+                    client_uuid=client_uuid, source_time=source_time, source_sequence=sequence,
+                    connection_epoch=epoch, antenna=antenna, rssi=rssi, epc=epc,
+                    tid=tid or "", time_quality=quality))
                 batch_uuid = str(uuid.uuid5(uuid.NAMESPACE_OID, epoch))
                 source_dt = datetime.fromisoformat(source_time)
+                sql_started = time.monotonic()
                 with pyodbc.connect(Config.DB_CONN, autocommit=False, timeout=10) as conn:
                     cur = conn.cursor()
                     cur.execute(
@@ -249,6 +257,9 @@ END
                         quality,
                     )
                     conn.commit()
+                from common.bus_statistics import record
+                record("rfid_sql_insert_latency", time.monotonic() - sql_started)
+                self.replication.committed(copied)
                 self.spool.mark_sent(client_uuid)
                 self.delivered_total += 1
                 self.last_success_at = datetime.now()
@@ -324,6 +335,8 @@ def main() -> int:
         while True:
             epoch = str(uuid.uuid4())
             reconnect_at = datetime.now()
+            from common.bus_statistics import record
+            record("rfid_reconnect_rate")
             rc = lib.TCPConnect(Config.READER_IP.encode("utf-8"), Config.READER_PORT)
             if rc != 0:
                 log.error("TCPConnect code=%s", rc)

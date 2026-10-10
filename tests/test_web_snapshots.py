@@ -4,7 +4,7 @@ import base64
 import importlib
 import sys
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,6 +88,19 @@ class WebSnapshotTests(unittest.TestCase):
         self.addCleanup(auth.stop)
         self.client = self.base.app.test_client()
 
+    def test_list_direction_filter_summary_and_chart_use_same_warehouse_projection(self):
+        from common.warehouse_direction import effective_direction_sql
+        clauses, params = self.base._event_filters(direction="OUT")
+        self.assertIn(effective_direction_sql("e.") + " = ?", clauses)
+        self.assertEqual(["OUT"], params)
+        conn = FakeConnection([([], [(0,) * 15]), ([], [])])
+        with patch.object(self.base, "db_connect", return_value=conn):
+            self.base.fetch_summary(24)
+            self.base.fetch_chart_series(3)
+        for query, _params in conn.executions:
+            self.assertIn(effective_direction_sql() + " = 'OUT'", query)
+            self.assertIn(effective_direction_sql() + " = 'UNKNOWN'", query)
+
     def image_response(self, row):
         conn = FakeConnection([(["ImageData", "ImageBase64"], [] if row is None else [row])])
         with patch.object(self.base, "db_connect", return_value=conn):
@@ -152,6 +165,44 @@ class WebSnapshotTests(unittest.TestCase):
         html = self.base.report_preview_html(rows, date(2026, 10, 7), date(2026, 10, 7))
         self.assertIn('src="/api/image/920649"', html)
         self.assertIn('loading="lazy"', html)
+        self.assertTrue(rows[0]["WarehouseDirectionConflict"])
+        self.assertIn("Расхождение направления со складом", html)
+
+    def test_late_warehouse_report_keeps_persisted_passage_and_video_outside_24_hours(self):
+        dt = datetime(2026, 10, 7, 7, 54)
+        passage = dt-timedelta(days=3)
+        event = {"EventId":71746, "SourceTag":"A"*48, "FirstSeen":passage, "LastSeen":passage,
+            "WarehouseId":4411, "FinalDirection":"IN", "Task1CDocIds":"doc", "VideoEventId":920649}
+        conn = FakeConnection([
+            (["WarehouseId","WarehouseDt","WarehouseTag","WarehouseDocIds","WarehouseSeriesNumber"],
+             [(4411,dt,None,"doc","1234/26")]),
+            (["Id","Dt","Tag","Ids","SeriesNumber"], []),
+            (list(event), [tuple(event.values())]),
+        ])
+        with patch.object(self.base,"db_connect",return_value=conn):
+            rows = self.web.fetch_report_records(dt.date(),dt.date())
+        self.assertEqual(1,len(rows))
+        self.assertEqual(71746,rows[0]["EventId"])
+        self.assertEqual(920649,rows[0]["VideoEventId"])
+        self.assertEqual("MATCH_IDS",rows[0]["WarehouseLinkStatus"])
+        self.assertTrue(rows[0]["WarehouseDirectionConflict"])
+        query, params = conn.executions[-1]
+        self.assertIn("OR (w.Dt>=? AND w.Dt<?)",query)
+        self.assertEqual((datetime(2026,10,7),datetime(2026,10,8)),params[-2:])
+
+    def test_details_show_legacy_direction_mismatch_without_sql_writes(self):
+        event = {"EventId": 71746, "WarehouseId": 4411, "FinalDirection": "IN",
+                 "ConfidencePct": 70, "WarningFlags": "OUT_CONFIRMED_BY_WAREHOUSE"}
+        conn = FakeConnection([(list(event), [tuple(event.values())])])
+        with patch.object(self.base, "db_connect", return_value=conn):
+            response = self.client.get("/api/event/71746")
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertEqual(result["FinalDirection"], "IN")
+        self.assertEqual(result["ConfidencePct"], 70)
+        self.assertTrue(result["WarehouseDirectionConflict"])
+        self.assertEqual(len(conn.executions), 1)
+        self.assertTrue(conn.executions[0][0].lstrip().startswith("SELECT"))
 
     def test_warehouse_only_report_does_not_invent_a_video(self):
         html = self.base.report_preview_html(

@@ -6,6 +6,7 @@ Candidate tests cannot remove these checks. No reader, SQL or production writes.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import sys
@@ -56,7 +57,37 @@ def docs_only(paths):
     return all(Path(path).suffix.lower() in {".md", ".rst"} for path in paths)
 
 
+def verify_watchdog_wiring(root):
+    expected = {key: key for key in ("now", "rfid_at", "video_at", "warehouse_at",
+                                    "video_recent_events", "warehouse_recent_events")}
+    expected.update(last_fault_detail="self.state.last_fault_detail", video_history_complete="True")
+    for relative in ("deploy/monitored_rfid.py", "deploy/monitored_rfid_recovery.py"):
+        tree = ast.parse((Path(root) / relative).read_text(encoding="utf-8-sig"))
+        watchdog = next((node for node in tree.body if isinstance(node, ast.ClassDef)
+                         and node.name == "_BusinessFlowWatchdog"), None)
+        loop = next((node for node in watchdog.body if isinstance(node, ast.FunctionDef)
+                     and node.name == "_loop"), None) if watchdog else None
+        calls = [node for node in ast.walk(loop) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == "assess_rfid_flow"] if loop else []
+        if len(calls) != 1:
+            raise RuntimeError("CandidateWatchdogAssessmentMissing")
+        keywords = {item.arg: ast.dump(item.value, include_attributes=False) for item in calls[0].keywords}
+        for key, expression in expected.items():
+            if keywords.get(key) != ast.dump(ast.parse(expression, mode="eval").body, include_attributes=False):
+                raise RuntimeError("CandidateWatchdogEvidenceWiringChanged")
+    # The read-only adapter must keep its causal counts and event-time maxima.
+    tree = ast.parse((Path(root) / "deploy/monitored_rfid.py").read_text(encoding="utf-8-sig"))
+    snapshot = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                    and node.name == "_query_snapshot")
+    sql = " ".join(node.value for node in ast.walk(snapshot)
+                   if isinstance(node, ast.Constant) and isinstance(node.value, str)).upper()
+    if ("MAX(DT) FROM DBO.WAREHOUSE" not in sql or "MAX(COALESCE(CAPTUREDAT,[TIMESTAMP]))" not in sql
+            or sql.count("> CAST(? AS DATETIME2)") != 2):
+        raise RuntimeError("CandidateWatchdogCausalQueryChanged")
+
+
 def verify_business(root):
+    verify_watchdog_wiring(root)
     name = "perimeter_candidate_business_flow"
     spec = importlib.util.spec_from_file_location(name, Path(root) / "common/business_flow.py")
     module = importlib.util.module_from_spec(spec)
@@ -92,7 +123,43 @@ def verify_business(root):
     unknown = assess(**dict(latched, video_history_complete=False))
     if unknown.status != "unavailable" or unknown.clear_latch:
         raise RuntimeError("CandidateMissingEvidenceDiscardsLatch")
-    return 6
+    # Load exact candidate files, rather than accidentally importing the
+    # installed common package into the protected-check subprocess.
+    def load(relative, name):
+        spec = importlib.util.spec_from_file_location(name, Path(root) / relative)
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[name] = loaded
+        spec.loader.exec_module(loaded)
+        return loaded
+
+    direction = load("common/warehouse_direction.py", "perimeter_candidate_warehouse_direction")
+    resolve_direction = direction.warehouse_direction_fields
+    incoming = resolve_direction({"FinalDirection": "IN", "ConfidencePct": 70,
+        "WarningFlags": "OUT_CONFIRMED_BY_WAREHOUSE", "ConsensusCode": "WEIGHTED_MAJORITY"})
+    if (incoming["FinalDirection"] != "IN" or incoming["ConfidencePct"] != 70
+            or not incoming["WarehouseDirectionConflict"]
+            or "OUT_CONFIRMED_BY_WAREHOUSE" in incoming["WarningFlags"]):
+        raise RuntimeError("CandidateWarehouseOverridesObservedPassage")
+    conflict = resolve_direction({"FinalDirection": "UNKNOWN", "ConfidencePct": 0,
+                                  "ConsensusCode": "CONFLICT"})
+    if conflict["FinalDirection"] != "UNKNOWN" or conflict["ConfidencePct"] != 0:
+        raise RuntimeError("CandidateWarehouseResolvesFusionConflict")
+    missing = resolve_direction({"FinalDirection": "UNKNOWN", "ConsensusCode": "NO_DATA"})
+    if missing["FinalDirection"] != "OUT" or "WAREHOUSE_DIRECTION_INFERRED" not in missing["WarningFlags"]:
+        raise RuntimeError("CandidateWarehouseFallbackLost")
+    outgoing = resolve_direction({"FinalDirection": "OUT", "ConfidencePct": 55})
+    if outgoing["ConfidencePct"] != 55:
+        raise RuntimeError("CandidateWarehouseInflatesObservedConfidence")
+
+    identity = load("common/warehouse_identity.py", "perimeter_candidate_warehouse_identity")
+    tag_a, tag_b = "A" * 48, "B" * 48
+    task = identity.IdentityRecord.from_values(2, at, tag_b, "ID-B", "SERIES")
+    resolved = identity.resolve_warehouse_identity(tag_a, "ID-B", "SERIES", at, [task])
+    if resolved.preferred_tag != tag_a or resolved.task_for_tag(tag_a) is not None:
+        raise RuntimeError("CandidateWarehouseTaskTagMismatch")
+    if resolved.task_for_tag(tag_b) != task:
+        raise RuntimeError("CandidateWarehouseMatchingTaskLost")
+    return 15
 
 
 def main(argv=None):

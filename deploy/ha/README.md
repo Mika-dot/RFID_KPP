@@ -1,6 +1,12 @@
 # Резервирование «Периметра»
 
-> **Текущее состояние, 06.10.2026 15:38 МСК:** система уже запущена, protocol2,
+**Кандидат от 09.10.2026:** [обновление Comparator, Perimetr, физики и ub22](READY_TO_INSTALL_2026-10-09.md).
+
+**Продолжение от 08.10.2026:** [handoff и сверка плана](CONTINUE_HERE_2026-10-08.md),
+[адаптивные окна, копии и новая Grafana](ADAPTIVE_CORRELATION_AND_STORAGE_2026-10-08.md).
+Новый кандидат опубликован отдельно от принятого runtime; живая установка не выполнена.
+
+> **Исторический снимок, 06.10.2026 15:38 МСК:** система уже запущена, protocol2,
 > exact runtime `f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa` на всех3. Physical189
 > all5 healthy, оба prepared/nonfaulted reserves, controller Comparator valid.
 > Full-stack takeover Comparator183 и Perimetr187 с автоматическим возвратом

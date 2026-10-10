@@ -104,6 +104,32 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(2, get.call_count)
         store.claim_controller.assert_not_called()
 
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.repair.get_json")
+    def test_prepared_repair_does_not_wait_for_models_or_repeat_restart(self, get):
+        store = Mock()
+        store.lease.return_value = {"owner":"physical", "valid":True}
+        store.controller_owned.return_value = True
+        get.side_effect = [(200, {"active":False}), (200, {"preflight":{"ok":True}})]
+        worker = LmRepair({}, store, Mock(), threading.Event())
+        worker.step = Mock(side_effect=AssertionError("LM must not delay independent verification"))
+        worker.repair_node({"id":"comparator", "url":"http://comparator"})
+        worker.step.assert_not_called()
+        self.assertEqual(2, get.call_count)
+        store.recovered.assert_not_called()
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.repair.get_json")
+    def test_rejected_repair_does_not_invoke_model(self, get):
+        store = Mock()
+        store.lease.return_value = {"owner":"physical", "valid":True}
+        store.controller_owned.return_value = True
+        get.side_effect = [(200, {"active":False}), (409, {"error":"OperatorMaintenance"})]
+        worker = LmRepair({}, store, Mock(), threading.Event())
+        worker.step = Mock()
+        worker.repair_node({"id":"comparator", "url":"http://comparator"})
+        worker.step.assert_not_called()
+
     @patch("guardian.repair.subprocess.run")
     def test_expired_controller_cannot_start_host_rescue(self, run):
         store = Mock()

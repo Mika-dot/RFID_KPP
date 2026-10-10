@@ -1,0 +1,21 @@
+{
+  "kind": "Playlist",
+  "apiVersion": "playlist.grafana.app/v1",
+  "metadata": {
+    "name": "mositlab-perimeter-wallboard"
+  },
+  "spec": {
+    "title": "MOSITLAB • общий / Периметр",
+    "interval": "1m",
+    "items": [
+      {
+        "type": "dashboard_by_uid",
+        "value": "mositlab-director-wallboard"
+      },
+      {
+        "type": "dashboard_by_uid",
+        "value": "mositlab-perimeter-visual"
+      }
+    ]
+  }
+}

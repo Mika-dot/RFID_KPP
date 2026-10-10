@@ -188,7 +188,7 @@ WHERE COALESCE(CapturedAt,[Timestamp]) >= DATEADD(SECOND,?,SYSDATETIME())
                 rfid_at if rfid_at is not None else datetime(1900, 1, 1),
             )
             video_recent_events = int(cur.fetchone()[0] or 0)
-            cur.execute("SELECT TOP(1) Dt FROM dbo.Warehouse ORDER BY Id DESC;")
+            cur.execute("SELECT MAX(Dt) FROM dbo.Warehouse;")
             row = cur.fetchone()
             warehouse_at = row[0] if row else None
             cur.execute(

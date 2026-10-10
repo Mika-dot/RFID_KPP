@@ -1,8 +1,14 @@
 {
   "version": 1,
-  "business_generation": 1,
+  "business_generation": 3,
   "capabilities": [
     "rfid-causal-activity-evidence",
-    "rfid-historical-latch-evidence"
+    "rfid-historical-latch-evidence",
+    "warehouse-passage-direction-separation",
+    "warehouse-tag-consistent-task-links",
+    "offline-release-qualification",
+    "bounded-business-probation",
+    "replicated-input-journal",
+    "lease-routed-web"
   ]
 }

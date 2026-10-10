@@ -1,0 +1,123 @@
+import base64
+import json
+import threading
+import unittest
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+from unittest.mock import Mock, patch
+import http.client
+from http.client import HTTPConnection
+
+from gateway.server import Router, cached_page, create_server, validate_public_url
+
+
+class GatewayFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.nodes = [dict(id=name, priority=index + 1, url="http://" + name + ":18200",
+                           web_url="http://" + name + ":5050")
+                      for index, name in enumerate(("physical", "perimetr", "comparator"))]
+        store = Mock()
+        store.lease.side_effect = TimeoutError("primary SQL unavailable")
+        self.requests = []
+        def request(url, token, timeout):
+            self.requests.append((url, token))
+            if "comparator" in url:
+                return 200, dict(configured=True, node="comparator", at=100, stale=True, events=[
+                    dict(EventId=1, FirstSeen="2026-10-08T12:00:00", SourceTag="<script>unsafe()</script>",
+                         FinalDirection="OUT", RfidReadCount=0)])
+            raise TimeoutError()
+        self.router = Router(self.nodes, store, "ha-secret", request)
+        self.server = create_server(self.router, "127.0.0.1", 0, ("operator", "local-test"))
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(lambda: (self.server.shutdown(), self.server.server_close(), thread.join(2)))
+        self.url = "http://127.0.0.1:" + str(self.server.server_port)
+
+    def get(self, path, login=False, method="GET"):
+        headers = {}
+        if login:
+            headers["Authorization"] = "Basic " + base64.b64encode(b"operator:local-test").decode()
+        try:
+            return urlopen(Request(self.url + path, headers=headers, method=method), timeout=3)
+        except HTTPError as exc:
+            return exc
+
+    def test_gateway_liveness_survives_sql_failure_but_readiness_does_not(self):
+        with self.get("/health") as response:
+            self.assertEqual(200, response.code)
+        with self.get("/health/ready") as response:
+            self.assertEqual(503, response.code)
+
+    def test_healthy_older_mirror_wins_over_newer_failed_or_incomplete_mirror(self):
+        def request(url, token, **kwargs):
+            node = next(node["id"] for node in self.nodes if url.startswith(node["url"]))
+            return 200, dict(configured=True, node=node, events=[],
+                             stale=node == "physical", caught_up=node == "comparator",
+                             at={"physical": 300, "perimetr": 200, "comparator": 100}[node])
+        router = Router(self.nodes, Mock(), "secret", request)
+        self.assertEqual("comparator", router.cached_events()["node"])
+
+    def test_outage_view_requires_existing_browser_authentication(self):
+        with self.get("/") as response:
+            self.assertEqual(401, response.code)
+            self.assertIn("Basic", response.headers["WWW-Authenticate"])
+        self.assertFalse(self.requests)
+
+    def test_authenticated_outage_page_is_read_only_escaped_and_marked_stale(self):
+        with self.get("/", login=True) as response:
+            self.assertEqual(200, response.code)
+            raw = response.read().decode()
+        self.assertIn("Устаревшие данные", raw)
+        self.assertIn("&lt;script&gt;", raw)
+        self.assertNotIn("<script>", raw)
+        self.assertNotIn("ha-secret", raw)
+        with self.get("/", login=True, method="POST") as response:
+            self.assertEqual(503, response.code)
+
+    def test_json_cache_preserves_source_and_read_only_marker(self):
+        with self.get("/fallback/events", login=True) as response:
+            data = json.load(response)
+        self.assertTrue(data["read_only"])
+        self.assertTrue(data["stale"])
+        self.assertEqual("comparator", data["node"])
+        self.assertTrue(all(url.endswith("/events/recent") and token == "ha-secret" for url, token in self.requests))
+
+    def test_public_address_cannot_reuse_an_executor_ip(self):
+        validate_public_url(dict(nodes=self.nodes, public_url="http://comparator:5051"))
+        with self.assertRaisesRegex(ValueError, "Independent"):
+            validate_public_url(dict(nodes=self.nodes, public_url="http://physical:5051"))
+
+    def test_resolved_backend_transport_failure_uses_authenticated_cache(self):
+        for operation in ("request", "getresponse", "read"):
+            for method in ("GET", "HEAD"):
+                with self.subTest(operation=operation, method=method):
+                    connection = Mock()
+                    connection.getresponse.return_value.read.return_value = b""
+                    if operation == "read":
+                        connection.getresponse.return_value.read.side_effect = http.client.IncompleteRead(b"partial", 8)
+                    else:
+                        getattr(connection, operation).side_effect = ConnectionResetError()
+                    with patch.object(self.router, "resolve", return_value=("http://physical:5050", ("physical", 1))), \
+                         patch("gateway.server.http.client.HTTPConnection", side_effect=lambda host, port=None, **kw:
+                               connection if host == "physical" else HTTPConnection(host, port, **kw)):
+                        with self.get("/", login=True, method=method) as response:
+                            self.assertEqual(200, response.code)
+                            self.assertIn("text/html", response.headers["Content-Type"])
+                            if method == "GET":
+                                self.assertIn("Устаревшие данные", response.read().decode())
+                    connection.close.assert_called_once()
+
+    def test_backend_failure_does_not_expose_cache_to_unauthenticated_or_post_requests(self):
+        with patch.object(self.router, "resolve", return_value=("http://physical:5050", ("physical", 1))), \
+             patch("gateway.server.http.client.HTTPConnection", side_effect=lambda host, port=None, **kw:
+                   connection if host == "physical" else HTTPConnection(host, port, **kw)):
+            connection = Mock()
+            connection.request.side_effect = ConnectionRefusedError()
+            with self.get("/") as response:
+                self.assertEqual(401, response.code)
+            with self.get("/", login=True, method="POST") as response:
+                self.assertEqual(503, response.code)
+
+
+if __name__ == "__main__":
+    unittest.main()

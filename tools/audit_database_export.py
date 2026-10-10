@@ -159,7 +159,6 @@ def audit(folder, cutoff):
     wh_times, nearest_deltas = [], []
     methods, candidate_methods, wh_missing = Counter(), Counter(), Counter()
     matched_raw = ambiguous = after_rows = after_raw = 0
-    recent = []
     for row in source.rows("Warehouse"):
         at = dt(row["Dt"])
         wh_ids[int(row["Id"])] += 1
@@ -193,18 +192,13 @@ def audit(folder, cutoff):
         if at >= cutoff:
             after_rows += 1
             after_raw += nearest is not None
-            recent.append({"warehouse_id": int(row["Id"]), "warehouse_time": at.isoformat(),
-                           "task_id": identity.primary_task.row_id if identity.primary_task else None,
-                           "task_match_method": identity.primary_method,
-                           "nearest_raw_source_time": nearest.isoformat() if nearest else None})
     warehouse = {"id_duplicates": excess(wh_ids), "exact_business_row_duplicates": excess(wh_keys),
                  "time": bounds(wh_times), "empty": dict(wh_missing), "task_match_methods": dict(methods),
                  "physical_candidate_methods": dict(candidate_methods), "ambiguous_series_rows": ambiguous,
                  "rows_with_raw_candidate_within_24h": matched_raw,
                  "rows_without_raw_candidate_within_24h": source.inventory["Warehouse"]["rows"] - matched_raw,
                  "nearest_raw_absolute_lag_seconds": bounds_seconds(nearest_deltas),
-                 "rows_since_hotfix": after_rows, "raw_candidates_since_hotfix": after_raw,
-                 "recent_candidate_examples": sorted(recent, key=lambda x: x["warehouse_time"])[-5:]}
+                 "rows_since_hotfix": after_rows, "raw_candidates_since_hotfix": after_raw}
 
     skud_source_ids, directions = Counter(), Counter()
     skud_times = []
@@ -224,6 +218,8 @@ def audit(folder, cutoff):
         for row in source.rows(table):
             group, target = normalize_value(row["PassageGroupKey"]), normalize_value(row[id_column])
             missing_keys += not group or not target
+            if not group or not target:
+                continue
             pairs[(group, target)] += 1
             assignment[target].add(group)
             times.append(dt(row["LinkedAt"]))

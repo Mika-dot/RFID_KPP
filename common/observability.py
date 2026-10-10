@@ -432,6 +432,8 @@ class HealthReporter:
             if ready:
                 payload["dependencies"] = deps
                 payload["metrics"] = dict(self.metrics)
+                from common.bus_statistics import snapshot as bus_snapshot
+                payload["metrics"].update(bus_snapshot())
                 if warnings:
                     payload["warnings"] = warnings
         return payload, 200 if (not ready or is_ready) else 503
