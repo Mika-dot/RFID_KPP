@@ -1,10 +1,12 @@
 # RFID КПП «Периметр» — production runbook
 
+> 10.10.2026: по скриншоту физика — unhealthy ведущий `7677849`, Perimetr и Comparator — в ремонте на `1c793091`, epoch 816. [Диагностика и восстановление](deploy/ha/RECOVERY_2026-10-10.md). Это новое сообщение о runtime, не выполненный здесь live poll. Новый кандидат на узлы здесь не установлен.
+
 > 08.10.2026: [повторная сверка плана с фактом](deploy/ha/PLAN_AUDIT_2026-10-08.md): из 33 пунктов 20 готовы программно, 4 частично, 8 требуют оборудования/установки/истории, 1 отложен. [PR #9](https://github.com/Mika-dot/RFID_KPP/pull/9) содержит адаптивные окна, локальные копии и визуальную Grafana. На оборудование новая ветка не установлена. Для продолжения читать [handoff](deploy/ha/CONTINUE_HERE_2026-10-08.md).
 
 > 07.10.2026: подготовлен [кандидат расширения отказоустойчивости](deploy/ha/RESILIENCE_CANDIDATE_2026-10-07.md): replica queues, Web gateway, release qualification и Behavior Observer. Ветка `feature/ha-resilience-2026-10-07`; установка на оборудование ещё не выполнена.
 
-> **Последнее подтверждение завода — 06.10.2026 18:54 МСК:** все3 узла на runtime
+> **Предыдущее подтверждение готовности — 06.10.2026 18:54 МСК:** все3 узла на runtime
 > `1c7930912ad84e8f205cf16fbdd715c76c9eb74e`, protocol2, physical epoch264,
 > все5 служб ready, оба резерва prepared/nonfaulted, controller Comparator.
 > [Подтверждение запуска](deploy/ha/DEPLOYED_STATUS_2026-10-06.md).

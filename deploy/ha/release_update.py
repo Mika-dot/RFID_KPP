@@ -17,6 +17,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+LEGACY_BASELINES = {
+    "76778494851d03c5c3c5650b40e54986ddcfddd1": "3b047253645ed6f35439cff67a85a47e115417ce",
+    "1c7930912ad84e8f205cf16fbdd715c76c9eb74e": "eb3dbddd5f73c3fc7c32fa53e14e612ee96d3cd5",
+}
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "deploy/ha"))
 from guardian.config import atomic_json
@@ -65,7 +69,7 @@ def load_environment(args, cfg):
     return values
 
 
-def inventory(cfg, token, request=json_request):
+def inventory(cfg, token, request=json_request, allow_degraded=False):
     rows = {}
     for node in cfg["nodes"]:
         code, data = request(node["url"].rstrip("/") + "/status", token, timeout=3)
@@ -74,13 +78,14 @@ def inventory(cfg, token, request=json_request):
                 or not 0 <= data["sample_age"] <= 10):
             raise RuntimeError("ClusterInventoryUnavailable:" + node["id"])
         rows[node["id"]] = data
-    active = [key for key, value in rows.items() if value.get("active")]
-    if len(active) != 1 or rows[active[0]].get("healthy") is not True:
+    active = [key for key, value in rows.items() if value.get("active") is True]
+    if (len(active) > 1 or (not allow_degraded and
+            (len(active) != 1 or rows[active[0]].get("healthy") is not True))):
         raise RuntimeError("HealthySingleOwnerRequired")
-    epoch = rows[active[0]].get("epoch")
+    epoch = next(iter(rows.values())).get("epoch")
     if type(epoch) is not int or any(row.get("epoch") != epoch for row in rows.values()):
         raise RuntimeError("ClusterEpochInconsistent")
-    return rows, active[0]
+    return rows, active[0] if active else None
 
 
 def require_reserves(rows, own, release):
@@ -128,6 +133,22 @@ def candidate_config(cfg, env, runtime_root=None):
     return value
 
 
+def transition_allowlist(cfg, record, source):
+    """Only the two screenshot baselines admit three known warehouse fixes.
+
+    Unknown/modified installed trees retain zero-difference qualification.
+    Candidate Golden outputs must still match every expected field.
+    """
+    sha = record["current"]["sha"]
+    if sha not in LEGACY_BASELINES:
+        return []
+    if (git(cfg, "-C", str(source), "rev-parse", "HEAD") != sha
+            or git(cfg, "-C", str(source), "rev-parse", "HEAD^{tree}") != LEGACY_BASELINES[sha]
+            or git(cfg, "-C", str(source), "status", "--porcelain", "--untracked-files=no")):
+        raise RuntimeError("InstalledLegacyBaselineChanged")
+    return ["--allowlist", ROOT / "guardian/legacy_shadow_allowlist.json"]
+
+
 def prepare(args, cfg, env):
     record_path = Path(cfg["state_dir"]) / "release.json"
     record = json.loads(record_path.read_text(encoding="utf-8-sig"))
@@ -151,7 +172,8 @@ def prepare(args, cfg, env):
     oracle = source / "guardian/qualification.py"
     if not oracle.is_file():
         oracle = ROOT / "guardian/qualification.py"
-    run([cfg["python"], "-I", oracle, "--candidate", candidate, "--stable", source, "--report", report], 180, offline_env())
+    run([cfg["python"], "-I", oracle, "--candidate", candidate, "--stable", source, "--report", report,
+         *transition_allowlist(cfg, record, source)], 180, offline_env())
     run([cfg["python"], "-I", ROOT / "guardian/release_contract.py", candidate], 60, offline_env())
     run([cfg["python"], "-m", "unittest", "discover", "-s", candidate / "tests"], 600,
         offline_env(), cwd=candidate)
@@ -243,7 +265,10 @@ def apply(args, cfg, env):
     from guardian.processes import Processes
     folder, receipt = check_prepared(args,cfg)
     token, own = env["PERIMETER_HA_TOKEN"], cfg["node_id"]
-    rows, owner = inventory(cfg,token)
+    recovery = getattr(args, "recover_reserve", False)
+    rows, owner = inventory(cfg,token, allow_degraded=recovery)
+    if recovery and (own not in {"perimetr", "comparator"} or own == owner or args.handoff):
+        raise RuntimeError("RecoveryRequiresPassiveLinuxReserve")
     if rows[own].get("release_sha") != receipt["base"]["sha"]:
         raise RuntimeError("InstalledReleaseChanged")
     if own == "physical" or own == owner:
@@ -340,6 +365,8 @@ def main(argv=None):
     mode=p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--plan",action="store_true");mode.add_argument("--prepare",action="store_true");mode.add_argument("--apply",action="store_true");mode.add_argument("--recover",action="store_true")
     p.add_argument("--release",required=True);p.add_argument("--handoff",action="store_true")
+    p.add_argument("--recover-reserve", action="store_true",
+                   help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
     p.add_argument("--config",type=Path,default=Path("D:/PerimeterHA/node.json" if os.name=="nt" else "/etc/perimeter/node.json"))
     p.add_argument("--environment",type=Path,default=Path("D:/PerimeterHA/transfer-private/environment.local.json" if os.name=="nt" else "/etc/perimeter/environment"))
     args=p.parse_args(argv)

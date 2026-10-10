@@ -1,0 +1,5 @@
+[
+  {"trace":"warehouse_cannot_resolve_conflict","field":"report_directions","old":["OUT"],"new":["UNKNOWN"]},
+  {"trace":"warehouse_cannot_resolve_conflict","field":"report_warehouse_conflicts","old":0,"new":1},
+  {"trace":"warehouse_later_nullable_tag","field":"report_warehouse_conflicts","old":0,"new":1}
+]

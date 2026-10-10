@@ -91,6 +91,43 @@ class OperatorUpdateTests(unittest.TestCase):
         self.rows["physical"]["epoch"]=9
         self.assertEqual("perimetr",update.wait_handoff(self.cfg,"token","comparator",self.release,request,timeout=0)["node"])
 
+    def test_degraded_inventory_is_opt_in_and_rejects_two_owners(self):
+        self.rows["physical"]["healthy"] = False
+        def request(url,*args,**kwargs):return 200,next(row for row in self.rows.values() if url.startswith("http://"+row["node"]+":"))
+        with self.assertRaisesRegex(RuntimeError,"HealthySingleOwnerRequired"):
+            update.inventory(self.cfg,"token",request)
+        self.assertEqual("physical",update.inventory(self.cfg,"token",request,allow_degraded=True)[1])
+        self.rows["physical"]["active"] = False
+        self.assertIsNone(update.inventory(self.cfg,"token",request,allow_degraded=True)[1])
+        self.rows["physical"]["active"] = self.rows["perimetr"]["active"] = True
+        with self.assertRaises(RuntimeError):update.inventory(self.cfg,"token",request,allow_degraded=True)
+
+    def test_legacy_shadow_exceptions_are_bound_to_clean_exact_baseline(self):
+        sha, tree = next(iter(update.LEGACY_BASELINES.items()))
+        self.record["current"]["sha"] = sha
+        def git(cfg,*args):
+            if "HEAD" in args:return sha
+            if "HEAD^{tree}" in args:return tree
+            return ""
+        with patch.object(update,"git",side_effect=git):
+            self.assertEqual("--allowlist",update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"]))[0])
+        with patch.object(update,"git",return_value="dirty"):
+            with self.assertRaisesRegex(RuntimeError,"BaselineChanged"):
+                update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"]))
+        self.record["current"]["sha"] = self.old
+        with patch.object(update,"git") as git:
+            self.assertEqual([],update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"])))
+            git.assert_not_called()
+
+    def test_recovery_flag_never_updates_physical_or_active_reserve(self):
+        self.args.recover_reserve = True
+        for own, owner in (("physical","physical"),("physical",None),("comparator","comparator")):
+            self.cfg["node_id"] = own
+            with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,owner)),patch.object(update,"native") as native:
+                with self.assertRaisesRegex(RuntimeError,"PassiveLinuxReserve"):
+                    update.apply(self.args,self.cfg,self.env)
+                native.assert_not_called()
+
     def test_successful_passive_install_preserves_bootstrap_and_spools(self):
         requests=[]
         def request(url,token,**kwargs):

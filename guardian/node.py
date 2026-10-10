@@ -303,9 +303,46 @@ class Node:
     def probe_loop(self):
         while not self.stop.is_set():
             self.check()
+            try:
+                self.arm_passive_verification()
+            except Exception as exc:
+                self.telemetry.event("passive_verification_deferred", error=type(exc).__name__)
             # Also clean a timed-out passive DLL probe without stopping a live bridge.
             self.processes.reap_bridges(orphaned_only=True)
             self.stop.wait(30)
+
+    def arm_passive_verification(self):
+        """Recover a stopped, independently prepared reserve without inference.
+
+        This only arms the existing verification timer. It neither grants a
+        lease nor clears the SQL fault. Failed probes, operator maintenance,
+        a live owner and an actual failed candidate trial remain excluded.
+        """
+        with self.mutation:
+            if (self.maintenance or getattr(self, "operator_maintenance", False)
+                    or self.stop.is_set() or self.processes.children
+                    or self.repair_attempted or not self.preflight_result["ok"]
+                    or self.preflight_result.get("checks", {}).get("ports_free") is not True
+                    or self.preflight_result.get("checks", {}).get("sdk_load") is not True
+                    or time.monotonic()-self.preflight_at >= 90
+                    or (self.updates.state.get("pending") and self.updates.state.get("trial_started"))):
+                return
+            lease = self.store.lease()
+            if lease["valid"] and lease["owner"] == self.cfg["node_id"]:
+                return
+            if not self.store.node_state(self.cfg["node_id"])["faulted"]:
+                return
+            times = json.loads(self.rate_path.read_text()) if self.rate_path.exists() else []
+            recent = [stamp for stamp in times if 0 <= time.time()-stamp < 600]
+            if len(recent) >= 3 or any(time.time()-stamp < 300 for stamp in recent):
+                return  # Durable cooldown also covers a Guardian restart.
+            # The locked SQL check rejects a lease acquired since the sample.
+            self.store.begin_repair(self.cfg["node_id"])
+            atomic_json(self.rate_path, recent + [time.time()])
+            atomic_json(self.repair_path, {"required": True})
+            self.repair_attempted = True
+            self.verified_since = None
+            self.telemetry.event("passive_verification_armed")
 
     def tick(self):
         lease = self.store.lease()

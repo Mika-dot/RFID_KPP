@@ -7,7 +7,7 @@
   "audited_base_sha": "4e005d769495f01f2e665133695827d33bf0fac5",
   "base_ci": "Perimeter HA Ubuntu/Windows, Warehouse, Observability: success",
   "live_installation_of_this_candidate": false,
-  "current_factory_health": "unknown: configured Grafana and three Guardian TCP endpoints unreachable from this environment",
+  "current_factory_health": "user screenshot 2026-10-10: physical unhealthy owner 7677849; perimetr/comparator faulted 1c793091; epoch 816. No fresh live poll from this environment.",
   "statuses": {
     "SOFTWARE_READY": "Implemented and offline checked; this does not mean installed or accepted at the factory",
     "PARTIAL": "Implemented foundation; named requirement still has a material gap",
@@ -477,5 +477,19 @@
     "installation_performed": false,
     "factory_current_state": "unknown",
     "note": "Original status counts are unchanged: physical acceptance, actual infrastructure, independent factory labels and elapsed baseline cannot be closed by offline tools."
+  },
+  "continuation_2026_10_10": {
+    "screenshot_runtime": "physical_unhealthy_7677849_reserves_faulted_1c793091_epoch_816",
+    "runbook": "deploy/ha/RECOVERY_2026-10-10.md",
+    "software_fixes": [
+      "passive_independent_verification_with_durable_cooldown",
+      "degraded_cluster_passive_reserve_install",
+      "legacy_exact_warehouse_replay_transition",
+      "late_persisted_warehouse_report_links",
+      "read_only_redacted_cluster_diagnosis"
+    ],
+    "offline_tests": 619,
+    "factory_restoration": "not_confirmed",
+    "task_status_counts": "unchanged_live_acceptance_still_required"
   }
 }

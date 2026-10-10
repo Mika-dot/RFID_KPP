@@ -98,7 +98,9 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
     FROM dbo.KPP_ReelEvents e
     LEFT JOIN {base.Config.TASK_TABLE} t ON t.Id=e.Task1CId
     LEFT JOIN {warehouse_table} w ON w.Id=e.WarehouseId
-    WHERE e.FirstSeen>=? AND e.FirstSeen<?
+    -- Persisted WarehouseId is authoritative even outside the fallback
+    -- identity window (accepted adaptive delays can exceed 24 hours).
+    WHERE ((e.FirstSeen>=? AND e.FirstSeen<?) OR (w.Dt>=? AND w.Dt<?))
       AND e.IsReel=1 AND ISNULL(e.RfidReadCount,0)>0
       AND ISNULL(e.SessionCloseReason,'')<>'WAREHOUSE_ONLY'
     ORDER BY e.FirstSeen,e.EventId;
@@ -110,7 +112,7 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
         warehouse_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
         cur.execute(task_query, expanded_start, expanded_end)
         task_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
-        cur.execute(kpp_query, expanded_start, expanded_end)
+        cur.execute(kpp_query, expanded_start, expanded_end, start, end_exclusive)
         kpp_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
 
     return build_report_records(warehouse_rows, task_rows, kpp_rows, start, end_exclusive)
