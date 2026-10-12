@@ -514,9 +514,10 @@
         "durable replica cursors and pending-first passive synchronization",
         "hardware rollback actual epoch/emergency deny authority"
       ],
-      "local_tests": 650,
+      "local_tests": 651,
       "native_skips": 15,
-      "fresh_factory_diagnosis": "awaiting user output after reported RFID restoration"
+      "fresh_factory_diagnosis": "awaiting user output after reported RFID restoration",
+      "controller_authority_binding": "existing parent controller lease identity/token passed only through private env, no new child claim"
     }
   }
 }

@@ -14,7 +14,7 @@ class ControllerTests(unittest.TestCase):
         store.lease.return_value={"owner":"perimetr","valid":True,"enabled":True,"epoch":12}
         with patch("guardian.hardware_fence.fence_previous") as fence:
             controller._rollback_hardware_handoff("perimetr",12)
-        fence.assert_called_once_with(controller.cfg,"perimetr",12,emergency=True)
+        fence.assert_called_once_with(controller.cfg,"perimetr",12,emergency=True,controller_store=store)
         self.assertIn("perimetr",[c.args[0] for c in store.fault.call_args_list])
 
     @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
@@ -25,7 +25,7 @@ class ControllerTests(unittest.TestCase):
         store.lease.return_value={"owner":None,"valid":False,"enabled":True,"epoch":14}
         with patch("guardian.hardware_fence.fence_previous") as fence:
             controller._rollback_hardware_handoff("perimetr",12)
-        fence.assert_called_once_with(controller.cfg,"perimetr",14,emergency=False)
+        fence.assert_called_once_with(controller.cfg,"perimetr",14)
 
     def build(self):
         cfg={"node_id":"comparator", "nodes":[

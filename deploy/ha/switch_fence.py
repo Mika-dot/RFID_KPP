@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -95,6 +96,23 @@ def operate(config,node_id,epoch,allow,store,runner=subprocess.run,emergency=Fal
     return {"node":node_id,"reader_access":True,"epoch":epoch} if allow else {"node":node_id,"isolated":True,"epoch":epoch}
 
 
+def authority_store(factory):
+    emergency = os.environ.get("PERIMETER_FENCE_EMERGENCY") == "1"
+    identity = os.environ.get("PERIMETER_FENCE_CONTROLLER") if emergency else None
+    token = os.environ.get("PERIMETER_FENCE_CONTROLLER_TOKEN", "")
+    if emergency:
+        if not identity:
+            raise RuntimeError("EmergencyFenceControllerIdentityRequired")
+        try:
+            uuid.UUID(token)
+        except ValueError:
+            raise RuntimeError("EmergencyFenceControllerIdentityRequired") from None
+    store = factory(controller=identity)
+    if emergency:
+        store.token = token  # Bind the existing controller lease; never claim a new one.
+    return store
+
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config",required=True,type=Path)
@@ -107,7 +125,7 @@ def main(argv=None):
         return 0
     credentials(cfg)
     from guardian.sql import SqlStore
-    result=operate(cfg,os.environ["PERIMETER_FENCE_NODE"],int(os.environ["PERIMETER_FENCE_EPOCH"]),a.unfence,SqlStore(),
+    result=operate(cfg,os.environ["PERIMETER_FENCE_NODE"],int(os.environ["PERIMETER_FENCE_EPOCH"]),a.unfence,authority_store(SqlStore),
                    emergency=os.environ.get("PERIMETER_FENCE_EMERGENCY")=="1")
     print(json.dumps(result))
     return 0

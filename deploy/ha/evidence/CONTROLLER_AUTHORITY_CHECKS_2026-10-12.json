@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-12",
+  "oracle_sha": "0073379e778bfd1340b4d99eda4c41b47dc6f9cd",
+  "qualification": {
+    "adapter_contracts": 6,
+    "golden_traces": 27,
+    "ha_model_scenarios": 8,
+    "mode": "offline_recorded_inputs_no_production_connections",
+    "python_files_parsed": 128,
+    "shadow_differences": 0,
+    "status": "passed",
+    "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+  },
+  "local_tests": {
+    "total": 651,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 15,
+    "executed": 636,
+    "seconds": 30.093
+  },
+  "compile": "passed",
+  "diff_check": "passed",
+  "integration": "controller lease identity and token cross trusted subprocess env, child controller_owned binds same existing lease, no new claim, no token in argv/stdout",
+  "factory_acceptance": "awaiting fresh user diagnosis after RFID connectivity restored"
+}

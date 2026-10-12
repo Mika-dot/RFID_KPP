@@ -72,7 +72,10 @@ class Controller:
                     if type(epoch) is not int or epoch < assigned_epoch:
                         raise RuntimeError("HardwareFenceLeaseHistoryChanged")
                     emergency = current.get("valid") is True and current.get("owner") == chosen
-                    fence_previous(self.cfg, chosen, epoch, emergency=emergency)
+                    if emergency:
+                        fence_previous(self.cfg, chosen, epoch, emergency=True, controller_store=self.store)
+                    else:
+                        fence_previous(self.cfg, chosen, epoch)
                     rollback_epoch = epoch
                 except Exception as fence_exc:
                     self.telemetry.event("hardware_fence_pending", target=chosen,

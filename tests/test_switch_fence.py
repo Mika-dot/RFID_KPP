@@ -4,11 +4,32 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from deploy.ha import switch_fence as fence
 
 
 class SwitchFenceTests(unittest.TestCase):
+    def test_emergency_subprocess_binds_parent_identity_without_new_claim_or_token_in_argv(self):
+        from guardian.hardware_fence import fence_previous
+        token="a"*8+"-"+"b"*4+"-4"+"c"*3+"-8"+"d"*3+"-"+"e"*12
+        cfg={"hardware_fencing_required":True,
+             "nodes":[{"id":"physical","fence_argv":["configured-adapter","--fence"]}]}
+        parent=Mock(controller="comparator",token=token)
+        def adapter(argv,**kwargs):
+            self.assertNotIn(token," ".join(argv))
+            with patch.dict("os.environ",kwargs["env"]):
+                factory=Mock(return_value=Mock())
+                child=fence.authority_store(factory)
+                factory.assert_called_once_with(controller="comparator")
+                self.assertEqual(token,child.token)
+                child.claim_controller.assert_not_called()
+            return subprocess.CompletedProcess(argv,0,b'{"node":"physical","isolated":true,"epoch":9}',b'')
+        with patch("guardian.hardware_fence.subprocess.run",side_effect=adapter):
+            self.assertTrue(fence_previous(cfg,"physical",9,emergency=True,controller_store=parent)["verified"])
+        with patch.dict("os.environ",{"PERIMETER_FENCE_EMERGENCY":"1","PERIMETER_FENCE_CONTROLLER":"comparator",
+                "PERIMETER_FENCE_CONTROLLER_TOKEN":"invalid"}):
+            with self.assertRaises(RuntimeError):fence.authority_store(Mock())
+
     def test_emergency_deny_requires_faulted_target_live_controller_and_actual_epoch(self):
         store=self.store(owner="physical")
         store.controller_owned.return_value=True

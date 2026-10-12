@@ -144,3 +144,8 @@ restart/empty/archive error replica cursor, rollback not committed/lost ack
 actual epoch и emergency refusal при смене authority/healthy target.
 Installed oracle2fcf016:27 Golden traces,6 adapter contracts,8 HA scenarios,
 0 business shadow differences; exact CI и SHA публикуются в PR#9.
+
+Дополнительная integration check: emergency adapter получает controller ID/lease token
+действующего Guardian только через private subprocess environment. Дочерний
+SqlStore использует тот же token для controller_owned; не создаёт новый claim.
+Token не попадает в argv/stdout. Эта связка проверена отдельным тестом.
