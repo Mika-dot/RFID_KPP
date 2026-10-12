@@ -34,6 +34,20 @@ class MetadataMirror:
             db.execute("""CREATE TABLE IF NOT EXISTS registry_refresh(
                 stream TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0,
                 completed_at REAL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS registry_refresh_cycles(
+                stream TEXT PRIMARY KEY, cycle INTEGER NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS registry_refresh_seen(
+                stream TEXT NOT NULL, source_id INTEGER NOT NULL, cycle INTEGER NOT NULL,
+                PRIMARY KEY(stream,source_id))""")
+            # Older releases did not persist which rows a partial refresh saw.
+            # Restart such a scan so the first reconciled cycle cannot remove
+            # a valid row that was visited before this schema existed.
+            missing = db.execute("""SELECT r.stream FROM registry_refresh r
+                LEFT JOIN registry_refresh_cycles c ON c.stream=r.stream
+                WHERE c.stream IS NULL""").fetchall()
+            for (stream,) in missing:
+                db.execute("UPDATE registry_refresh SET position=0 WHERE stream=?", (stream,))
+                db.execute("INSERT INTO registry_refresh_cycles VALUES(?,0)", (stream,))
         if os.name != "nt":
             self.path.chmod(0o600)
 
@@ -78,9 +92,11 @@ class MetadataMirror:
             row = db.execute("SELECT position FROM registry_refresh WHERE stream=?", (stream,)).fetchone()
         return int(row[0]) if row else 0
 
-    def commit_refresh(self, stream, rows, position, complete):
+    def commit_refresh(self, stream, rows, position, complete, high_watermark=None):
         if stream not in {"warehouse", "tasks"} or type(position) is not int or position < 0:
             raise ValueError("RegistryRefreshCursorInvalid")
+        if high_watermark is not None and (type(high_watermark) is not int or high_watermark < 0):
+            raise ValueError("RegistryRefreshHighWatermarkInvalid")
         now = time.time()
         prepared = []
         for source_id, source_at, payload in rows:
@@ -89,12 +105,39 @@ class MetadataMirror:
             prepared.append((stream, int(source_id), source_at.isoformat(),
                              canonical(metadata_only(payload)), now))
         with self.connect() as db:
+            state = db.execute(
+                "SELECT position FROM registry_refresh WHERE stream=?", (stream,)).fetchone()
+            previous_position = int(state[0]) if state else 0
+            cycle_row = db.execute(
+                "SELECT cycle FROM registry_refresh_cycles WHERE stream=?", (stream,)).fetchone()
+            cycle = int(cycle_row[0]) if cycle_row else 0
+            if previous_position == 0:
+                cycle += 1
+                db.execute("DELETE FROM registry_refresh_seen WHERE stream=?", (stream,))
+                db.execute("""INSERT INTO registry_refresh_cycles VALUES(?,?)
+                    ON CONFLICT(stream) DO UPDATE SET cycle=excluded.cycle""", (stream, cycle))
             db.executemany("""INSERT INTO snapshots VALUES(?,?,?,?,?)
                 ON CONFLICT(stream,source_id) DO UPDATE SET
                 source_time=excluded.source_time,payload=excluded.payload,mirrored_at=excluded.mirrored_at""", prepared)
+            db.executemany("""INSERT INTO registry_refresh_seen VALUES(?,?,?)
+                ON CONFLICT(stream,source_id) DO UPDATE SET cycle=excluded.cycle""",
+                ((stream, item[1], cycle) for item in prepared))
+            if high_watermark is None:
+                watermark = db.execute(
+                    "SELECT position FROM watermarks WHERE stream=?", (stream,)).fetchone()
+                high_watermark = int(json.loads(watermark[0])) if watermark else 0
+            if complete:
+                db.execute("""DELETE FROM snapshots
+                    WHERE stream=? AND source_id<=? AND NOT EXISTS(
+                        SELECT 1 FROM registry_refresh_seen seen
+                        WHERE seen.stream=snapshots.stream
+                        AND seen.source_id=snapshots.source_id AND seen.cycle=?)""",
+                           (stream, high_watermark, cycle))
+                db.execute("DELETE FROM registry_refresh_seen WHERE stream=?", (stream,))
             db.execute("""INSERT INTO registry_refresh VALUES(?,?,?)
                 ON CONFLICT(stream) DO UPDATE SET position=excluded.position,
-                completed_at=COALESCE(excluded.completed_at,registry_refresh.completed_at)""",
+                completed_at=CASE WHEN excluded.completed_at IS NULL
+                    THEN registry_refresh.completed_at ELSE excluded.completed_at END""",
                 (stream, position, now if complete else None))
         return len(prepared)
 

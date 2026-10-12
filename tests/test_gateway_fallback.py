@@ -83,9 +83,10 @@ class GatewayFallbackTests(unittest.TestCase):
         self.assertTrue(all(url.endswith("/events/recent") and token == "ha-secret" for url, token in self.requests))
 
     def test_public_address_cannot_reuse_an_executor_ip(self):
-        validate_public_url(dict(nodes=self.nodes, public_url="http://comparator:5051"))
-        with self.assertRaisesRegex(ValueError, "Independent"):
-            validate_public_url(dict(nodes=self.nodes, public_url="http://physical:5051"))
+        for host in ("physical", "perimetr", "comparator"):
+            with self.subTest(host=host), self.assertRaisesRegex(ValueError, "Independent"):
+                validate_public_url(dict(nodes=self.nodes, public_url=f"http://{host}:5051"))
+        validate_public_url(dict(nodes=self.nodes, public_url="http://ub22:5051"))
 
     def test_resolved_backend_transport_failure_uses_authenticated_cache(self):
         for operation in ("request", "getresponse", "read"):

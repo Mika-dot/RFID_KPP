@@ -145,7 +145,7 @@ def sync_metadata(mirror, connection=None, batch_size=500, task_connection=None)
                 complete = len(rows) < batch_size
                 position = 0 if complete else int(rows[-1][0])
                 prepared = [(int(row[0]), row[1], {key: json_value(value) for key, value in zip(fields, row)}) for row in rows]
-                mirror.commit_refresh(stream, prepared, position, complete)
+                mirror.commit_refresh(stream, prepared, position, complete, high)
         mirror.maintenance()
         if blocked:
             raise MirrorReadBlocked(blocked)

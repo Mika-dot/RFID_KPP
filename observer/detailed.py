@@ -137,7 +137,10 @@ def summarize(stream, rows):
         if groups:
             out["passage_group_reel_count"] = sum(groups.values()) / len(groups)
         if rows:
-            out["warehouse_superseded_ratio"] = sum(r.get("SessionCloseReason") == "SUPERSEDED_BY_KPP" for r in rows) / len(rows)
+            out["warehouse_superseded_ratio"] = sum(
+                r.get("ReelClassification") == "SUPERSEDED_BY_KPP"
+                or "SUPERSEDED_BY_KPP" in str(r.get("WarningFlags", ""))
+                for r in rows) / len(rows)
         distribution(out, "confidence_distribution", [r.get("ConfidencePct") for r in physical])
         for key, values in (
             ("rfid_session_duration", [delta(r.get("LastSeen"), r.get("FirstSeen")) for r in physical]),

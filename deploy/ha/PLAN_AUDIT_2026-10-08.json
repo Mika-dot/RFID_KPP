@@ -7,7 +7,7 @@
   "audited_base_sha": "4e005d769495f01f2e665133695827d33bf0fac5",
   "base_ci": "Perimeter HA Ubuntu/Windows, Warehouse, Observability: success",
   "live_installation_of_this_candidate": false,
-  "current_factory_health": "user post-install GET 12.10: Comparator rolled back to 1c793091; active/unhealthy RFID, YOLO and RusGuard ready; physical/perimetr passive faulted; epoch 3237. Rollback reason not yet retrieved.",
+  "current_factory_health": "15:06 MSK epoch3457: 7ae0283 trial rejected; Perimetr and Comparator rolled back to 1c793091, physical remains 7677849. Comparator active/unhealthy: RFID TCPConnect code1, camera_1 and web_port unavailable; physical/Perimetr passive faulted. SQL lock DMV visibility denied, so empty visible requests do not prove absence of a blocker.",
   "statuses": {
     "SOFTWARE_READY": "Implemented and offline checked; this does not mean installed or accepted at the factory",
     "PARTIAL": "Implemented foundation; named requirement still has a material gap",
@@ -501,8 +501,8 @@
     "factory_restoration": "not_confirmed_after_user_connectivity_restoration",
     "week_test": "starts after all four machines verified; checkpoints one and five days, decision one week",
     "receiver_rollout": "user confirmed held install of 7ae0283 on both Linux nodes and successful pair release",
-    "latest_measured_cluster": "11:16 MSK epoch3328: perimetr active unhealthy7ae, comparator prepared nonfaulted7ae; native physical old767",
-    "rfid_connectivity_update": "12:15 MSK user reports restored; fresh SDK/business/owner/probation confirmation not yet supplied",
+    "latest_measured_cluster": "15:06 MSK epoch3457: comparator active unhealthy1c793091; perimetr passive faulted1c793091; physical passive faulted7677849; 7ae0283 target_rejected=true",
+    "rfid_connectivity_update": "12:15 MSK user reported restored, but 15:06 diagnostic again showed repeated TCPConnect code1 and source age1534sec; sustained restoration not confirmed",
     "mirror_root_cause": "events SELECT blocked: SQLSTATE42000 native1222; TOP0 all six streams QUERY_OK",
     "followup_software": "isolate1222 streams without cursor advance; recycle failed isolated Wine bridge; bounded SELECT-only SQL lock diagnosis",
     "followup_runbook": "deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md",
@@ -517,7 +517,20 @@
       "local_tests": 651,
       "native_skips": 15,
       "fresh_factory_diagnosis": "awaiting user output after reported RFID restoration",
-      "controller_authority_binding": "existing parent controller lease identity/token passed only through private env, no new child claim"
+      "controller_authority_binding": "existing parent controller lease identity/token passed only through private env, no new child claim",
+      "final_review_2026_10_12": {
+        "reviewed_parent": "70d71f93c80a45fbdd5b87336c429f76bef753f3",
+        "fixed": [
+          "completed mutable-registry cycles remove rows deleted at source using durable cycle membership",
+          "installation verification rejects pending or missing release trial state",
+          "public gateway cannot share physical, perimetr or comparator host; example uses ub22",
+          "warehouse supersession metric reads persisted classification or warning flag"
+        ],
+        "local_tests": 655,
+        "native_skips": 15,
+        "qualification": "27 Golden traces, 6 adapter contracts, 8 HA models, 0 shadow differences",
+        "factory_installation": "awaiting exact published SHA and green CI"
+      }
     }
   }
 }

@@ -73,6 +73,15 @@ class DetailedMetricsTests(unittest.TestCase):
         self.assertEqual(4,values["rfid_session_duration"])
         self.assertEqual({},summarize("rfid",[]))
 
+    def test_warehouse_supersession_uses_persisted_classification_or_warning(self):
+        rows=[
+            {"SessionCloseReason":"WAREHOUSE_ONLY","ReelClassification":"SUPERSEDED_BY_KPP"},
+            {"SessionCloseReason":"WAREHOUSE_ONLY","WarningFlags":"LATE | SUPERSEDED_BY_KPP"},
+            {"SessionCloseReason":"WAREHOUSE_ONLY","ReelClassification":"WAREHOUSE_ONLY"},
+            {"SessionCloseReason":"RFID_INACTIVITY"},
+        ]
+        self.assertEqual(.5,summarize("events",rows)["warehouse_superseded_ratio"])
+
     def test_runtime_window_is_bounded_and_truncated_populations_are_unknown(self):
         now=[0];stats=RuntimeStatistics(limit=2,window=10,clock=lambda:now[0])
         stats.add("camera_0_fresh_fps");stats.add("camera_0_stale_rate");now[0]=2

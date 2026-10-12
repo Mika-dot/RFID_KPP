@@ -44,7 +44,8 @@ def verify(nodes,release,token,request=json_request,require_local_copies=False):
         if (code!=200 or status.get("node")!=node["id"] or status.get("release_sha")!=release
             or type(status.get("fencing_protocol")) is not int or status["fencing_protocol"]!=2 or status.get("replication_enabled") is not True
             or type(status.get("sample_age")) not in (int,float) or not 0<=status["sample_age"]<=10 or status.get("faulted") is not False
-            or status.get("operator_maintenance") is not False or status.get("prepared") is not True):
+            or status.get("operator_maintenance") is not False or status.get("prepared") is not True
+            or not isinstance(status.get("update"),dict) or status["update"].get("pending") is not False):
             raise RuntimeError("NodeInstallationNotReady")
         if status.get("active"):
             if status.get("healthy") is not True or len(status.get("services",{}))!=5 or not all(s.get("ok") for s in status["services"].values()):

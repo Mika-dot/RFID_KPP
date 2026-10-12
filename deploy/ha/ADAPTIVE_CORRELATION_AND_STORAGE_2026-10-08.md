@@ -100,7 +100,7 @@ offline лидеров. VM/диски на одном хосте не дают �
 
 Gateway — отдельный сервис Comparator :5051; выбирает Web действующего SQL-owner.
 Предложенный `http://172.31.0.192:5051` ещё не принят инфраструктурой. Обычный IP
-physical/perimetr в public_url запрещён. При отказе primary/owner GET показывает
+physical/perimetr/comparator в public_url запрещены. При отказе primary/owner GET показывает
 авторизованную свежую или явно устаревшую копию; POST offline-записи не выполняет.
 Fallback использует существующие `KPP_WEB_AUTH_USER` / `KPP_WEB_AUTH_PASSWORD` из
 закрытого environment; без них доступ закрыт. Liveness не зависит от SQL,

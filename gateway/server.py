@@ -76,7 +76,7 @@ def validate_public_url(cfg):
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
             or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
         raise ValueError("InvalidPublicWebAddress")
-    executor_hosts = {urlsplit(node["url"]).hostname for node in cfg["nodes"] if node["id"] != "comparator"}
+    executor_hosts = {urlsplit(node["url"]).hostname for node in cfg["nodes"]}
     if parsed.hostname in executor_hosts:
         raise ValueError("IndependentPublicWebAddressRequired")
 

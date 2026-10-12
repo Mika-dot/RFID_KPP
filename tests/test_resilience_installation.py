@@ -108,6 +108,23 @@ class InstallationTests(unittest.TestCase):
         self.assertTrue(proof["installation_ready"]);self.assertEqual("not_measured",proof["physical_business_acceptance"])
         self.assertTrue(all(url.endswith(("/status","/replica/stats")) for url in calls))
 
+    def test_installation_probe_rejects_pending_or_missing_release_trial_state(self):
+        module=load("verify_resilience_installation")
+        nodes=[{"id":"physical","url":"http://physical"}]
+        def status(pending_marker):
+            result=dict(node="physical",release_sha="f"*40,fencing_protocol=2,
+                replication_enabled=True,sample_age=1,faulted=False,
+                operator_maintenance=False,prepared=True,active=True,healthy=True,
+                epoch=9,services={str(i):dict(ok=True) for i in range(5)})
+            if pending_marker != "missing":result["update"]={"pending":pending_marker}
+            return result
+        for pending in (True,"missing",None):
+            with self.subTest(pending=pending):
+                def request(url,token,**kwargs):
+                    return (200,{"pending":0}) if url.endswith("/replica/stats") else (200,status(pending))
+                with self.assertRaisesRegex(RuntimeError,"NodeInstallationNotReady"):
+                    module.verify(nodes,"f"*40,"private",request)
+
     def test_alert_persistence_resets_on_recovery_and_survives_restart(self):
         from observer.notifications import AlertOutbox
         with tempfile.TemporaryDirectory() as folder:

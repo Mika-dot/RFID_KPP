@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -179,6 +180,37 @@ class MirrorTests(unittest.TestCase):
         restarted.commit_refresh("tasks", [(3,self.now,{"Id":3,"Tag":"corrected"})], 0, True)
         self.assertEqual(0, restarted.refresh_position("tasks"))
         self.assertEqual("corrected", restarted.lookup("tasks",3)["Tag"])
+
+    def test_completed_registry_refresh_removes_source_deletions_only_after_full_cycle(self):
+        self.mirror.commit_batch("warehouse", [
+            (1,self.now,{"Id":1,"Tag":"keep"}),
+            (2,self.now,{"Id":2,"Tag":"deleted"}),
+            (3,self.now,{"Id":3,"Tag":"keep"})], 3, True)
+        self.mirror.commit_refresh("warehouse", [(1,self.now,{"Id":1,"Tag":"keep"})],
+                                   1, False, 3)
+        self.assertEqual("deleted", self.mirror.lookup("warehouse",2)["Tag"])
+        restarted = MetadataMirror(self.path)
+        restarted.commit_refresh("warehouse", [(3,self.now,{"Id":3,"Tag":"keep"})],
+                                 0, True, 3)
+        self.assertIsNone(restarted.lookup("warehouse",2))
+        self.assertEqual("keep", restarted.lookup("warehouse",1)["Tag"])
+        self.assertEqual("keep", restarted.lookup("warehouse",3)["Tag"])
+
+    def test_upgrade_restarts_legacy_partial_refresh_without_deleting_unseen_rows(self):
+        self.mirror.commit_batch("warehouse", [
+            (1,self.now,{"Id":1,"Tag":"first"}),
+            (2,self.now,{"Id":2,"Tag":"second"})], 2, True)
+        with sqlite3.connect(self.path) as db:
+            db.execute("INSERT INTO registry_refresh VALUES('warehouse',1,NULL)")
+            db.execute("DROP TABLE registry_refresh_seen")
+            db.execute("DROP TABLE registry_refresh_cycles")
+        upgraded = MetadataMirror(self.path)
+        self.assertEqual(0, upgraded.refresh_position("warehouse"))
+        upgraded.commit_refresh("warehouse", [
+            (1,self.now,{"Id":1,"Tag":"first"}),
+            (2,self.now,{"Id":2,"Tag":"second"})], 0, True, 2)
+        self.assertEqual("first", upgraded.lookup("warehouse",1)["Tag"])
+        self.assertEqual("second", upgraded.lookup("warehouse",2)["Tag"])
 
     def test_lock_in_registry_refresh_keeps_refresh_cursor_and_old_payload(self):
         self.mirror.commit_batch("warehouse", [(10,self.now,{"Id":10,"Tag":"old"})], 10, True)
