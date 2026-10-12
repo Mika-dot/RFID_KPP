@@ -31,6 +31,9 @@ class MetadataMirror:
             db.execute("""CREATE TABLE IF NOT EXISTS watermarks(
                 stream TEXT PRIMARY KEY, position TEXT NOT NULL, synced_at REAL NOT NULL,
                 caught_up INTEGER NOT NULL DEFAULT 0)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS registry_refresh(
+                stream TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0,
+                completed_at REAL)""")
         if os.name != "nt":
             self.path.chmod(0o600)
 
@@ -68,6 +71,33 @@ class MetadataMirror:
                 (stream, canonical(position), now, int(bool(caught_up))))
         return len(prepared)
 
+    def refresh_position(self, stream):
+        if stream not in {"warehouse", "tasks"}:
+            raise ValueError("MutableRegistryRequired")
+        with self.connect() as db:
+            row = db.execute("SELECT position FROM registry_refresh WHERE stream=?", (stream,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def commit_refresh(self, stream, rows, position, complete):
+        if stream not in {"warehouse", "tasks"} or type(position) is not int or position < 0:
+            raise ValueError("RegistryRefreshCursorInvalid")
+        now = time.time()
+        prepared = []
+        for source_id, source_at, payload in rows:
+            if not isinstance(source_at, datetime):
+                source_at = datetime.fromisoformat(str(source_at))
+            prepared.append((stream, int(source_id), source_at.isoformat(),
+                             canonical(metadata_only(payload)), now))
+        with self.connect() as db:
+            db.executemany("""INSERT INTO snapshots VALUES(?,?,?,?,?)
+                ON CONFLICT(stream,source_id) DO UPDATE SET
+                source_time=excluded.source_time,payload=excluded.payload,mirrored_at=excluded.mirrored_at""", prepared)
+            db.execute("""INSERT INTO registry_refresh VALUES(?,?,?)
+                ON CONFLICT(stream) DO UPDATE SET position=excluded.position,
+                completed_at=COALESCE(excluded.completed_at,registry_refresh.completed_at)""",
+                (stream, position, now if complete else None))
+        return len(prepared)
+
     def recent(self, stream="events", limit=20):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("MirrorPageInvalid")
@@ -81,9 +111,11 @@ class MetadataMirror:
             rows = db.execute("""SELECT w.stream,w.synced_at,w.caught_up,
                 (SELECT COUNT(*) FROM snapshots s WHERE s.stream=w.stream)
                 FROM watermarks w ORDER BY w.stream""").fetchall()
+            refresh = db.execute("SELECT stream,position,completed_at FROM registry_refresh ORDER BY stream").fetchall()
         return {"retention_days": self.retention_days,
                 "streams": {r[0]: {"synced_at": r[1], "caught_up": bool(r[2]), "records": r[3],
                                    "age_sec": max(0, time.time() - r[1])} for r in rows},
+                "registry_refresh": {r[0]: {"position": r[1], "completed_at": r[2]} for r in refresh},
                 "bytes": sum(p.stat().st_size for p in (self.path, Path(str(self.path) + "-wal")) if p.exists())}
 
     def lookup(self, stream, source_id):

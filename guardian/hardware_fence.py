@@ -5,7 +5,7 @@ import subprocess
 import os
 
 
-def fence_previous(cfg, node_id, epoch):
+def fence_previous(cfg, node_id, epoch, emergency=False):
     required = cfg.get("hardware_fencing_required", False)
     if not required:
         return {"required": False, "verified": False}
@@ -15,6 +15,7 @@ def fence_previous(cfg, node_id, epoch):
             or type(epoch) is not int):
         raise RuntimeError("HardwareFenceUnconfigured")
     env = dict(os.environ, PERIMETER_FENCE_NODE=node_id, PERIMETER_FENCE_EPOCH=str(epoch))
+    env["PERIMETER_FENCE_EMERGENCY"] = "1" if emergency else "0"
     result = subprocess.run(argv, env=env, shell=False, stdin=subprocess.DEVNULL, capture_output=True,
                             timeout=min(8, cfg.get("hardware_fence_timeout_sec", 5)))
     if result.returncode or len(result.stdout) > 4096:

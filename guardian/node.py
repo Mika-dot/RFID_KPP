@@ -200,10 +200,39 @@ class Node:
                 logs[name] = ""
         return {"status": self.snapshot(), "workers": workers, "logs": logs}
 
+    def pull_replica_peer(self, peer, pending=False, request=None):
+        from common.replicated_ingest import MAX_BODY
+        from guardian.net import json_request
+        request = request or json_request
+        after = self.replica.peer_cursor(peer["id"], pending)
+        path = "/replica/pending" if pending else "/replica/page"
+        code, data = request(peer["url"].rstrip("/") + path + "?after=" + str(after),
+                             os.environ["PERIMETER_HA_TOKEN"], timeout=2, max_bytes=MAX_BODY)
+        if code != 200:
+            return  # Legacy peers can lack the pending-first endpoint.
+        cursors = {peer["id"]: after}
+        advance_replica_cursor(cursors, peer["id"], data)
+        position = after
+        for item in data["items"]:
+            seq = item.get("cursor")
+            if (type(seq) is not int or not position < seq <= data["cursor"]
+                    or item.get("state") not in {"PENDING", "SENT"}):
+                raise ValueError("InvalidReplicaItem")
+            self.replica.put(item["record"])
+            self.archive_replica(item["record"], item["state"] == "SENT")
+            if item["state"] == "SENT":
+                record = item["record"]
+                self.replica.sent(record["stream"], record["uuid"], record["digest"])
+            position = seq
+        if position != data["cursor"]:
+            raise ValueError("ReplicaCursorSkippedRecords")
+        # Each record/archive is already durable. A crash before this cursor
+        # commit merely replays idempotent UUIDs, never skips an undelivered row.
+        self.replica.save_peer_cursor(peer["id"], position, pending)
+
     def replication_loop(self):
         from common.replicated_ingest import MAX_BODY, replay_local
         from guardian.net import json_request
-        cursors = {}
         while not self.stop.is_set():
             import sqlite3
             from datetime import datetime
@@ -243,26 +272,18 @@ class Node:
                 try:
                     lease = self.store.lease()
                     owned = lease["valid"] and lease["owner"] == self.cfg["node_id"]
-                    if owned:
-                        for peer in self.cfg["nodes"]:
-                            if peer["id"] == self.cfg["node_id"]:
-                                continue
+                    # Standbys stay caught up without starting business workers.
+                    # Current pending inputs are fetched before retained SENT
+                    # history so failover does not wait for a multi-day scan.
+                    for peer in self.cfg["nodes"]:
+                        if peer["id"] == self.cfg["node_id"]:
+                            continue
+                        for pending in (True, False):
                             try:
-                                code, data = json_request(peer["url"].rstrip("/")+"/replica/page?after="+str(cursors.get(peer["id"], 0)),
-                                    os.environ["PERIMETER_HA_TOKEN"], timeout=2, max_bytes=MAX_BODY)
-                                if code != 200 or not isinstance(data.get("items"), list):
-                                    continue
-                                for item in data["items"]:
-                                    if item["state"] not in {"PENDING", "SENT"}:
-                                        raise ValueError("InvalidReplicaState")
-                                    self.replica.put(item["record"])
-                                    self.archive_replica(item["record"], item["state"] == "SENT")
-                                    if item["state"] == "SENT":
-                                        r = item["record"]
-                                        self.replica.sent(r["stream"], r["uuid"], r["digest"])
-                                advance_replica_cursor(cursors, peer["id"], data)
+                                self.pull_replica_peer(peer, pending)
                             except Exception:
                                 continue
+                    if owned:
                         # SQL/role may have changed during peer I/O; recheck.
                         current = self.store.lease()
                         if current["valid"] and current["owner"] == self.cfg["node_id"] and current["epoch"] == lease["epoch"]:
@@ -319,13 +340,22 @@ class Node:
             self.stop.wait(30)
 
     def arm_passive_verification(self):
-        """Recover a stopped, independently prepared reserve without inference.
+        """Verify an untried, qualified release transition without inference.
 
         This only arms the existing verification timer. It neither grants a
         lease nor clears the SQL fault. Failed probes, operator maintenance,
         a live owner and an actual failed candidate trial remain excluded.
+        A stable runtime-faulted release needs a concrete repair action; a
+        stopped DLL/preflight probe alone cannot prove its workload repaired.
         """
         with self.mutation:
+            update = self.updates.state
+            if (update.get("pending") is not True or update.get("trial_started") is not False
+                    or not update.get("previous")
+                    or update.get("current", {}).get("sha") == update.get("previous", {}).get("sha")
+                    or update.get("qualification", {}).get("status") != "passed"
+                    or update.get("qualification", {}).get("sha") != update.get("current", {}).get("sha")):
+                return
             if (self.maintenance or getattr(self, "operator_maintenance", False)
                     or self.stop.is_set() or self.processes.children
                     or self.repair_attempted or not self.preflight_result["ok"]
@@ -537,13 +567,15 @@ class Node:
                     return self.send(200, node.fallback.stats())
                 if self.path == "/events/recent":
                     return self.send(200, node.recent_events())
-                if self.path.startswith("/replica/page?") and getattr(node, "replica", None) is not None:
+                if (self.path.startswith(("/replica/page?", "/replica/pending?"))
+                        and getattr(node, "replica", None) is not None):
                     from urllib.parse import parse_qs, urlsplit
                     try:
                         query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
                         if set(query) != {"after"} or len(query["after"]) != 1:
                             raise ValueError("InvalidReplicaPage")
-                        return self.send(200, node.replica.page(int(query["after"][0])))
+                        return self.send(200, node.replica.page(int(query["after"][0]),
+                            pending=self.path.startswith("/replica/pending?")))
                     except (ValueError, TypeError):
                         return self.send(400, {"error": "InvalidReplicaPage"})
                 self.send(404, {"error": "NotFound"})

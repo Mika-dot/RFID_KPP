@@ -142,6 +142,8 @@ class MirrorTests(unittest.TestCase):
             cursor.fetchall.return_value = [tuple(values)]
             responses.append(cursor)
         connection = Mock()
+        empty = Mock(); empty.fetchall.return_value = []
+        responses += [empty, empty]
         connection.execute.side_effect = responses
         result = sync_metadata(self.mirror, connection, batch_size=100)
         self.assertEqual(set(REQUIRED_STREAMS), set(result))
@@ -149,8 +151,48 @@ class MirrorTests(unittest.TestCase):
         sql = " ".join(str(call.args[0]) for call in connection.execute.call_args_list)
         for excluded in ("ImageData", "ImageBase64", "RawData", "FullName", "CardNumReal"):
             self.assertNotIn(excluded, sql)
-        self.assertEqual(6, sql.count("TOP (100)"))
+        self.assertEqual(8, sql.count("TOP (100)"))
         self.assertEqual([10], [row["ExternalId2"] for row in self.mirror.recent("skud")])
+
+    def test_existing_warehouse_identity_is_refreshed_without_advancing_ingest_cursor(self):
+        self.mirror.commit_batch("warehouse", [(10, self.now, {"Id":10,"Tag":None})], 10, True)
+        def execute(sql, *args):
+            cursor = Mock(); cursor.fetchall.return_value = []
+            cursor.fetchone.return_value = (10,)
+            if "dbo.Warehouse" in sql and "Id<=?" in sql:
+                cursor.fetchall.return_value = [(10, self.now, "corrected-tag", "corrected-id", "corrected-series")]
+            return cursor
+        connection = Mock(); connection.execute.side_effect = execute
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR":"", "PERIMETER_OBSERVER_TASK_SQL":""}):
+            sync_metadata(self.mirror, connection)
+        self.assertEqual("corrected-tag", self.mirror.lookup("warehouse",10)["Tag"])
+        self.assertEqual(10, self.mirror.watermark("warehouse"))
+        self.assertEqual(0, self.mirror.refresh_position("warehouse"))
+        self.assertIsNotNone(self.mirror.stats()["registry_refresh"]["warehouse"]["completed_at"])
+
+    def test_registry_refresh_resumes_durably_and_cycles_after_last_page(self):
+        self.mirror.commit_batch("tasks", [(3,self.now,{"Id":3,"Tag":"old"})], 3, True)
+        self.mirror.commit_refresh("tasks", [(1,self.now,{"Id":1,"Tag":"updated"})], 1, False)
+        restarted = MetadataMirror(self.path)
+        self.assertEqual(1, restarted.refresh_position("tasks"))
+        self.assertEqual(3, restarted.watermark("tasks"))
+        restarted.commit_refresh("tasks", [(3,self.now,{"Id":3,"Tag":"corrected"})], 0, True)
+        self.assertEqual(0, restarted.refresh_position("tasks"))
+        self.assertEqual("corrected", restarted.lookup("tasks",3)["Tag"])
+
+    def test_lock_in_registry_refresh_keeps_refresh_cursor_and_old_payload(self):
+        self.mirror.commit_batch("warehouse", [(10,self.now,{"Id":10,"Tag":"old"})], 10, True)
+        self.mirror.commit_refresh("warehouse", [], 2, False)
+        def execute(sql,*args):
+            if "dbo.Warehouse" in sql and "Id<=?" in sql:
+                raise Exception("42000", "lock request timeout (1222)")
+            cursor=Mock();cursor.fetchone.return_value=(10,);cursor.fetchall.return_value=[]
+            return cursor
+        connection=Mock();connection.execute.side_effect=execute
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR":"", "PERIMETER_OBSERVER_TASK_SQL":""}):
+            with self.assertRaises(MirrorReadBlocked):sync_metadata(self.mirror,connection)
+        self.assertEqual(2,self.mirror.refresh_position("warehouse"))
+        self.assertEqual("old",self.mirror.lookup("warehouse",10)["Tag"])
 
     def test_empty_event_cursor_can_sync_twice_then_receive_first_event(self):
         connection = Mock()

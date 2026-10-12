@@ -101,6 +101,9 @@ class ReplicaJournal:
             db.execute("""CREATE TABLE IF NOT EXISTS replica_ack(
                 stream TEXT NOT NULL, uuid TEXT NOT NULL, node TEXT NOT NULL,
                 PRIMARY KEY(stream,uuid,node))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS peer_cursors(
+                peer TEXT NOT NULL, pending INTEGER NOT NULL, position INTEGER NOT NULL,
+                PRIMARY KEY(peer,pending))""")
         if os.name != "nt":
             self.path.chmod(0o600)
 
@@ -164,6 +167,24 @@ class ReplicaJournal:
                 break
             result.append({"cursor": seq, "record": json.loads(raw), "state": state})
         return {"items": result, "cursor": result[-1]["cursor"] if result else after}
+
+    def peer_cursor(self, peer, pending=False):
+        with self.connect() as db:
+            row = db.execute("SELECT position FROM peer_cursors WHERE peer=? AND pending=?",
+                             (peer, int(pending))).fetchone()
+        return int(row[0]) if row else 0
+
+    def save_peer_cursor(self, peer, position, pending=False):
+        if type(position) is not int or position < 0:
+            raise ValueError("ReplicaCursorInvalid")
+        with self.connect() as db:
+            old = db.execute("SELECT position FROM peer_cursors WHERE peer=? AND pending=?",
+                             (peer, int(pending))).fetchone()
+            if old and position < old[0]:
+                raise ValueError("ReplicaCursorRegression")
+            db.execute("""INSERT INTO peer_cursors VALUES(?,?,?)
+                ON CONFLICT(peer,pending) DO UPDATE SET position=excluded.position""",
+                (peer, int(pending), position))
 
     def stats(self):
         with self.connect() as db:

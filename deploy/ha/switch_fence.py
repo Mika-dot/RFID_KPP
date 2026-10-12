@@ -68,19 +68,22 @@ def snmp(config,node,column,value=None,runner=subprocess.run):
     return int(raw)
 
 
-def check_authority(store,node,epoch,allow):
+def check_authority(store,node,epoch,allow,emergency=False):
     lease=store.lease()
+    if emergency and (allow or store.controller_owned() is not True
+            or store.node_state(node).get("faulted") is not True):
+        raise RuntimeError("EmergencyFenceAuthorityRequired")
     if (lease.get("enabled") is not True or lease.get("epoch")!=epoch
             or (allow and (lease.get("owner")!=node or lease.get("valid") is not True))
-            or (not allow and lease.get("owner")==node and lease.get("valid") is True)):
+            or (not allow and not emergency and lease.get("owner")==node and lease.get("valid") is True)):
         raise RuntimeError("FenceEpochAuthorityChanged")
 
 
-def operate(config,node_id,epoch,allow,store,runner=subprocess.run):
+def operate(config,node_id,epoch,allow,store,runner=subprocess.run,emergency=False):
     validate(config)
     if node_id not in config["nodes"] or type(epoch) is not int or epoch<1:
         raise ValueError("FenceIdentityRequired")
-    check_authority(store,node_id,epoch,allow)
+    check_authority(store,node_id,epoch,allow,emergency)
     node=config["nodes"][node_id]
     desired=1 if allow else 2
     if snmp(config,node,ADMIN,desired,runner)!=desired:
@@ -88,7 +91,7 @@ def operate(config,node_id,epoch,allow,store,runner=subprocess.run):
     admin,oper=snmp(config,node,ADMIN,runner=runner),snmp(config,node,OPER,runner=runner)
     if admin!=desired or (allow and oper!=1) or (not allow and oper not in (2,6)):
         raise RuntimeError("FenceReadbackNotConfirmed")
-    check_authority(store,node_id,epoch,allow)
+    check_authority(store,node_id,epoch,allow,emergency)
     return {"node":node_id,"reader_access":True,"epoch":epoch} if allow else {"node":node_id,"isolated":True,"epoch":epoch}
 
 
@@ -104,7 +107,8 @@ def main(argv=None):
         return 0
     credentials(cfg)
     from guardian.sql import SqlStore
-    result=operate(cfg,os.environ["PERIMETER_FENCE_NODE"],int(os.environ["PERIMETER_FENCE_EPOCH"]),a.unfence,SqlStore())
+    result=operate(cfg,os.environ["PERIMETER_FENCE_NODE"],int(os.environ["PERIMETER_FENCE_EPOCH"]),a.unfence,SqlStore(),
+                   emergency=os.environ.get("PERIMETER_FENCE_EMERGENCY")=="1")
     print(json.dumps(result))
     return 0
 

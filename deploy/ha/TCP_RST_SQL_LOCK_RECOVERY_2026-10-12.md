@@ -109,3 +109,38 @@ SQL helper tested SELECT-only/parameterization/secret redaction/no implicit gran
 Installed oracle7ae0283:27 Golden traces,6 adapter contracts,8 HA models,
 0 shadow differences, qualification passed. Compile/diff checks passed.
 Exact SHA и Linux/Windows CI публикуются в PR#9.
+
+
+## Перепроверка замечаний ревью после2fcf016
+
+До следующего apply исправлены четыре сценария:
+
+1. Passive preflight может автоматически начать verification только для
+   действительно нового untried candidate с exact qualification passed.
+   Стабильный runtime-faulted релиз остаётся в карантине до конкретной repair
+   action; DLL load/свободные порты не доказывают исправление workload.
+2. Warehouse/RfidTags обновляются не только по новым ID: bounded cyclic
+   SELECT в пределах93days повторно получает старые IDs. Refresh cursor
+   записывается атомарно вместе с payload, отдельно от ingest watermark.
+   SQL1222 сохраняет refresh cursor и старый payload. Полный refresh является
+   циклическим, не мгновенным; position/completed_at видны в mirror stats.
+3. Peer replica cursors durable в SQLite; passive узлы тоже догоняют peers.
+   Новый GET /replica/pending сначала приносит недоставленные inputs, затем
+   идёт retained SENT history. После restart курсор не начинается с0.
+   Ошибка archive/invalid page не продвигает cursor; replay SQL-spools остаётся
+   только у владельца с повторной проверкой lease/epoch. Legacy endpoint
+   без pending-first поддерживается через прежний history path.
+4. Hardware rollback читает реально зафиксированный epoch после SQL error
+   вместо предположения assigned_epoch+1. Если старый lease остаётся valid,
+   emergency DENY допускается только для faulted target и live controller;
+   epoch/authority проверяются до и после SNMP. Это не emergency UNFENCE.
+   Exclusive mapping/authPriv/readback остаются обязательными. Hardware
+   fencing не включается и на заводе не испытывается этим изменением.
+
+Регрессии:650 local tests,0 failures/errors,15 environment skips (635 executed).
+Новые проверки: unchanged runtime quarantine, repaired registry row below
+high-water mark, durable cyclic refresh, HTTP pending-first за125SENT rows,
+restart/empty/archive error replica cursor, rollback not committed/lost ack
+actual epoch и emergency refusal при смене authority/healthy target.
+Installed oracle2fcf016:27 Golden traces,6 adapter contracts,8 HA scenarios,
+0 business shadow differences; exact CI и SHA публикуются в PR#9.

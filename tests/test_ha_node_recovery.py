@@ -19,6 +19,8 @@ class NodeRecoveryTests(unittest.TestCase):
         node.processes.alive.return_value=False
         node.updates=Mock()
         node.updates.state={"pending":True,"trial_started":trial,"activated_at":time.time()}
+        node.updates.state.update(current={"sha":"b"*40}, previous={"sha":"a"*40},
+                                  qualification={"status":"passed", "sha":"b"*40})
         node.updates.activate.return_value=False
         node.stop=threading.Event()
         node.mutation=node.lock=threading.RLock()
@@ -64,6 +66,29 @@ class NodeRecoveryTests(unittest.TestCase):
             node.verified_since = time.monotonic()-61
             node.tick()
             node.store.recovered.assert_called_once_with("physical")
+
+    def test_stable_runtime_fault_cannot_clear_from_passive_preflight(self):
+        with tempfile.TemporaryDirectory() as folder:
+            node = self.fixture(folder, False)
+            node.repair_attempted = False
+            node.updates.state["pending"] = False
+            node.arm_passive_verification()
+            node.store.begin_repair.assert_not_called()
+            node.tick()
+            node.store.recovered.assert_not_called()
+            self.assertFalse(node.repair_attempted)
+
+    def test_unchanged_or_unqualified_release_does_not_arm_recovery(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for case in ("same", "previous", "unqualified", "wrong_sha"):
+                node = self.fixture(folder, False)
+                node.repair_attempted = False
+                if case == "same": node.updates.state["previous"] = node.updates.state["current"]
+                if case == "previous": node.updates.state.pop("previous")
+                if case == "unqualified": node.updates.state["qualification"]["status"] = "failed"
+                if case == "wrong_sha": node.updates.state["qualification"]["sha"] = "c"*40
+                node.arm_passive_verification()
+                node.store.begin_repair.assert_not_called()
 
     def test_fault_clear_requires_continuous_fresh_preflight(self):
         with tempfile.TemporaryDirectory() as folder:

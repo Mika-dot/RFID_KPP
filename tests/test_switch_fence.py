@@ -9,6 +9,31 @@ from deploy.ha import switch_fence as fence
 
 
 class SwitchFenceTests(unittest.TestCase):
+    def test_emergency_deny_requires_faulted_target_live_controller_and_actual_epoch(self):
+        store=self.store(owner="physical")
+        store.controller_owned.return_value=True
+        store.node_state.return_value={"faulted":True}
+        receipt=fence.operate(self.config(),"physical",9,False,store,self.runner([2,2,2]),emergency=True)
+        self.assertEqual({"node":"physical","isolated":True,"epoch":9},receipt)
+        run=Mock()
+        with self.assertRaises(RuntimeError):
+            fence.operate(self.config(),"physical",10,False,store,run,emergency=True)
+        with self.assertRaises(RuntimeError):
+            fence.operate(self.config(),"physical",9,True,store,run,emergency=True)
+        store.node_state.return_value={"faulted":False}
+        with self.assertRaises(RuntimeError):
+            fence.operate(self.config(),"physical",9,False,store,run,emergency=True)
+        store.node_state.return_value={"faulted":True};store.controller_owned.return_value=False
+        with self.assertRaises(RuntimeError):
+            fence.operate(self.config(),"physical",9,False,store,run,emergency=True)
+        run.assert_not_called()
+
+    def test_emergency_receipt_rejected_if_controller_changes_during_snmp(self):
+        store=self.store(owner="physical")
+        store.controller_owned.side_effect=[True,False]
+        store.node_state.return_value={"faulted":True}
+        with self.assertRaisesRegex(RuntimeError,"EmergencyFenceAuthority"):
+            fence.operate(self.config(),"physical",9,False,store,self.runner([2,2,2]),emergency=True)
     def config(self):
         # Fictional test addresses, never queried.
         return dict(version=1,dedicated_reader_paths_confirmed=True,

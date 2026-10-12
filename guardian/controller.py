@@ -60,12 +60,20 @@ class Controller:
         except Exception as exc:
             self.telemetry.event("hardware_handoff_rollback_error", target=chosen,
                                  error=type(exc).__name__)
-            # If SQL rollback itself failed, still try the external fence with
-            # the next epoch.  This is best effort; SQL retry remains the
-            # authority when the controller regains its lease.
+            # A failed SQL call may have committed or may have left the old
+            # lease untouched. Quarantine first and fence against the actual
+            # authority, never an invented next epoch. The adapter allows an
+            # emergency DENY of a faulted owner only for the live controller.
             if assigned_epoch is not None:
                 try:
-                    fence_previous(self.cfg, chosen, int(assigned_epoch) + 1)
+                    self.store.fault(chosen)
+                    current = self.store.lease()
+                    epoch = current.get("epoch")
+                    if type(epoch) is not int or epoch < assigned_epoch:
+                        raise RuntimeError("HardwareFenceLeaseHistoryChanged")
+                    emergency = current.get("valid") is True and current.get("owner") == chosen
+                    fence_previous(self.cfg, chosen, epoch, emergency=emergency)
+                    rollback_epoch = epoch
                 except Exception as fence_exc:
                     self.telemetry.event("hardware_fence_pending", target=chosen,
                                          epoch=int(assigned_epoch) + 1,

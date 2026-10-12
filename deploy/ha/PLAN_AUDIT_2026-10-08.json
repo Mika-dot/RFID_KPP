@@ -505,6 +505,18 @@
     "rfid_connectivity_update": "12:15 MSK user reports restored; fresh SDK/business/owner/probation confirmation not yet supplied",
     "mirror_root_cause": "events SELECT blocked: SQLSTATE42000 native1222; TOP0 all six streams QUERY_OK",
     "followup_software": "isolate1222 streams without cursor advance; recycle failed isolated Wine bridge; bounded SELECT-only SQL lock diagnosis",
-    "followup_runbook": "deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md"
+    "followup_runbook": "deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md",
+    "review_completion": {
+      "parent_sha": "2fcf01650b42106519bf35fcc6c6b12ca575280f",
+      "fixed": [
+        "runtime quarantine gate",
+        "mutable registry cyclic refresh",
+        "durable replica cursors and pending-first passive synchronization",
+        "hardware rollback actual epoch/emergency deny authority"
+      ],
+      "local_tests": 650,
+      "native_skips": 15,
+      "fresh_factory_diagnosis": "awaiting user output after reported RFID restoration"
+    }
   }
 }
