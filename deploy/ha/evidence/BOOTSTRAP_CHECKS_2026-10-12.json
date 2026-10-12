@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-12",
+  "scope": "offline_initial_replication_bootstrap_not_factory_restoration",
+  "user_runtime_evidence": {
+    "installed_comparator_receipt": "bc42ce08c98dae7902ba33bee4826b4315e33a1f",
+    "subsequent_runtime": "1c7930912ad84e8f205cf16fbdd715c76c9eb74e",
+    "epoch": 3237,
+    "active": "comparator",
+    "healthy": false,
+    "rfid_failed_dependencies": [
+      "business_flow",
+      "rfid_reader",
+      "rfid_tcp"
+    ],
+    "yolo_rusguard_ready": true,
+    "rfid_recovery_counter": 97,
+    "rollback_reason": "not_yet_observed"
+  },
+  "reproduced_gap": "ReplicaQuorumUnavailable with one new node and two legacy receivers; local PENDING preserved",
+  "fix": "two held Linux receivers before worker activation; release only after both endpoint/qualification/fresh passive preflight checks",
+  "tests": {
+    "total": 627,
+    "executed": 612,
+    "skipped": 15,
+    "errors": 0,
+    "failures": 0,
+    "python": "3.12.14",
+    "fault_diagnosis_targeted_after_log_rotation_hardening": "2 passed"
+  },
+  "qualification": {
+    "adapter_contracts": 6,
+    "golden_traces": 27,
+    "ha_model_scenarios": 8,
+    "mode": "offline_recorded_inputs_no_production_connections",
+    "python_files_parsed": 127,
+    "shadow_differences": 0,
+    "status": "passed",
+    "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+  },
+  "legacy_qualifications": {
+    "physical": {
+      "adapter_contracts": 6,
+      "golden_traces": 27,
+      "ha_model_scenarios": 8,
+      "mode": "offline_recorded_inputs_no_production_connections",
+      "python_files_parsed": 127,
+      "shadow_differences": 3,
+      "status": "passed",
+      "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+    },
+    "reserve": {
+      "adapter_contracts": 6,
+      "golden_traces": 27,
+      "ha_model_scenarios": 8,
+      "mode": "offline_recorded_inputs_no_production_connections",
+      "python_files_parsed": 127,
+      "shadow_differences": 3,
+      "status": "passed",
+      "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+    }
+  },
+  "protected_business_checks": 15,
+  "factory_runtime_restored": false,
+  "native_sql_sdk_acceptance": "not_performed",
+  "week_observation_started": false
+}

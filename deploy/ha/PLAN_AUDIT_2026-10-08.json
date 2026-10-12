@@ -7,7 +7,7 @@
   "audited_base_sha": "4e005d769495f01f2e665133695827d33bf0fac5",
   "base_ci": "Perimeter HA Ubuntu/Windows, Warehouse, Observability: success",
   "live_installation_of_this_candidate": false,
-  "current_factory_health": "user screenshot 2026-10-10: physical unhealthy owner 7677849; perimetr/comparator faulted 1c793091; epoch 816. No fresh live poll from this environment.",
+  "current_factory_health": "user post-install GET 12.10: Comparator rolled back to 1c793091; active/unhealthy RFID, YOLO and RusGuard ready; physical/perimetr passive faulted; epoch 3237. Rollback reason not yet retrieved.",
   "statuses": {
     "SOFTWARE_READY": "Implemented and offline checked; this does not mean installed or accepted at the factory",
     "PARTIAL": "Implemented foundation; named requirement still has a material gap",
@@ -491,5 +491,14 @@
     "offline_tests": 619,
     "factory_restoration": "not_confirmed",
     "task_status_counts": "unchanged_live_acceptance_still_required"
+  },
+  "continuation_2026_10_12": {
+    "runtime_evidence": "user installed receipt followed by old SHA in fresh diagnosis",
+    "software_gap": "first replicated node cannot obtain quorum against two legacy receivers",
+    "fix": "install two Linux receivers in durable operator maintenance before releasing either",
+    "runbook": "deploy/ha/BOOTSTRAP_REPLICA_ROLLOUT_2026-10-12.md",
+    "rfid_root_cause": "requires read-only rollback/RFID diagnosis",
+    "factory_restoration": "not_confirmed",
+    "week_test": "starts after all four machines verified; checkpoints one and five days, decision one week"
   }
 }

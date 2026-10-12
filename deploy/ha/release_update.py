@@ -266,9 +266,15 @@ def apply(args, cfg, env):
     folder, receipt = check_prepared(args,cfg)
     token, own = env["PERIMETER_HA_TOKEN"], cfg["node_id"]
     recovery = getattr(args, "recover_reserve", False)
+    hold = getattr(args, "hold_maintenance", False)
+    if hold and (not recovery or args.handoff or own not in {"perimetr", "comparator"}):
+        raise RuntimeError("HoldRequiresPassiveReserveRecovery")
     rows, owner = inventory(cfg,token, allow_degraded=recovery)
     if recovery and (own not in {"perimetr", "comparator"} or own == owner or args.handoff):
         raise RuntimeError("RecoveryRequiresPassiveLinuxReserve")
+    if not hold and not any(key != own and row.get("release_sha") == args.release
+                            and row.get("replication_enabled") is True for key, row in rows.items()):
+        raise RuntimeError("SecondReplicaReceiverRequiredUseHeldReserveStage")
     if rows[own].get("release_sha") != receipt["base"]["sha"]:
         raise RuntimeError("InstalledReleaseChanged")
     if own == "physical" or own == owner:
@@ -315,13 +321,27 @@ def apply(args, cfg, env):
             try:
                 code,row=json_request(url+"/status",token,timeout=3)
                 if (code==200 and fresh_node(row,own) and row.get("release_sha")==args.release and row.get("operator_maintenance") is True
-                        and row.get("active") is False and row.get("preflight",{}).get("ok") is True):
+                        and row.get("active") is False and row.get("preflight",{}).get("ok") is True
+                        and (not hold or (row.get("replication_enabled") is True and row.get("fallback_enabled") is True
+                            and type(row.get("preflight_sample_age")) in (int,float) and 0 <= row["preflight_sample_age"] < 90
+                            and row["preflight"].get("checks", {}).get("ports_free") is True
+                            and row["preflight"].get("checks", {}).get("sdk_load") is True))):
                     break
             except Exception:
                 pass
             if time.monotonic()>=deadline:
                 raise RuntimeError("InstalledPassivePreflightFailed")
             time.sleep(2)
+        if hold:
+            # First replicated release needs a second capable receiver before
+            # any worker starts. Guardian's peer RPC stays available in maintenance.
+            rollback.update(installed=True, maintenance_held=True, finished_at=time.time())
+            write_private(folder / "installation.json", rollback, args.config)
+            journal_path.unlink()
+            return {"installed": True, "release": args.release, "node": own,
+                    "maintenance_held": True, "replica_receiver_ready": True,
+                    "workers_started": False, "probation": "not_started",
+                    "data_paths_preserved": True, "physical_acceptance": "not_measured"}
         code,_=json_request(url+"/maintenance",token,body={"enabled":False,"release":args.release},timeout=10)
         if code!=200:
             raise RuntimeError("InstalledMaintenanceReleaseFailed")
@@ -360,16 +380,61 @@ def apply(args, cfg, env):
         raise
 
 
+def release_reserves(args, cfg, env, request=json_request):
+    """Release held reserves only after two exact-release receivers are live.
+
+    Retrying skips an already released node and never resets its verification.
+    Promotion/SQL writes remain exclusively in the ordinary HA controller.
+    """
+    if cfg["node_id"] not in {"perimetr", "comparator"}:
+        raise RuntimeError("ReserveReleaseRequiresLinuxNode")
+    token = env["PERIMETER_HA_TOKEN"]
+    rows, _ = inventory(cfg, token, request, allow_degraded=True)
+    peers = [node for node in cfg["nodes"] if node["id"] in {"perimetr", "comparator"}]
+    if {node["id"] for node in peers} != {"perimetr", "comparator"}:
+        raise RuntimeError("TwoLinuxReservesRequired")
+    for peer in peers:
+        row = rows[peer["id"]]
+        if (row.get("release_sha") != args.release or row.get("replication_enabled") is not True
+                or row.get("fallback_enabled") is not True or row.get("preflight", {}).get("ok") is not True
+                or type(row.get("preflight_sample_age")) not in (int,float) or not 0 <= row["preflight_sample_age"] < 90
+                or row.get("update", {}).get("qualification") != "passed"
+                or type(row.get("operator_maintenance")) is not bool
+                or (row["operator_maintenance"] and (row.get("active") is not False
+                    or row["preflight"].get("checks", {}).get("ports_free") is not True
+                    or row["preflight"].get("checks", {}).get("sdk_load") is not True))):
+            raise RuntimeError("ExactReserveReceiverNotReady:" + peer["id"])
+        code, stats = request(peer["url"].rstrip("/") + "/replica/stats", token, timeout=3)
+        if (code != 200 or any(type(stats.get(key)) is not int or stats[key] < 0
+                               for key in ("records", "pending", "quorum_pending"))):
+            raise RuntimeError("ReserveReplicaEndpointUnavailable:" + peer["id"])
+    for peer in peers:
+        if rows[peer["id"]]["operator_maintenance"]:
+            code, result = request(peer["url"].rstrip("/") + "/maintenance", token, timeout=10,
+                                   body={"enabled":False, "release":args.release})
+            if code != 200 or result.get("operator_maintenance") is not False:
+                raise RuntimeError("ReserveReleaseNotConfirmed:" + peer["id"])
+    return {"reserves_released":True, "release":args.release,
+            "nodes":[peer["id"] for peer in peers], "probation":"ordinary_guardian_gate",
+            "cluster_health":"not_yet_confirmed", "physical_acceptance":"not_measured"}
+
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     mode=p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--plan",action="store_true");mode.add_argument("--prepare",action="store_true");mode.add_argument("--apply",action="store_true");mode.add_argument("--recover",action="store_true")
+    mode.add_argument("--release-reserves", action="store_true")
     p.add_argument("--release",required=True);p.add_argument("--handoff",action="store_true")
     p.add_argument("--recover-reserve", action="store_true",
                    help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
+    p.add_argument("--hold-maintenance", action="store_true",
+                   help="Keep a recovered reserve passive until both Linux replica receivers are installed")
     p.add_argument("--config",type=Path,default=Path("D:/PerimeterHA/node.json" if os.name=="nt" else "/etc/perimeter/node.json"))
     p.add_argument("--environment",type=Path,default=Path("D:/PerimeterHA/transfer-private/environment.local.json" if os.name=="nt" else "/etc/perimeter/environment"))
     args=p.parse_args(argv)
+    if ((args.hold_maintenance and not (args.apply and args.recover_reserve))
+            or (args.release_reserves and (args.handoff or args.recover_reserve))):
+        raise ValueError("InvalidHeldReserveMode")
     if not re.fullmatch(r"[0-9a-f]{40}",args.release):
         raise ValueError("ExactReleaseRequired")
     cfg=json.loads(args.config.read_text(encoding="utf-8-sig"))
@@ -387,7 +452,8 @@ def main(argv=None):
         os.environ.update(env)
         from common.single_instance import SingleInstanceLock
         with SingleInstanceLock(str(Path(cfg["state_dir"]) / "operator-update.lock")):
-            result=prepare(args,cfg,env) if args.prepare else recover(args,cfg,env) if args.recover else apply(args,cfg,env)
+            result=(prepare(args,cfg,env) if args.prepare else recover(args,cfg,env) if args.recover
+                    else release_reserves(args,cfg,env) if args.release_reserves else apply(args,cfg,env))
     print(json.dumps(result,ensure_ascii=False))
     return 0
 

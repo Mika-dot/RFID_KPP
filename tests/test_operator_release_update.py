@@ -32,7 +32,9 @@ class OperatorUpdateTests(unittest.TestCase):
             candidate_config_digest=update.digest(self.folder/"node.json"),environment_digest=update.digest(self.args.environment))
         update.write_private(self.folder/"receipt.json",self.receipt)
         self.rows={n["id"]:dict(node=n["id"],sample_age=1,fencing_protocol=2,epoch=9,active=n["id"]=="physical",
-            healthy=n["id"]=="physical",release_sha=self.old,prepared=True,faulted=False,operator_maintenance=False) for n in self.nodes}
+            healthy=n["id"]=="physical",release_sha=self.old,prepared=True,faulted=False,operator_maintenance=False,
+            replication_enabled=True) for n in self.nodes}
+        self.rows["perimetr"]["release_sha"] = self.release
         self.env={"PERIMETER_HA_TOKEN":"x"*64}
 
     def test_preparation_changes_no_services_and_runs_tests_from_candidate(self):
@@ -148,6 +150,90 @@ class OperatorUpdateTests(unittest.TestCase):
         self.assertTrue(record["pending"])  # Passive readiness is not completed business probation.
         processes.return_value.reap_orphans.assert_called_once()
         self.assertEqual([("stop",),("start",)],[call.args for call in native.call_args_list])
+
+    def test_first_replica_release_cannot_start_against_two_legacy_nodes(self):
+        self.rows["perimetr"]["release_sha"] = self.old
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"SecondReplicaReceiverRequired"):
+                update.apply(self.args,self.cfg,self.env)
+            native.assert_not_called()
+            self.assertFalse((self.state/"operator-release-install.json").exists())
+
+    def test_held_first_reserve_keeps_workers_stopped_and_probation_pending(self):
+        self.args.recover_reserve = self.args.hold_maintenance = True
+        self.rows["perimetr"]["release_sha"] = self.old
+        requests=[]
+        def request(url, token, **kwargs):
+            requests.append((url, kwargs))
+            if url.endswith("/maintenance"):
+                self.assertTrue(kwargs["body"]["enabled"])
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="comparator",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native"),patch.object(update,"json_request",side_effect=request),patch("guardian.processes.Processes"):
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result["maintenance_held"])
+        self.assertFalse(result["workers_started"])
+        self.assertEqual("not_started",result["probation"])
+        self.assertTrue(json.loads((self.state/"operator-maintenance.json").read_text())["enabled"])
+        self.assertTrue(json.loads((self.state/"release.json").read_text())["pending"])
+        self.assertEqual(1,sum(url.endswith("/maintenance") for url,_ in requests))
+
+    def held_receivers(self):
+        for key in ("perimetr","comparator"):
+            self.rows[key].update(release_sha=self.release,operator_maintenance=True,active=False,
+                prepared=False,faulted=True,preflight={"ok":True,"checks":{"ports_free":True,"sdk_load":True}},
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True,
+                update={"qualification":"passed","pending":True})
+        self.rows["physical"]["healthy"] = False
+
+    def receiver_request(self, posts):
+        def request(url, token, **kwargs):
+            key = next(n["id"] for n in self.nodes if url.startswith(n["url"]))
+            if url.endswith("/status"):return 200,copy.deepcopy(self.rows[key])
+            if url.endswith("/replica/stats"):return 200,{"records":0,"pending":0,"quorum_pending":0}
+            posts.append(key)
+            self.assertEqual({"enabled":False,"release":self.release},kwargs["body"])
+            self.rows[key]["operator_maintenance"] = False
+            return 200,{"operator_maintenance":False}
+        return request
+
+    def test_pair_release_proves_both_receivers_before_any_release(self):
+        self.held_receivers();posts=[]
+        result=update.release_reserves(self.args,self.cfg,self.env,self.receiver_request(posts))
+        self.assertEqual(["perimetr","comparator"],posts)
+        self.assertEqual("not_yet_confirmed",result["cluster_health"])
+        self.assertTrue(result["reserves_released"])
+
+    def test_bad_second_receiver_prevents_releasing_first(self):
+        for problem in ("legacy", "replication", "preflight", "active", "endpoint", "stale_probe", "active_probe", "sdk"):
+            with self.subTest(problem=problem):
+                self.held_receivers();posts=[]
+                if problem=="legacy":self.rows["comparator"]["release_sha"]=self.old
+                if problem=="replication":self.rows["comparator"]["replication_enabled"]=False
+                if problem=="preflight":self.rows["comparator"]["preflight"]["ok"]=False
+                if problem=="active":self.rows["physical"]["active"]=False;self.rows["comparator"]["active"]=True
+                if problem=="stale_probe":self.rows["comparator"]["preflight_sample_age"]=91
+                if problem=="active_probe":self.rows["comparator"]["preflight"]["checks"].pop("ports_free")
+                if problem=="sdk":self.rows["comparator"]["preflight"]["checks"]["sdk_load"]=False
+                delegate=self.receiver_request(posts)
+                def request(url,*args,**kwargs):
+                    if problem=="endpoint" and url=="http://comparator:18200/replica/stats":return 404,{}
+                    return delegate(url,*args,**kwargs)
+                with self.assertRaises(RuntimeError):update.release_reserves(self.args,self.cfg,self.env,request)
+                self.assertEqual([],posts)
+
+    def test_pair_release_retry_skips_node_already_released_after_lost_response(self):
+        self.held_receivers();posts=[]
+        delegate=self.receiver_request(posts)
+        def request(url,*args,**kwargs):
+            if url=="http://comparator:18200/maintenance":raise TimeoutError()
+            return delegate(url,*args,**kwargs)
+        with self.assertRaises(TimeoutError):update.release_reserves(self.args,self.cfg,self.env,request)
+        self.assertEqual(["perimetr"],posts)
+        update.release_reserves(self.args,self.cfg,self.env,delegate)
+        self.assertEqual(["perimetr","comparator"],posts)
 
     def test_failure_restores_config_record_and_maintenance(self):
         requests=Mock(side_effect=[(200,{}),RuntimeError("offline")])

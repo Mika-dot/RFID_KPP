@@ -87,6 +87,7 @@ class Node:
         with self.lock:
             result = dict(self.status)
             result["sample_age"] = time.monotonic()-self.last_sample
+            result["preflight_sample_age"] = time.monotonic()-getattr(self,"preflight_at",0)
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
             result["update"] = {"pending": self.updates.state.get("pending", False),
