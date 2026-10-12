@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-12",
+  "oracle_sha": "7ae0283fc237f3a1a2e6806898445f9c18b32a95",
+  "qualification": {
+    "adapter_contracts": 6,
+    "golden_traces": 27,
+    "ha_model_scenarios": 8,
+    "mode": "offline_recorded_inputs_no_production_connections",
+    "python_files_parsed": 128,
+    "shadow_differences": 0,
+    "status": "passed",
+    "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+  },
+  "local_tests": {
+    "total": 637,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 15,
+    "executed": 622,
+    "seconds": 30.7
+  },
+  "compile": "passed",
+  "diff_check": "passed",
+  "ci": "see PR9 exact-head runs",
+  "proven_cases": [
+    "SQL1222 anchor/fetch keeps blocked cursor and freshness; remaining streams progress",
+    "non1222 SQL errors remain errors; changed source anchor still rejected",
+    "Guardian blocked_streams and stale mirror",
+    "failed isolated bridge retired before retry; cleanup does not respawn",
+    "old SDK reader EOF cannot pollute new queue",
+    "real subprocess plus localhostTCP refusal three times then successful listener connection",
+    "bounded SELECT-only DMV helper, parameterized object name, credentials redacted"
+  ],
+  "native_vendor_acceptance": "not_measured",
+  "factory_connectivity": "user reports restored12:15 MSK, awaiting fresh SDK/business snapshot",
+  "factory_full_restoration": "not_confirmed",
+  "week_test_started": false
+}

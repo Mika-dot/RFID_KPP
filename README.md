@@ -1,3 +1,5 @@
+> 12.10.2026, заводская диагностика11:35 МСК: оба Linux установлены на `7ae0283`, проверка резервов завершилась, но RFID TCP8888 получает SYN→RST; SQL-зеркало событий блокируется (native1222). Подготовлены изоляция блокировок streams, изолированный recycle failed Wine SDK bridge и SELECT-only DMV diagnosis. [Свидетельства, исправления и продолжение](deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md). 12:15 МСК пользователь сообщил о восстановлении связи RFID; свежий SDK/business/owner snapshot ещё ожидается. Physical/ub22 и недельное наблюдение ещё не приняты.
+
 # RFID КПП «Периметр» — production runbook
 
 > 12.10.2026: после первого apply Comparator вернулся на старый `1c793091`; RFID не готов. [Первый переход к репликации и диагностика](deploy/ha/BOOTSTRAP_REPLICA_ROLLOUT_2026-10-12.md). Нужны два held Linux receivers перед запуском workers. Установка остальных узлов и текущая готовность ещё не подтверждены.

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from common.metadata_mirror import MetadataMirror
-from observer.mirror import EVENT_FIELDS, STREAMS, REQUIRED_STREAMS, sync_metadata
+from observer.mirror import EVENT_FIELDS, STREAMS, REQUIRED_STREAMS, MirrorReadBlocked, sync_metadata
 
 
 class MirrorTests(unittest.TestCase):
@@ -15,6 +15,65 @@ class MirrorTests(unittest.TestCase):
         self.path = Path(self.temp.name) / "metadata.sqlite"
         self.mirror = MetadataMirror(self.path, retention_days=1)
         self.now = datetime.now()
+
+    def test_blocked_event_anchor_preserves_cursor_and_syncs_other_streams(self):
+        self.mirror.commit_batch("events", [(10, self.now, {"EventId": 10})],
+                                 [self.now.isoformat(), 10], True)
+        before = self.mirror.stats()["streams"]["events"]
+        empty = Mock(); empty.fetchall.return_value = []
+        blocked = Exception("42000", "[SQL Server]lock timeout (1222) (SQLExecDirectW)")
+        connection = Mock()
+        connection.execute.side_effect = [Mock(), blocked] + [empty] * 5
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR": "", "PERIMETER_OBSERVER_TASK_SQL": ""}):
+            with self.assertRaises(MirrorReadBlocked) as failure:
+                sync_metadata(self.mirror, connection)
+        self.assertEqual(("events",), failure.exception.streams)
+        self.assertEqual([self.now.isoformat(), 10], self.mirror.watermark("events"))
+        after = self.mirror.stats()["streams"]["events"]
+        for key in ("synced_at", "caught_up", "records"):
+            self.assertEqual(before[key], after[key])
+        self.assertGreaterEqual(after["age_sec"], before["age_sec"])
+        self.assertEqual(10, self.mirror.recent()[0]["EventId"])
+        self.assertEqual(set(REQUIRED_STREAMS), set(self.mirror.stats()["streams"]))
+        connection.close.assert_called_once()
+
+    def test_blocked_fetch_does_not_claim_freshness_and_retries_same_cursor(self):
+        cursor = Mock()
+        cursor.fetchall.side_effect = Exception("42000", "lock request timeout (1222)")
+        empty = Mock(); empty.fetchall.return_value = []
+        connection = Mock()
+        connection.execute.side_effect = [Mock(), cursor] + [empty] * 5
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR": "", "PERIMETER_OBSERVER_TASK_SQL": ""}):
+            with self.assertRaises(MirrorReadBlocked):
+                sync_metadata(self.mirror, connection)
+            self.assertIsNone(self.mirror.watermark("events"))
+            connection.execute.side_effect = None
+            connection.execute.return_value = empty
+            sync_metadata(self.mirror, connection)
+        self.assertEqual(["1900-01-01T00:00:00", 0], self.mirror.watermark("events"))
+
+    def test_other_programming_error_is_not_silently_skipped(self):
+        missing = Exception("42000", "Invalid column name (207)")
+        connection = Mock(); connection.execute.side_effect = [Mock(), missing]
+        with patch.dict("os.environ", {"KPP_TASK_CONN_STR": "", "PERIMETER_OBSERVER_TASK_SQL": ""}):
+            with self.assertRaisesRegex(Exception, "Invalid column"):
+                sync_metadata(self.mirror, connection)
+        self.assertEqual({}, self.mirror.stats()["streams"])
+        connection.close.assert_called_once()
+
+    def test_guardian_reports_blocked_stream_and_keeps_recent_events_stale(self):
+        import threading
+        from guardian.node import Node
+        node = Node.__new__(Node)
+        node.cfg = {"node_id": "comparator"}
+        node.mirror, node.lock = self.mirror, threading.RLock()
+        node.store, node.telemetry = Mock(), Mock()
+        with patch("observer.mirror.sync_metadata", side_effect=MirrorReadBlocked(["events"])):
+            node.sync_mirror()
+        self.assertEqual("MirrorReadBlocked", node.mirror_status["error"])
+        self.assertEqual(["events"], node.mirror_status["blocked_streams"])
+        node.telemetry.event.assert_called_once_with("mirror_sync_blocked", streams=["events"], native_code=1222)
+        self.assertTrue(node.recent_events()["stale"])
 
     def test_atomic_batch_reopens_and_updates_metadata_without_photos(self):
         self.mirror.commit_batch("events", [(1, self.now, {"EventId": 1, "ImageData": b"jpeg", "NeedRecheck": 1})], ["first", 1])

@@ -19,7 +19,8 @@ from guardian.repair import redact
 
 def clean(text, env):
     for key,value in env.items():
-        if (any(word in key.upper() for word in ("PASSWORD","TOKEN","CONNECTION","CONN_STR","SECRET","RTSP"))
+        if ((any(word in key.upper() for word in ("PASSWORD","TOKEN","CONNECTION","CONN_STR","SECRET","RTSP"))
+                or key.upper().endswith("_SQL"))
                 and isinstance(value,str) and len(value)>=4):
             text=text.replace(value,"REDACTED")
     text=redact(text)
@@ -64,6 +65,9 @@ def collect(cfg,env,target,request=json_request,journal=None):
         result["rfid_dependencies"]={key:{field:value.get(field) for field in ("status","detail","age_seconds","stale_after_seconds")}
             for key,value in status.get("services",{}).get("RfidReader",{}).get("detail",{}).get("dependencies",{}).items()
             if key in {"rfid_reader","rfid_tcp","business_flow","database","local_spool","delivery_writer"} and isinstance(value,dict)}
+        mirror = status.get("metadata_mirror", {})
+        result["metadata_mirror"] = {key: mirror.get(key)
+            for key in ("enabled", "error", "blocked_streams")}
     except Exception as exc:result["local_status_error"]=type(exc).__name__
     audit=[]
     for file in (state/"audit.previous.jsonl",state/"audit.jsonl"):
@@ -72,8 +76,8 @@ def collect(cfg,env,target,request=json_request,journal=None):
             except ValueError:continue
             kind=item.get("kind","")
             if isinstance(kind,str) and (kind.startswith(("update_","candidate_","repair_"))
-                    or kind in {"node_error","agent_resource_exhausted","promoted","demoted"}):
-                audit.append({key:item[key] for key in ("time","kind","sha","reason","error","epoch","action","target") if key in item})
+                    or kind in {"node_error","agent_resource_exhausted","promoted","demoted","mirror_sync_error","mirror_sync_blocked"}):
+                audit.append({key:item[key] for key in ("time","kind","sha","reason","error","epoch","action","target","streams","native_code") if key in item})
     result["recent_guardian_events"]=audit[-30:]
     selected=[]
     pattern=re.compile(r"TCPConnect|connect_code|inventory|Wine|Exception|Error|Traceback|ReplicaQuorum|retry|controlled|reader connected|fatal|timeout|disconnected",re.I)

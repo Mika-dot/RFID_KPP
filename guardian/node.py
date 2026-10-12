@@ -146,15 +146,21 @@ class Node:
         except Exception:
             with self.lock:
                 self.controller_status = {"owner": None, "valid": False, "at": time.time()}
-        from observer.mirror import sync_metadata
+        from observer.mirror import MirrorReadBlocked, sync_metadata
         error = None
+        blocked = []
         try:
             sync_metadata(mirror, batch_size=self.cfg.get("mirror_batch_size", 500))
+        except MirrorReadBlocked as exc:
+            error = type(exc).__name__
+            blocked = list(exc.streams)
+            self.telemetry.event("mirror_sync_blocked", streams=blocked, native_code=1222)
         except Exception as exc:
             error = type(exc).__name__
             self.telemetry.event("mirror_sync_error", error=error)
         with self.lock:
-            self.mirror_status = {"enabled": True, **mirror.stats(), "error": error}
+            self.mirror_status = {"enabled": True, **mirror.stats(), "error": error,
+                                  "blocked_streams": blocked}
 
     def recent_events(self):
         mirror = getattr(self, "mirror", None)
