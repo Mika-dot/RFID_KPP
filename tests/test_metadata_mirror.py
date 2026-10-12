@@ -200,10 +200,14 @@ class MirrorTests(unittest.TestCase):
         self.mirror.commit_batch("warehouse", [
             (1,self.now,{"Id":1,"Tag":"first"}),
             (2,self.now,{"Id":2,"Tag":"second"})], 2, True)
-        with sqlite3.connect(self.path) as db:
+        db = sqlite3.connect(self.path)
+        try:
             db.execute("INSERT INTO registry_refresh VALUES('warehouse',1,NULL)")
             db.execute("DROP TABLE registry_refresh_seen")
             db.execute("DROP TABLE registry_refresh_cycles")
+            db.commit()
+        finally:
+            db.close()
         upgraded = MetadataMirror(self.path)
         self.assertEqual(0, upgraded.refresh_position("warehouse"))
         upgraded.commit_refresh("warehouse", [
