@@ -46,6 +46,4 @@ jobs:
         run: python guardian/qualification.py --candidate . --stable . --report qualification.json
       - name: Qualification leaves tracked release files unchanged
         run: |
-          git diff --exit-code
-          git diff --cached --exit-code
-          python -c "import subprocess; paths=subprocess.check_output(['git','ls-files'], text=True).splitlines(); bad=[p for p in paths if '__pycache__/' in p or p.endswith(('.pyc','.pyo'))]; assert not bad, 'Tracked Python cache: '+repr(bad)"
+          python -c "import subprocess; subprocess.run(['git','diff','--exit-code'],check=True); subprocess.run(['git','diff','--cached','--exit-code'],check=True); paths=subprocess.check_output(['git','ls-files'], text=True).splitlines(); bad=[p for p in paths if '__pycache__/' in p or p.endswith(('.pyc','.pyo'))]; assert not bad, 'Tracked Python cache: '+repr(bad)"
