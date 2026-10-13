@@ -17,8 +17,10 @@ UUID = "11111111-2222-3333-4444-555555555555"
 
 def csv_fields(values):
     out = io.StringIO()
-    csv.writer(out, lineterminator="").writerow(values)
-    return out.getvalue()
+    # A real terminator makes Python 3.10 quote embedded CR/LF as CSV requires.
+    # Strip only the writer's final terminator, preserving newlines in fields.
+    csv.writer(out, lineterminator="\r\n").writerow(values)
+    return out.getvalue()[:-2]
 
 
 def video_line(image="", captured=AT):
@@ -109,6 +111,8 @@ class VideoArchiveTests(unittest.TestCase):
                   'notes with "quotes"\nand newline', "base64\nwrapped", UUID, AT, AT, AT,
                   "binary\r\nimage", 2, '["track"]', "CAPTURE_TIMESTAMP"]
         raw = (csv_fields(VIDEO_COLUMNS) + "\r\n" + csv_fields(values) + "\r\n").encode()
+        self.assertEqual([VIDEO_COLUMNS, [str(value) for value in values]],
+                         list(csv.reader(io.StringIO(raw.decode(), newline=""))))
         records = list(csv_records(bytes([byte]) for byte in raw))
         self.assertEqual(2, len(records))
         self.assertEqual(UUID, video_metadata(records[1].decode())["uuid"])
