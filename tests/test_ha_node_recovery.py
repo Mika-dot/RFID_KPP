@@ -22,6 +22,9 @@ class NodeRecoveryTests(unittest.TestCase):
         node.updates.state.update(current={"sha":"b"*40}, previous={"sha":"a"*40},
                                   qualification={"status":"passed", "sha":"b"*40})
         node.updates.activate.return_value=False
+        node.updates.operator_pinned.side_effect = lambda: (
+            node.updates.state.get("operator_pinned_release")
+            == node.updates.state.get("current", {}).get("sha"))
         node.stop=threading.Event()
         node.mutation=node.lock=threading.RLock()
         node.maintenance=False
@@ -50,6 +53,18 @@ class NodeRecoveryTests(unittest.TestCase):
             node.tick()
             node.updates.rollback.assert_called_once()
             self.assertTrue(node.stop.is_set())
+
+    def test_failed_actual_trial_keeps_exact_operator_pinned_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            node = self.fixture(folder, True)
+            node.repair_attempted = False
+            node.updates.state["operator_pinned_release"] = "b"*40
+            node.tick()
+            node.updates.rollback.assert_not_called()
+            self.assertFalse(node.stop.is_set())
+            self.assertFalse(node.status["active"])
+            self.assertTrue(node.status["faulted"])
+            node.store.recovered.assert_not_called()
 
     def test_passive_preflight_arms_recovery_without_controller_or_model(self):
         with tempfile.TemporaryDirectory() as folder:
