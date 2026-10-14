@@ -241,7 +241,14 @@ def check_prepared(args, cfg):
 
 
 def wait_handoff(cfg, token, own, release, request=json_request, timeout=300):
+    """Confirm a fenced, live owner; do not confuse deployment with probation.
+
+    An exact operator-pinned release may serve traffic while its independent
+    probation remains pending. The old owner is already natively stopped and
+    locked by apply(), and SQL/fencing remain the only writer authority.
+    """
     deadline = time.monotonic() + timeout
+    observed_identity, observed_samples = None, 0
     while True:
         rows = []
         for node in cfg["nodes"]:
@@ -256,10 +263,28 @@ def wait_handoff(cfg, token, own, release, request=json_request, timeout=300):
             except Exception:
                 pass
         active = [row for row in rows if row.get("active") is True]
-        if (len(rows) == 2 and len(active) == 1 and active[0].get("healthy") is True
-                and active[0].get("release_sha") == release and active[0].get("update",{}).get("pending") is False
-                and type(active[0].get("epoch")) is int and rows[0].get("epoch") == rows[1].get("epoch")):
-            return active[0]
+        qualified = (len(rows) == 2 and len(active) == 1
+            and active[0].get("healthy") is True and active[0].get("prepared") is True
+            and active[0].get("faulted") is False and active[0].get("operator_maintenance") is False
+            and active[0].get("release_sha") == release
+            and type(active[0].get("epoch")) is int and rows[0].get("epoch") == rows[1].get("epoch"))
+        if qualified:
+            trial = active[0].get("update", {})
+            if trial.get("pending") is False:
+                return active[0]  # Already independently accepted: legacy gate.
+            # Only an installed, qualified, operator-pinned trial can hand off
+            # before 180 s probation. This does NOT confirm/clear that trial.
+            if (trial.get("pending") is True and trial.get("trial_started") is True
+                    and trial.get("operator_pinned") is True and trial.get("qualification") == "passed"):
+                identity = (active[0]["node"], active[0]["epoch"])
+                observed_samples = observed_samples + 1 if identity == observed_identity else 1
+                observed_identity = identity
+                if observed_samples >= 3:
+                    return active[0]
+            else:
+                observed_identity, observed_samples = None, 0
+        else:
+            observed_identity, observed_samples = None, 0
         if time.monotonic() >= deadline:
             raise RuntimeError("QualifiedHandoffNotConfirmed")
         time.sleep(2)
