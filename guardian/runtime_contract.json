@@ -9,6 +9,7 @@
     "offline-release-qualification",
     "bounded-business-probation",
     "replicated-input-journal",
-    "lease-routed-web"
+    "lease-routed-web",
+    "operator-pinned-release"
   ]
 }
