@@ -41,10 +41,24 @@ def fresh_node(row, own):
 
 
 def run(argv, timeout=60, env=None, cwd=None):
-    result = subprocess.run([str(x) for x in argv], stdin=subprocess.DEVNULL,
-        capture_output=True, timeout=timeout, env=env, cwd=cwd)
+    args = [str(x) for x in argv]
+    names = {Path(arg).name for arg in args}
+    stage = next((name for name in ("qualification.py", "release_contract.py", "unittest")
+                  if name in names), Path(args[0]).name)
+    def failure_output(stdout, stderr):
+        from deploy.ha.diagnose_fault import clean
+        return "\n".join(label + ":\n" + clean(
+            (data or b"").decode("utf-8", "replace"), os.environ)[-12000:]
+            for label, data in (("STDOUT", stdout), ("STDERR", stderr)))
+    try:
+        result = subprocess.run(args, stdin=subprocess.DEVNULL,
+            capture_output=True, timeout=timeout, env=env, cwd=cwd)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("DeploymentCommandTimeout:" + stage + "\n" +
+                           failure_output(exc.stdout, exc.stderr)) from None
     if result.returncode:
-        raise RuntimeError("DeploymentCommandFailed:" + Path(str(argv[0])).name)
+        raise RuntimeError("DeploymentCommandFailed:" + stage + ":exit=" + str(result.returncode)
+                           + "\n" + failure_output(result.stdout, result.stderr))
     return result.stdout.decode("utf-8", "replace").strip()
 
 

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.error import HTTPError
@@ -102,8 +103,11 @@ def update(api, apply=False, banner_panel_id=None, backup_root=None, collector_u
               "rotation_url": "/playlists/play/" + visual.PLAYLIST_UID + "?kiosk"}
     if not apply:
         return report
-    folder = Path(backup_root or "/var/lib/perimeter-ha-monitor/backups") / ("visual-" + str(time.time_ns()))
-    folder.mkdir(parents=True, mode=0o700)
+    parent = Path(backup_root or "/var/lib/perimeter-ha-monitor/backups")
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Atomically reserve a private directory; repeated/coarse Windows clock
+    # readings must never collide or overwrite an earlier rollback receipt.
+    folder = Path(tempfile.mkdtemp(prefix="visual-", dir=parent))
     for name, value in (("overview.json", overview), ("perimeter.json", old_visual), ("playlist.json", old_playlist)):
         backup_json(folder, name, value)
     written = []

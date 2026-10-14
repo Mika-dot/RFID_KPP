@@ -1,5 +1,7 @@
 import copy
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +13,38 @@ from guardian.release_contract import MANIFEST
 
 
 class OperatorUpdateTests(unittest.TestCase):
+    def test_command_failure_reports_stage_and_traceback_without_credentials(self):
+        secret = "private-token-from-factory"
+        connection = "Server=sql;UID=operator;PWD=private-password"
+        result = subprocess.CompletedProcess([], 1,
+            (secret + "\n" + connection).encode(),
+            b"Traceback: ModuleNotFoundError: tests.test_ha_resilience")
+        with patch.dict(os.environ, PERIMETER_HA_TOKEN=secret,
+                        RFID_DB_CONNECTION=connection), patch.object(
+                        update.subprocess, "run", return_value=result):
+            with self.assertRaises(RuntimeError) as raised:
+                update.run(["python", "-m", "unittest", secret])
+        message = str(raised.exception)
+        self.assertIn("DeploymentCommandFailed:unittest:exit=1", message)
+        self.assertIn("ModuleNotFoundError: tests.test_ha_resilience", message)
+        self.assertNotIn(secret, message)
+        self.assertNotIn(connection, message)
+        self.assertNotIn("private-password", message)
+
+    def test_command_timeout_retains_bounded_redacted_diagnostics(self):
+        secret = "private-token-from-factory"
+        expired = subprocess.TimeoutExpired(["python", secret], 5,
+            output=("x" * 13000 + secret).encode(), stderr=b"qualifier stalled")
+        with patch.dict(os.environ, PERIMETER_HA_TOKEN=secret), patch.object(
+                update.subprocess, "run", side_effect=expired):
+            with self.assertRaises(RuntimeError) as raised:
+                update.run(["python", "qualification.py"], timeout=5)
+        message = str(raised.exception)
+        self.assertIn("DeploymentCommandTimeout:qualification.py", message)
+        self.assertIn("qualifier stalled", message)
+        self.assertNotIn(secret, message)
+        self.assertLess(len(message), 12500)
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
         self.release="b"*40;self.old="a"*40

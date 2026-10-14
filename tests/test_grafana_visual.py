@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 
 from deploy.ha import grafana_visual as visual
@@ -159,9 +160,13 @@ class VisualTests(unittest.TestCase):
 
     def test_apply_is_idempotent_preserves_other_projects_and_verifies_frames(self):
         fake = FakeGrafana()
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, patch(
+                "deploy.ha.update_visual_wallboard.time.time_ns", return_value=42):
             report = update(fake.api, True, backup_root=folder)
             second = update(fake.api, True, backup_root=folder)
+            self.assertNotEqual(report["backup"], second["backup"])
+            self.assertTrue((Path(report["backup"]) / "receipt.json").is_file())
+            self.assertTrue((Path(second["backup"]) / "receipt.json").is_file())
         overview = fake.dashboards[visual.OVERVIEW_UID]["dashboard"]
         self.assertTrue(report["backend_queries_verified"])
         self.assertEqual([], second["removed_banner_ids"])
