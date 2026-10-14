@@ -56,6 +56,34 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(2, launch(self.cfg, "node.json"))
         self.assertEqual(state, self.state())
 
+    @patch("guardian.boot.subprocess.call", return_value=2)
+    def test_exact_pinned_candidate_boot_failure_must_not_rollback(self, call):
+        state = self.state()
+        state["operator_pinned_release"] = self.new["sha"]
+        atomic_json(self.record, state)
+        self.assertEqual(2, launch(self.cfg, "node.json"))
+        self.assertEqual(state, self.state())
+        self.assertEqual(self.new, self.state()["current"])
+        self.assertTrue(self.state()["pending"])
+        self.assertNotIn(self.new["sha"], self.state().get("rejected", []))
+
+    @patch("guardian.boot.subprocess.call", side_effect=FileNotFoundError)
+    def test_exact_pinned_missing_interpreter_still_preserves_release(self, call):
+        state = self.state()
+        state["operator_pinned_release"] = self.new["sha"]
+        atomic_json(self.record, state)
+        self.assertEqual(2, launch(self.cfg, "node.json"))
+        self.assertEqual(state, self.state())
+
+    @patch("guardian.boot.subprocess.call", return_value=2)
+    def test_unrelated_pin_does_not_block_legacy_bootstrap_rollback(self, call):
+        state = self.state()
+        state["operator_pinned_release"] = "f" * 40
+        atomic_json(self.record, state)
+        self.assertEqual(75, launch(self.cfg, "node.json"))
+        self.assertEqual(self.old, self.state()["current"])
+        self.assertIn(self.new["sha"], self.state()["rejected"])
+
     def test_release_changed_by_agent_is_not_overwritten(self):
         def changed(*args, **kwargs):
             state = self.state()
