@@ -51,7 +51,10 @@ class FakeGrafana:
     def api(self, route, body=None, method=None):
         self.calls.append((route, body, method))
         if route == "/api/plugins":
-            return [{"id": "volkovlabs-echarts-panel"}]
+            # A scoped monitoring service account cannot enumerate non-core plugins.
+            return []
+        if route == "/api/plugins/volkovlabs-echarts-panel/settings":
+            return {"id": "volkovlabs-echarts-panel", "type": "panel"}
         if route == "/api/datasources/uid/wallboard-api":
             return {"type": visual.DS["type"], "jsonData": {"allowedHosts": ["http://127.0.0.1:19150"]}}
         if route == "/api/dashboards/db":
