@@ -6,6 +6,7 @@ configuration/release on failure. No direct SQL mutation or schema migration.
 """
 from __future__ import annotations
 import argparse
+from contextlib import contextmanager
 import copy
 import hashlib
 import json
@@ -121,6 +122,27 @@ def native(action):
              "$ErrorActionPreference='Stop'; " + verb + "-ScheduledTask -TaskName 'PerimeterGuardian'"], 40)
     else:
         run(["systemctl", action, "perimeter-guardian.service"], 40)
+
+
+@contextmanager
+def stopped_guardian_lock(state, timeout=90):
+    """Keep the lock while mutating runtime; native stop can return before exit."""
+    from common.single_instance import SingleInstanceError, SingleInstanceLock
+    path = str(Path(state) / "guardian.lock")
+    deadline = None
+    while True:
+        try:
+            lock = SingleInstanceLock(path)
+            break
+        except SingleInstanceError:
+            now = time.monotonic()
+            if deadline is None:
+                deadline = now + timeout
+            if now >= deadline:
+                raise RuntimeError("GuardianShutdownTimeout:guardian.lock; installation journal retained if recovery cannot stop Guardian") from None
+            time.sleep(min(1, deadline - now))
+    with lock:
+        yield
 
 
 def git(cfg, *args):
@@ -245,12 +267,11 @@ def wait_handoff(cfg, token, own, release, request=json_request, timeout=300):
 
 def restore(args, rollback):
     """Restore a stopped node from its private crash journal, without SQL writes."""
-    from common.single_instance import SingleInstanceLock
     from guardian.processes import Processes
     cfg = rollback["config"]
     state = Path(cfg["state_dir"])
     native("stop")
-    with SingleInstanceLock(str(state / "guardian.lock")):
+    with stopped_guardian_lock(state):
         Processes(cfg).reap_orphans()
         write_private(args.config, cfg, state)
         write_private(state / "release.json", rollback["record"], state)
@@ -275,7 +296,6 @@ def recover(args, cfg, env):
 
 
 def apply(args, cfg, env):
-    from common.single_instance import SingleInstanceLock
     from guardian.processes import Processes
     folder, receipt = check_prepared(args,cfg)
     token, own = env["PERIMETER_HA_TOKEN"], cfg["node_id"]
@@ -313,10 +333,12 @@ def apply(args, cfg, env):
                 token,body={"enabled":True,"release":receipt["base"]["sha"]},timeout=10)
             if code != 200:
                 raise RuntimeError("ReserveMaintenanceNotConfirmed")
-        native("stop")
+        # Even a failed/timed-out stop command may already have stopped the task.
+        # Attempt restoration and retain the journal if that cannot complete.
         stopped = True
+        native("stop")
         # The stable launcher must be stopped; the lock rules out another Guardian.
-        with SingleInstanceLock(str(state / "guardian.lock")):
+        with stopped_guardian_lock(state):
             Processes(cfg).reap_orphans()
             write_private(maintenance,{"enabled":True},state)
             if own == owner:

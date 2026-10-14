@@ -13,6 +13,44 @@ from guardian.release_contract import MANIFEST
 
 
 class OperatorUpdateTests(unittest.TestCase):
+    def test_shutdown_wait_retries_and_keeps_acquired_lock_through_mutation(self):
+        from common.single_instance import SingleInstanceError
+        held = Mock()
+        events = []
+        held.__enter__ = Mock(side_effect=lambda: events.append("acquired"))
+        held.__exit__ = Mock(side_effect=lambda *args: events.append("released"))
+        with patch("common.single_instance.SingleInstanceLock", side_effect=[
+                SingleInstanceError("busy"), SingleInstanceError("busy"), held]) as acquire, \
+                patch.object(update.time, "monotonic", side_effect=[0, 1]), \
+                patch.object(update.time, "sleep") as sleep:
+            with update.stopped_guardian_lock(self.state, timeout=3):
+                events.append("write")
+                self.assertEqual(["acquired", "write"], events)
+        self.assertEqual(["acquired", "write", "released"], events)
+        self.assertEqual(3, acquire.call_count)
+        self.assertEqual(2, sleep.call_count)
+
+    def test_shutdown_timeout_never_enters_runtime_mutation(self):
+        from common.single_instance import SingleInstanceError
+        with patch("common.single_instance.SingleInstanceLock", side_effect=SingleInstanceError("busy")), \
+                patch.object(update.time, "monotonic", side_effect=[0, 2]), \
+                patch.object(update.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "GuardianShutdownTimeout"):
+                with update.stopped_guardian_lock(self.state, timeout=2):
+                    self.fail("runtime mutation with a busy Guardian")
+
+    def test_ambiguous_native_stop_retains_journal_when_restoration_fails(self):
+        with patch.object(update, "check_prepared", return_value=(self.folder, self.receipt)), \
+                patch.object(update, "inventory", return_value=(self.rows, "physical")), \
+                patch.object(update, "json_request", return_value=(200, {})), \
+                patch.object(update, "native", side_effect=RuntimeError("native stop timeout")), \
+                patch.object(update, "restore", side_effect=RuntimeError("recovery blocked")) as restore:
+            with self.assertRaisesRegex(RuntimeError, "recovery blocked"):
+                update.apply(self.args, self.cfg, self.env)
+        restore.assert_called_once()
+        self.assertTrue((self.state / "operator-release-install.json").exists())
+        self.assertEqual(self.record, json.loads((self.state / "release.json").read_text()))
+
     def test_command_failure_reports_stage_and_traceback_without_credentials(self):
         secret = "private-token-from-factory"
         connection = "Server=sql;UID=operator;PWD=private-password"
