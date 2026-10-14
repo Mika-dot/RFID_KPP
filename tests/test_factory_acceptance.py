@@ -46,7 +46,7 @@ class FactoryAcceptanceTests(unittest.TestCase):
         result=self.collect()
         self.assertTrue(result["endpoints_ready"])
         self.assertTrue(result["deployment"]["passed"])
-        self.assertEqual(["physical","perimetr"],sorted(result["deployment"]["faulted_passive"]))
+        self.assertEqual(["perimetr","physical"],sorted(result["deployment"]["faulted_passive"]))
         self.assertTrue(result["cluster"]["all_nodes_pinned"])
         self.responses["physical"].update(active=True,healthy=True,faulted=False)
         result=self.collect()
