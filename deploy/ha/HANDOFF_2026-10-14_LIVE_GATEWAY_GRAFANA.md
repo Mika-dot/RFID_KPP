@@ -248,6 +248,44 @@ demotion останавливает их. Поэтому отказ в подк�
   `deploy/ha/PLAN_AUDIT_2026-10-08.md`. Не смешивать offline CI, состояние
   GitHub и подтверждение работы на заводе.
 
+## 4a. Проверка ВСЕХ проектов и панелей MOSITLAB wallboard
+
+- Подготовлен самостоятельный **read-only** аудитор
+  [`audit_wallboard_live.py`](audit_wallboard_live.py), тесты:
+  [`test_wallboard_audit_readonly.py`](../../tests/test_wallboard_audit_readonly.py).
+- Он читает **Grafana 3000** (dashboard uid `mositlab-director-wallboard` и
+  `mositlab-perimeter-visual`), проверяет `playlist`, ECharts, Infinity
+  datasource, количество и расположение панелей, **POST только к**
+  `/api/ds/query` (это чтение данных), фиксирует ошибки/no-values.
+  Дополнительно проверяет **локальный `19150/projects`**, статусы
+  всех возвращаемых проектов и подтверждённые endpoints `/attention`,
+  `/perimeter-ha/...`, age мониторинга, видимый inventory дашбордов.
+- Аудит **не выполнялся на реальном ub22** на момент записи; код и mock-тесты
+  в GitHub не являются подтверждением актуальных данных производства.
+  Не выдавать старый `backend_queries_verified=true` за корректность всех
+  проектов, особенно Zabbix/Sentry, где ранее отмечались ошибки.
+- Запуск на **ub22**, не на трёх HA-узлах:
+
+```bash
+AUDIT_DIR=$(mktemp -d)
+chmod 700 "$AUDIT_DIR"
+curl -fL --retry 2 --connect-timeout 10 --max-time 60 \
+  https://raw.githubusercontent.com/Mika-dot/RFID_KPP/53ac54bebc85dd4df3d84e8c4e2aaf78def34fd2/deploy/ha/audit_wallboard_live.py \
+  -o "$AUDIT_DIR/audit_wallboard_live.py"
+python3 -m py_compile "$AUDIT_DIR/audit_wallboard_live.py"
+sudo -n python3 "$AUDIT_DIR/audit_wallboard_live.py" \
+  --timeout 10 --max-queries 130 \
+  --report "/root/mositlab-wallboard-audit-$(date +%Y%m%d-%H%M%S).json"
+```
+
+- Скрипт не выводит bearer token, реальные RFID теги, сырые бизнес-данные;
+  отдельный JSON-отчёт сохраняется root-only (`0600`) и не отправляется в Git.
+  Отправить оператору/следующему агенту **текстовый вывод** с `PROJECT`,
+  `SOURCE`, `PANEL`, `FINDINGS` и `TOTALS` для фактической оценки.
+- Даже успешный API-аудит **не равен визуальному QA**: для проверки обрезания
+  текста и компоновки на реальном телевизоре нужен снимок экрана обеих страниц
+  при фактическом разрешении и масштабировании браузера.
+
 ## 5. Команды для read-only сверки при продолжении
 
 На **ub22** (root читает приватное окружение; секрет не печатается):
