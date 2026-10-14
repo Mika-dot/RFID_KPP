@@ -41,6 +41,12 @@ def diagnose(nodes, token, request=json_request):
             row["qualification_passed"] = update.get("qualification") == "passed"
             row["replication_enabled"] = status.get("replication_enabled") is True
             row["fallback_enabled"] = status.get("fallback_enabled") is True
+            mirror = status.get("metadata_mirror") if isinstance(status.get("metadata_mirror"), dict) else {}
+            row["metadata_mirror"] = {
+                "enabled":mirror.get("enabled") is True,
+                "reported_error":bool(mirror.get("error")),
+                "blocked_stream_count":len(mirror.get("blocked_streams", []))
+                    if isinstance(mirror.get("blocked_streams"),list) else None}
             row["services"] = {}
             for name in SERVICES:
                 service = status.get("services", {}).get(name, {})
