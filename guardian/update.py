@@ -240,8 +240,16 @@ class Updates:
                 self.state["trial_started_at"] = time.time()
                 atomic_json(self.path, self.state)
 
+    def operator_pinned(self):
+        """Pin code identity, never health, leases, workers, or business readiness."""
+        sha = self.state.get("operator_pinned_release")
+        return (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) is not None
+                and sha == self.state.get("current", {}).get("sha"))
+
     def rollback(self):
         with self.lock:
+            if self.operator_pinned():
+                raise RuntimeError("OperatorPinnedReleaseRollbackForbidden")
             if not self.state.get("previous"):
                 raise RuntimeError("NoPreviousRelease")
             rejected = self.state["current"]["sha"]

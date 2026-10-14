@@ -347,6 +347,12 @@ def apply(args, cfg, env):
             record = copy.deepcopy(old_record)
             record.update(previous=record["current"], current={"sha":args.release,"root":receipt["root"],"python":cfg["python"]},
                 pending=True, trial_started=False, activated_at=time.time(), fencing_protocol_min=2)
+            # A pinned release may still fault, demote, fail preflight and lose its
+            # SQL lease. Only automatic code rollback is disabled by this choice.
+            if getattr(args, "pin_release", False):
+                record["operator_pinned_release"] = args.release
+            else:
+                record.pop("operator_pinned_release", None)
             record["qualification"] = {"status":"passed","sha":args.release,"mode":"operator_exact_release"}
             write_private(args.config,new_cfg,state)
             write_private(record_path,record,state)
@@ -461,6 +467,8 @@ def main(argv=None):
     mode.add_argument("--plan",action="store_true");mode.add_argument("--prepare",action="store_true");mode.add_argument("--apply",action="store_true");mode.add_argument("--recover",action="store_true")
     mode.add_argument("--release-reserves", action="store_true")
     p.add_argument("--release",required=True);p.add_argument("--handoff",action="store_true")
+    p.add_argument("--pin-release", action="store_true",
+                   help="Keep the qualified exact release installed on runtime faults; do not bypass fencing or preflight")
     p.add_argument("--recover-reserve", action="store_true",
                    help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
     p.add_argument("--hold-maintenance", action="store_true",
@@ -469,7 +477,9 @@ def main(argv=None):
     p.add_argument("--environment",type=Path,default=Path("D:/PerimeterHA/transfer-private/environment.local.json" if os.name=="nt" else "/etc/perimeter/environment"))
     args=p.parse_args(argv)
     if ((args.hold_maintenance and not (args.apply and args.recover_reserve))
-            or (args.release_reserves and (args.handoff or args.recover_reserve))):
+            or (args.release_reserves and (args.handoff or args.recover_reserve))
+            or (args.pin_release and not args.apply)):
+
         raise ValueError("InvalidHeldReserveMode")
     if not re.fullmatch(r"[0-9a-f]{40}",args.release):
         raise ValueError("ExactReleaseRequired")

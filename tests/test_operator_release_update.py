@@ -223,6 +223,29 @@ class OperatorUpdateTests(unittest.TestCase):
         processes.return_value.reap_orphans.assert_called_once()
         self.assertEqual([("stop",),("start",)],[call.args for call in native.call_args_list])
 
+    def test_pinned_passive_install_sets_exact_release_and_preserves_pending(self):
+        self.args.pin_release = True
+        requests = []
+        def request(url, token, **kwargs):
+            requests.append(url)
+            if url.endswith("/maintenance"):
+                return 200, {}
+            return 200, dict(node="comparator", sample_age=1, fencing_protocol=2,
+                release_sha=self.release, operator_maintenance=(
+                    sum(u.endswith("/maintenance") for u in requests) < 2),
+                active=False, preflight=dict(ok=True), prepared=True, faulted=False,
+                replication_enabled=True, fallback_enabled=True)
+        with patch.object(update, "check_prepared", return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native"), patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"):
+            result = update.apply(self.args,self.cfg,self.env)
+        record = json.loads((self.state/"release.json").read_text(encoding="utf-8"))
+        self.assertTrue(result["installed"])
+        self.assertEqual(self.release, record["operator_pinned_release"])
+        self.assertEqual(self.release, record["current"]["sha"])
+        self.assertTrue(record["pending"])  # Pin is not a passed trial.
+
     def test_first_replica_release_cannot_start_against_two_legacy_nodes(self):
         self.rows["perimetr"]["release_sha"] = self.old
         with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native:

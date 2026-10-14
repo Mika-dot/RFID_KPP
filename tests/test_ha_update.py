@@ -25,6 +25,25 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(self.updates.activate())
         self.assertEqual("b"*40,self.updates.state["current"]["sha"])
 
+    def test_operator_pin_blocks_code_rollback_without_accepting_trial(self):
+        self.updates.staged={"root":"/new","sha":"b"*40}
+        self.updates.activate()
+        self.updates.state["operator_pinned_release"] = "b"*40
+        self.assertTrue(self.updates.operator_pinned())
+        self.assertTrue(self.updates.state["pending"])
+        with self.assertRaisesRegex(RuntimeError, "OperatorPinnedReleaseRollbackForbidden"):
+            self.updates.rollback()
+        self.assertEqual("b"*40, self.updates.state["current"]["sha"])
+        self.assertTrue(self.updates.state["pending"])
+        self.assertNotIn("b"*40, self.updates.quarantined)
+        self.assertFalse(self.updates.state.get("trial_started", False))
+
+    def test_operator_pin_requires_current_exact_sha(self):
+        self.updates.state["operator_pinned_release"] = "b"*40
+        self.assertFalse(self.updates.operator_pinned())
+        self.updates.state["operator_pinned_release"] = "not-a-commit"
+        self.assertFalse(self.updates.operator_pinned())
+
     def test_rollback_preserves_config_and_durable_state(self):
         spool=Path(self.tmp.name)/"rfid_spool_v4.sqlite"
         spool.write_bytes(b"durable data")

@@ -93,7 +93,8 @@ class Node:
             result["update"] = {"pending": self.updates.state.get("pending", False),
                 "trial_started": self.updates.state.get("trial_started", False),
                 "quarantined": len(self.updates.quarantined) if isinstance(getattr(self.updates, "quarantined", None), (set, list, tuple)) else 0,
-                "qualification": self.updates.state.get("qualification", {}).get("status")}
+                "qualification": self.updates.state.get("qualification", {}).get("status"),
+                "operator_pinned": self.updates.operator_pinned()}
             result["resources"] = dict(getattr(self, "resources", {}))
             result["fencing_protocol"] = FENCING_PROTOCOL
             result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
@@ -397,7 +398,9 @@ class Node:
                 trial_failed = self.updates.state.get("trial_started") and state["faulted"]
                 preparation_failed = (not self.preflight_result["ok"] and
                     time.time()-self.updates.state.get("activated_at", time.time()) > 120)
-                if not getattr(self, "operator_maintenance", False) and self.updates.state.get("pending") and (trial_failed or preparation_failed):
+                if (not getattr(self, "operator_maintenance", False)
+                        and self.updates.state.get("pending") and (trial_failed or preparation_failed)
+                        and not self.updates.operator_pinned()):
                     self.updates.rollback()
                     self.restart_requested = True
                     self.stop.set()
