@@ -29,9 +29,13 @@ class FactoryAcceptanceTests(unittest.TestCase):
             }
         self.sql={"owner":"comparator","epoch":5340,"lease_valid":True,
                   "controller":"comparator","controller_valid":True,
-                  "rfid_max_id":40,"aggregator_cursor":40,"event_max_id":9}
+                  "rfid_max_id":40,"aggregator_cursor":40,"event_max_id":9,
+                  "recent_reel":{"event_id":9,"rfid_max_raw_id":40,
+                                 "video_matched":True,"warehouse_linked":True,
+                                 "direction_present":True}}
         self.web={"health_http_ok":True,"events_http_ok":True,
-                  "events_total":9,"health_status":"OK"}
+                  "events_total":9,"health_status":"OK",
+                  "exact_event_id":9,"event_rfid_raw_id":40}
 
     def request(self,url,*args,**kwargs):
         self.assertNotIn("body",kwargs)
@@ -40,7 +44,7 @@ class FactoryAcceptanceTests(unittest.TestCase):
 
     def collect(self):
         return collect(self.cfg,self.env,SHA,self.request,
-                       lambda _:dict(self.sql),lambda _url,_env:dict(self.web))
+                       lambda _:dict(self.sql),lambda _url,_env,_reel:dict(self.web))
 
     def test_pinned_cluster_accepts_passive_faults_but_never_dual_owner(self):
         result=self.collect()
@@ -79,12 +83,26 @@ class FactoryAcceptanceTests(unittest.TestCase):
     def test_real_sql_and_web_progress_are_separate_proofs(self):
         before={"sql":dict(self.sql),"web":dict(self.web)}
         self.sql.update(rfid_max_id=45,aggregator_cursor=45,event_max_id=10)
-        self.web["events_total"]=10
+        self.sql["recent_reel"] = {"event_id":10,"rfid_max_raw_id":45,
+                                   "video_matched":True,"warehouse_linked":True,
+                                   "direction_present":True}
+        self.web.update(events_total=10, exact_event_id=10,event_rfid_raw_id=45)
         result=compare_snapshots(before,self.collect())
         self.assertEqual(5,result["rfid_new_rows"])
         self.assertTrue(result["rfid_sql_aggregator_observed"])
         self.assertTrue(result["event_web_progress_observed"])
         self.assertEqual("not_measured",result["full_identity_direction_video_warehouse_proof"])
+
+    def test_unrelated_web_increase_cannot_fake_same_reel(self):
+        before={"sql":dict(self.sql),"web":dict(self.web)}
+        self.sql.update(rfid_max_id=45,aggregator_cursor=45,event_max_id=10,
+                        recent_reel={"event_id":10,"rfid_max_raw_id":45,
+                                     "video_matched":False,"warehouse_linked":False,
+                                     "direction_present":False})
+        self.web.update(events_total=10,exact_event_id=99,event_rfid_raw_id=45)
+        result=compare_snapshots(before,self.collect())
+        self.assertTrue(result["rfid_sql_aggregator_observed"])
+        self.assertFalse(result["event_web_progress_observed"])
 
     def test_new_reads_not_caught_up_not_accepted(self):
         before={"sql":dict(self.sql),"web":dict(self.web)}
