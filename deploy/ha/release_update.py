@@ -502,18 +502,43 @@ def apply(args, cfg, env):
         if code!=200:
             raise RuntimeError("InstalledMaintenanceReleaseFailed")
         deadline = time.monotonic() + 420
+        observed_identity, observed_samples = None, 0
         while True:
             try:
                 code, row = json_request(url + "/status", token, timeout=3)
                 if code == 200 and fresh_node(row,own) and row.get("release_sha") != args.release:
                     raise RuntimeError("InstalledCandidateRolledBack")
-                if (code == 200 and fresh_node(row,own) and row.get("prepared") is True and row.get("faulted") is False
-                        and row.get("operator_maintenance") is False and row.get("replication_enabled") is True
-                        and row.get("fallback_enabled") is True
-                        and (row.get("active") is False or (row.get("healthy") is True and row.get("update", {}).get("pending") is False))):
-                    break
+                prepared = (code == 200 and fresh_node(row,own) and row.get("release_sha") == args.release
+                    and row.get("prepared") is True and row.get("faulted") is False
+                    and row.get("operator_maintenance") is False and row.get("replication_enabled") is True
+                    and row.get("fallback_enabled") is True)
+                if prepared and row.get("active") is False:
+                    break  # Safe passive state never required completion of business probation.
+                if prepared and row.get("active") is True and row.get("healthy") is True:
+                    trial = row.get("update", {})
+                    if trial.get("pending") is False:
+                        break
+                    # Pinning the exact code is not a claim of passing the
+                    # independent 180 s trial. A healthy live leader may keep
+                    # pending=True through production transients and still be
+                    # correctly installed. Require repeated matching epochs.
+                    if (getattr(args, "pin_release", False)
+                            and trial.get("pending") is True
+                            and trial.get("trial_started") is True
+                            and trial.get("operator_pinned") is True
+                            and trial.get("qualification") == "passed"
+                            and type(row.get("epoch")) is int):
+                        identity = (row["node"], row["epoch"])
+                        observed_samples = observed_samples + 1 if identity == observed_identity else 1
+                        observed_identity = identity
+                        if observed_samples >= 3:
+                            break
+                    else:
+                        observed_identity, observed_samples = None, 0
+                else:
+                    observed_identity, observed_samples = None, 0
             except OSError:
-                pass
+                observed_identity, observed_samples = None, 0
             if time.monotonic() >= deadline:
                 raise RuntimeError("InstalledQualificationNotConfirmed")
             time.sleep(2)
