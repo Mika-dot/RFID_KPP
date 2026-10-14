@@ -150,17 +150,23 @@ def compare_snapshots(baseline, current):
     web_growth = (new_web.get("events_total") - old_web.get("events_total")
                   if type(new_web.get("events_total")) is int
                   and type(old_web.get("events_total")) is int else None)
-    source_to_aggregator = source_growth > 0 and new["aggregator_cursor"] >= new["rfid_max_id"]
+    # A busy checkpoint need not drain its entire queue. Crossing the baseline
+    # raw ID proves that at least one post-baseline read was processed.
+    source_to_aggregator = (source_growth > 0 and
+                            new["aggregator_cursor"] > old["rfid_max_id"])
     reel = new.get("recent_reel") or {}
     # A new RFID read must belong to this *same* reel event and be visible
     # under its exact EventId on Web. This is stronger than two totals rising.
     correlated = (event_growth > 0 and type(reel.get("rfid_max_raw_id")) is int
                   and reel["rfid_max_raw_id"] > old["rfid_max_id"]
+                  and new["aggregator_cursor"] >= reel["rfid_max_raw_id"]
                   and new_web.get("exact_event_id") == new["event_max_id"]
                   and new_web.get("event_rfid_raw_id") == reel["rfid_max_raw_id"])
     event_to_web = bool(correlated and web_growth is not None and web_growth > 0)
     return {"rfid_new_rows": max(0, source_growth),
-            "aggregator_cursor_caught_up": bool(source_to_aggregator),
+            "aggregator_progress_after_baseline": bool(source_to_aggregator),
+            "aggregator_cursor_caught_up":new["aggregator_cursor"] >= new["rfid_max_id"],
+            "aggregator_backlog_estimate":max(0,new["rfid_max_id"]-new["aggregator_cursor"]),
             "new_business_events": max(0, event_growth),
             "web_event_count_growth": web_growth,
             "rfid_sql_aggregator_observed": bool(source_to_aggregator),
