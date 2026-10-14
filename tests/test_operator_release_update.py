@@ -363,6 +363,46 @@ class OperatorUpdateTests(unittest.TestCase):
         self.assertEqual(self.release, record["current"]["sha"])
         self.assertTrue(record["pending"])  # Pin is not a passed trial.
 
+    def test_physical_pinned_active_install_completes_without_pending_false(self):
+        self.cfg["node_id"] = "physical"
+        self.args.pin_release = True
+        self.args.handoff = True
+        self.rows["physical"]["active"] = True
+        self.rows["physical"]["healthy"] = True
+        self.rows["comparator"]["release_sha"] = self.release
+        manifest = self.candidate / MANIFEST
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"capabilities": ["operator-pinned-release"]}), encoding="utf-8")
+        calls = []
+        def request(url, token, **kwargs):
+            calls.append(url)
+            if url.endswith("/maintenance"):
+                return 200, {"operator_maintenance": False}
+            if len([x for x in calls if x.endswith("/status")]) == 1:
+                return 200, dict(node="physical", sample_age=1, fencing_protocol=2,
+                    release_sha=self.release, operator_maintenance=True, active=False,
+                    prepared=False, preflight={"ok": True}, epoch=9)
+            return 200, dict(node="physical", sample_age=1, fencing_protocol=2,
+                release_sha=self.release, operator_maintenance=False, active=True,
+                prepared=True, healthy=True, faulted=False, epoch=9,
+                replication_enabled=True, fallback_enabled=True,
+                update={"pending": True, "trial_started": True,
+                        "operator_pinned": True, "qualification": "passed"})
+        with patch.object(update, "check_prepared", return_value=(self.folder, self.receipt)), \
+                patch.object(update, "inventory", return_value=(self.rows, "physical")), \
+                patch.object(update, "wait_handoff", return_value={"node": "perimetr"}), \
+                patch.object(update, "json_request", side_effect=request), \
+                patch.object(update, "native"), patch("guardian.processes.Processes"), \
+                patch.object(update.time, "sleep"):
+            result = update.apply(self.args, self.cfg, self.env)
+        self.assertTrue(result["installed"])
+        self.assertGreaterEqual(len([x for x in calls if x.endswith("/status")]), 4)
+        recorded = json.loads((self.state / "release.json").read_text())
+        self.assertEqual(self.release, recorded["current"]["sha"])
+        self.assertEqual(self.release, recorded["operator_pinned_release"])
+        self.assertTrue(recorded["pending"])  # Trial remains independent of install.
+        self.assertFalse((self.state / "operator-release-install.json").exists())
+
     def test_legacy_candidate_pin_refused_before_native_stop(self):
         self.args.pin_release = True
         with patch.object(update, "check_prepared",return_value=(self.folder,self.receipt)), \
