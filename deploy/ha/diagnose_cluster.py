@@ -35,7 +35,12 @@ def diagnose(nodes, token, request=json_request):
             row["failed_preflight"] = [key for key, value in status.get("preflight", {}).get("checks", {}).items()
                                        if value is not True]
             row["verification_required"] = status.get("repair", {}).get("verification_required") is True
-            row["update_pending"] = status.get("update", {}).get("pending") is True
+            update = status.get("update") if isinstance(status.get("update"), dict) else {}
+            row["update_pending"] = update.get("pending") is True
+            row["operator_pinned"] = update.get("operator_pinned") is True
+            row["qualification_passed"] = update.get("qualification") == "passed"
+            row["replication_enabled"] = status.get("replication_enabled") is True
+            row["fallback_enabled"] = status.get("fallback_enabled") is True
             row["services"] = {}
             for name in SERVICES:
                 service = status.get("services", {}).get(name, {})
@@ -51,10 +56,13 @@ def diagnose(nodes, token, request=json_request):
     owners = [key for key, row in rows.items() if row.get("fresh") and row.get("active")]
     healthy = [key for key in owners if rows[key].get("healthy") and not rows[key].get("faulted")]
     versions = {row.get("release") for row in rows.values() if row.get("fresh")}
+    epoch_values = {row.get("epoch") for row in rows.values() if row.get("fresh")}
     return {"read_only":True, "nodes":rows, "reported_active":owners,
         "healthy_owner":healthy[0] if len(owners) == len(healthy) == 1 else None,
-        "mixed_releases":len(versions)>1, "live_restoration_confirmed":False,
-        "physical_business_acceptance":"not_measured"}
+        "mixed_releases":len(versions)>1, "epoch_consistent":len(epoch_values)==1 and len(epoch_values)>0,
+        "all_nodes_fresh":len(rows)==len(nodes) and all(row.get("fresh") is True for row in rows.values()),
+        "all_nodes_pinned":len(rows)==len(nodes) and all(row.get("operator_pinned") is True for row in rows.values()),
+        "live_restoration_confirmed":False, "physical_business_acceptance":"not_measured"}
 
 
 def main(argv=None):
