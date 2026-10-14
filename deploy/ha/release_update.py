@@ -125,49 +125,58 @@ def native(action):
 
 
 def reap_verified_windows_guardian_orphan(cfg, config_path):
-    """Stop only the exact locked Guardian child after its task is stopped.
+    """Release a Windows Guardian orphan without reading the locked lock byte.
 
-    Task Scheduler may terminate run-windows.ps1 while its spawned Python
-    child survives, still holding guardian.lock. Never trust a bare PID:
-    verify the private lock marker, process executable, module, exact config,
-    and stopped task before terminating; caller reaps identity-bound workers
-    only after acquiring the lock.
+    msvcrt.locking() protects byte zero of guardian.lock: another process
+    cannot reliably read pid=... while the owning process is alive. Instead
+    enumerate live processes and require a single exact Guardian identity,
+    matching interpreter/config, plus a stopped Task Scheduler supervisor.
+    SQL lease/fencing remain authoritative and unchanged.
     """
     if os.name != "nt" or cfg.get("node_id") != "physical":
         return False
     import psutil
-    marker = Path(cfg["state_dir"]) / "guardian.lock"
-    try:
-        value = marker.read_text(encoding="ascii").strip()
-    except (OSError, UnicodeError):
-        return False
-    match = re.fullmatch(r"pid=([1-9][0-9]*)", value)
-    if not match:
-        return False
-    try:
-        process = psutil.Process(int(match.group(1)))
-        cmd = process.cmdline()
-        executable = process.exe()
-    except psutil.NoSuchProcess:
-        return False
-    if (os.path.normcase(os.path.abspath(executable))
-            != os.path.normcase(os.path.abspath(cfg["python"]))):
-        raise RuntimeError("GuardianLockOwnerInterpreterMismatch")
-    if not ("-m" in cmd and cmd.index("-m") + 1 < len(cmd)
-            and cmd[cmd.index("-m") + 1] == "guardian"
-            and "--config" in cmd and cmd.index("--config") + 1 < len(cmd)
-            and "serve" in cmd):
-        raise RuntimeError("GuardianLockOwnerCommandMismatch")
-    actual_config = cmd[cmd.index("--config") + 1]
-    if os.path.normcase(os.path.abspath(actual_config)) != os.path.normcase(os.path.abspath(str(config_path))):
-        raise RuntimeError("GuardianLockOwnerConfigMismatch")
+    task = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        "(Get-ScheduledTask -TaskName 'PerimeterGuardian' -ErrorAction Stop).State.ToString()"], 20)
+    if task != "Ready":
+        raise RuntimeError("GuardianScheduledTaskNotStopped:" + task)
+
+    def normalize(value):
+        return os.path.normcase(os.path.abspath(value))
+
+    expected_python, expected_config = normalize(cfg["python"]), normalize(str(config_path))
+    matches = []
+    for process in psutil.process_iter():
+        try:
+            cmd = process.cmdline()
+            if (len(cmd) < 6 or "-m" not in cmd
+                    or cmd.index("-m") + 1 >= len(cmd)
+                    or cmd[cmd.index("-m") + 1] != "guardian"
+                    or "--config" not in cmd
+                    or cmd.index("--config") + 1 >= len(cmd)
+                    or "serve" not in cmd):
+                continue
+            if (normalize(process.exe()) == expected_python
+                    and normalize(cmd[cmd.index("--config") + 1]) == expected_config):
+                matches.append(process)
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except psutil.AccessDenied:
+            # Do not kill anything if any likely Guardian cannot be inspected.
+            raise RuntimeError("GuardianProcessInspectionDenied") from None
+
+    if not matches:
+        raise RuntimeError("GuardianLockHeldWithoutVerifiedGuardian")
+    if len(matches) != 1:
+        raise RuntimeError("MultipleGuardianProcessesRequireInspection")
+    process = matches[0]
+    # Recheck scheduler immediately before termination; never terminate a
+    # managed/active Guardian or any worker by a bare PID.
     task = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
         "(Get-ScheduledTask -TaskName 'PerimeterGuardian' -ErrorAction Stop).State.ToString()"], 20)
     if task != "Ready":
         raise RuntimeError("GuardianScheduledTaskNotStopped:" + task)
     try:
-        # This is the checked, now-orphaned guardian itself; not a reader,
-        # worker, arbitrary python process or SQL lease owner override.
         process.terminate()
         process.wait(timeout=15)
     except psutil.NoSuchProcess:
