@@ -165,6 +165,59 @@ class OperatorUpdateTests(unittest.TestCase):
         self.rows["physical"]["epoch"]=9
         self.assertEqual("perimetr",update.wait_handoff(self.cfg,"token","comparator",self.release,request,timeout=0)["node"])
 
+    def test_pinned_pending_handoff_confirms_stable_fenced_owner_without_probation_wait(self):
+        # A flapping production line must not make the Windows installer wait
+        # for the independent 180-second probation to complete.
+        self.rows["physical"].update(active=False, healthy=False)
+        self.rows["perimetr"].update(active=True, healthy=True, release_sha=self.release,
+            update={"pending": True, "trial_started": True, "operator_pinned": True,
+                    "qualification": "passed"})
+        visits = []
+        def request(url, *args, **kwargs):
+            visits.append(url)
+            return 200, copy.deepcopy(next(row for row in self.rows.values()
+                if url.startswith("http://" + row["node"] + ":")))
+        with patch.object(update.time, "monotonic", return_value=0), \
+                patch.object(update.time, "sleep") as sleep:
+            result = update.wait_handoff(self.cfg, "token", "physical", self.release,
+                                         request, timeout=1)
+        self.assertEqual("perimetr", result["node"])
+        self.assertTrue(result["update"]["pending"])
+        self.assertEqual(6, len(visits))  # Two fresh peers, three identical epochs.
+        self.assertEqual(2, sleep.call_count)  # Not a 180-second gate.
+
+    def test_pinned_pending_handoff_rejects_unqualified_or_split_owner(self):
+        self.rows["physical"].update(active=False, healthy=False)
+        row = self.rows["perimetr"]
+        row.update(active=True, healthy=True, release_sha=self.release,
+                   update={"pending": True, "trial_started": True,
+                           "operator_pinned": True, "qualification": "passed"})
+        def request(url, *args, **kwargs):
+            return 200, copy.deepcopy(next(row for row in self.rows.values()
+                if url.startswith("http://" + row["node"] + ":")))
+        failures = [
+            ("pin", lambda: row["update"].update(operator_pinned=False)),
+            ("trial", lambda: row["update"].update(trial_started=False)),
+            ("qualification", lambda: row["update"].update(qualification="failed")),
+            ("fault", lambda: row.update(faulted=True)),
+            ("unhealthy", lambda: row.update(healthy=False)),
+            ("not_prepared", lambda: row.update(prepared=False)),
+            ("maintenance", lambda: row.update(operator_maintenance=True)),
+            ("epoch", lambda: self.rows["comparator"].update(epoch=10)),
+            ("other_owner", lambda: self.rows["comparator"].update(active=True)),
+        ]
+        for name, mutate in failures:
+            with self.subTest(name):
+                row.update(active=True, healthy=True, prepared=True, faulted=False,
+                    operator_maintenance=False,
+                    update={"pending": True, "trial_started": True,
+                            "operator_pinned": True, "qualification": "passed"})
+                self.rows["comparator"].update(active=False, epoch=9)
+                mutate()
+                with self.assertRaisesRegex(RuntimeError, "QualifiedHandoffNotConfirmed"):
+                    update.wait_handoff(self.cfg, "token", "physical", self.release,
+                                        request, timeout=0)
+
     def test_degraded_inventory_is_opt_in_and_rejects_two_owners(self):
         self.rows["physical"]["healthy"] = False
         def request(url,*args,**kwargs):return 200,next(row for row in self.rows.values() if url.startswith("http://"+row["node"]+":"))
