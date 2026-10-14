@@ -80,8 +80,10 @@ def update(api, apply=False, banner_panel_id=None, backup_root=None, collector_u
     datasource = api("/api/datasources/uid/wallboard-api")
     if datasource.get("type") != visual.DS["type"] or "http://127.0.0.1:19150" not in datasource.get("jsonData", {}).get("allowedHosts", []):
         raise RuntimeError("ExistingInfinityDatasourceRequired")
-    plugins = api("/api/plugins")
-    if not any(plugin.get("id") == "volkovlabs-echarts-panel" for plugin in plugins):
+    # /api/plugins hides non-core plugins from scoped service accounts in Grafana 13.
+    # Query the exact registered panel instead of requiring global plugin-list rights.
+    plugin = api("/api/plugins/volkovlabs-echarts-panel/settings")
+    if plugin.get("id") != "volkovlabs-echarts-panel" or plugin.get("type") != "panel":
         raise RuntimeError("ExistingBusinessChartsPluginRequired")
     old_visual = optional(api, "/api/dashboards/uid/" + visual.VISUAL_UID)
     old_playlist = optional(api, PLAYLIST_API + "/" + visual.PLAYLIST_UID)
