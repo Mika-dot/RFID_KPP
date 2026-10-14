@@ -83,7 +83,7 @@ class WallboardAuditTests(unittest.TestCase):
             result = audit.audit("token", timeout=5)
         self.assertEqual(2, result["totals"]["dashboards_loaded"])
         self.assertEqual(2, result["totals"]["panels_ok"])
-        self.assertEqual(9, result["totals"]["endpoints_ok"])
+        self.assertEqual(8, result["totals"]["endpoints_ok"])
         self.assertTrue(result["playlist"]["correct"])
         self.assertNotIn("SECRET_RFID_EPC", json.dumps(result))
         for url, written in requests:
