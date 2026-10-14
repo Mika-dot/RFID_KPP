@@ -80,19 +80,27 @@ def sql_snapshot(connection_string):
         cursor_row = conn.execute(
             "SELECT StateValue FROM dbo.KPP_RuntimeState "
             "WHERE StateKey='LAST_RFID_ID_V3'").fetchone()
-        event_id = conn.execute(
-            "SELECT ISNULL(MAX(EventId),0) FROM dbo.KPP_ReelEvents").fetchone()[0]
+        event = conn.execute(
+            "SELECT TOP(1) EventId,RfidMaxRawId,VideoMatched,WarehouseId,FinalDirection "
+            "FROM dbo.KPP_ReelEvents WHERE IsReel=1 ORDER BY EventId DESC").fetchone()
+        event_id = int(event[0]) if event else 0
+        reel = ({"event_id":event_id,
+                 "rfid_max_raw_id":int(event[1]) if event[1] is not None else None,
+                 "video_matched":bool(event[2]),
+                 "warehouse_linked":event[3] is not None,
+                 "direction_present":event[4] not in (None,"","UNKNOWN")}
+                if event else None)
         if lease is None or controller is None or cursor_row is None:
             raise ValueError("missing_required_sql_state")
         return {"owner": lease[0], "epoch": int(lease[1]), "lease_valid":bool(lease[2]),
                 "controller":controller[0], "controller_valid":bool(controller[1]),
                 "rfid_max_id":int(source_id), "aggregator_cursor":int(cursor_row[0]),
-                "event_max_id":int(event_id)}
+                "event_max_id":event_id, "recent_reel":reel}
     finally:
         conn.close()
 
 
-def web_snapshot(node_url, env):
+def web_snapshot(node_url, env, reel_id=None):
     parsed = urllib.parse.urlparse(node_url)
     if parsed.scheme != "http" or not parsed.hostname:
         raise ValueError("invalid_configured_node_url")
@@ -120,7 +128,17 @@ def web_snapshot(node_url, env):
     total = events.get("total")
     if type(total) is not int or total < 0 or not isinstance(events.get("items"), list):
         raise ValueError("web_events_unavailable")
+    detail = None
+    if type(reel_id) is int and reel_id > 0:
+        # Same concrete reel event visible through Web, not merely an increase
+        # in unrelated global counts. Do not export sensitive event fields.
+        detail = get("/api/event/" + str(reel_id))
+    exact_id = (int(detail.get("EventId", -1)) if isinstance(detail,dict)
+                and str(detail.get("EventId","")).isdigit() else None)
     return {"health_http_ok": True, "events_http_ok": True, "events_total": total,
+            "exact_event_id":exact_id,
+            "event_rfid_raw_id":(int(detail["RfidMaxRawId"]) if isinstance(detail,dict)
+                and detail.get("RfidMaxRawId") is not None else None),
             "health_status": health.get("status") if health.get("status") in {"OK","WARN","WARNING","DEGRADED","ERROR"} else "unknown"}
 
 
@@ -133,13 +151,23 @@ def compare_snapshots(baseline, current):
                   if type(new_web.get("events_total")) is int
                   and type(old_web.get("events_total")) is int else None)
     source_to_aggregator = source_growth > 0 and new["aggregator_cursor"] >= new["rfid_max_id"]
-    event_to_web = event_growth > 0 and web_growth is not None and web_growth > 0
+    reel = new.get("recent_reel") or {}
+    # A new RFID read must belong to this *same* reel event and be visible
+    # under its exact EventId on Web. This is stronger than two totals rising.
+    correlated = (event_growth > 0 and type(reel.get("rfid_max_raw_id")) is int
+                  and reel["rfid_max_raw_id"] > old["rfid_max_id"]
+                  and new_web.get("exact_event_id") == new["event_max_id"]
+                  and new_web.get("event_rfid_raw_id") == reel["rfid_max_raw_id"])
+    event_to_web = bool(correlated and web_growth is not None and web_growth > 0)
     return {"rfid_new_rows": max(0, source_growth),
             "aggregator_cursor_caught_up": bool(source_to_aggregator),
             "new_business_events": max(0, event_growth),
             "web_event_count_growth": web_growth,
             "rfid_sql_aggregator_observed": bool(source_to_aggregator),
             "event_web_progress_observed": bool(event_to_web),
+            "last_reel_video_matched": reel.get("video_matched"),
+            "last_reel_warehouse_linked": reel.get("warehouse_linked"),
+            "last_reel_direction_present": reel.get("direction_present"),
             "full_identity_direction_video_warehouse_proof": "not_measured",
             "no_events_is_not_install_failure": True}
 
@@ -164,7 +192,8 @@ def collect(cfg, env, release, request=json_request, sql_reader=sql_snapshot, we
     if gate["owner"] is not None:
         node = next(n for n in cfg["nodes"] if n["id"] == gate["owner"])
         try:
-            outcome["web"] = web_reader(node["url"],env)
+            reel_id = outcome["sql"]["event_max_id"] if outcome["sql"] else None
+            outcome["web"] = web_reader(node["url"],env,reel_id)
         except Exception as exc:
             outcome["checks"].append("web_" + type(exc).__name__)
     outcome["endpoints_ready"] = bool(gate["passed"] and outcome["sql"] and outcome["web"]
