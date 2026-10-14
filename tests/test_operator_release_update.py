@@ -44,13 +44,13 @@ class OperatorUpdateTests(unittest.TestCase):
         import psutil
         self.cfg["node_id"] = "physical"
         marker = self.state / "guardian.lock"
-        marker.write_text("pid=12345\\n", encoding="ascii")
+        marker.write_text("pid=12345\n", encoding="ascii")
         agent = Mock()
         agent.pid = 12345
         agent.exe.return_value = self.cfg["python"]
         agent.cmdline.return_value = [self.cfg["python"], "-m", "guardian",
                                       "--config", str(self.args.config), "serve"]
-        with patch.object(psutil, "Process", return_value=agent), \\
+        with patch.object(psutil, "Process", return_value=agent), \
                 patch.object(update, "run", return_value="Ready") as run:
             self.assertTrue(update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config))
         agent.terminate.assert_called_once_with()
@@ -58,7 +58,7 @@ class OperatorUpdateTests(unittest.TestCase):
         run.assert_called_once()
 
         agent.reset_mock()
-        with patch.object(psutil, "Process", return_value=agent), \\
+        with patch.object(psutil, "Process", return_value=agent), \
                 patch.object(update, "run", return_value="Running"):
             with self.assertRaisesRegex(RuntimeError, "ScheduledTaskNotStopped"):
                 update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
@@ -68,7 +68,7 @@ class OperatorUpdateTests(unittest.TestCase):
     def test_orphan_shutdown_never_kills_wrong_process(self):
         import psutil
         self.cfg["node_id"] = "physical"
-        (self.state / "guardian.lock").write_text("pid=12345\\n", encoding="ascii")
+        (self.state / "guardian.lock").write_text("pid=12345\n", encoding="ascii")
         agent = Mock()
         agent.pid = 12345
         agent.exe.return_value = self.cfg["python"]
@@ -80,7 +80,7 @@ class OperatorUpdateTests(unittest.TestCase):
             with self.subTest(line=line):
                 agent.reset_mock()
                 agent.cmdline.return_value = line
-                with patch.object(psutil, "Process", return_value=agent), \\
+                with patch.object(psutil, "Process", return_value=agent), \
                         patch.object(update, "run") as run:
                     with self.assertRaisesRegex(RuntimeError, "GuardianLockOwner"):
                         update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
