@@ -212,7 +212,8 @@ def check_panel_query(token, item, timeout):
     return row
 
 def audit(token, timeout=10, max_queries=130):
-    findings, report = [], {"generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    findings = []
+    report = {"generated_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
                             "scope": "MOSITLAB wallboard + Perimetr; read-only",
                             "dashboards": [], "sources": [], "projects": {},
                             "playlist": {}, "plugins": {}, "queries": [],
