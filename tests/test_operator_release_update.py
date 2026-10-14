@@ -225,6 +225,9 @@ class OperatorUpdateTests(unittest.TestCase):
 
     def test_pinned_passive_install_sets_exact_release_and_preserves_pending(self):
         self.args.pin_release = True
+        manifest = self.candidate/MANIFEST
+        manifest.parent.mkdir(parents=True,exist_ok=True)
+        manifest.write_text(json.dumps({"capabilities":["operator-pinned-release"]}),encoding="utf-8")
         requests = []
         def request(url, token, **kwargs):
             requests.append(url)
@@ -245,6 +248,15 @@ class OperatorUpdateTests(unittest.TestCase):
         self.assertEqual(self.release, record["operator_pinned_release"])
         self.assertEqual(self.release, record["current"]["sha"])
         self.assertTrue(record["pending"])  # Pin is not a passed trial.
+
+    def test_legacy_candidate_pin_refused_before_native_stop(self):
+        self.args.pin_release = True
+        with patch.object(update, "check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"PinnedReleaseCapabilityRequired"):
+                update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called()
+        self.assertFalse((self.state/"operator-release-install.json").exists())
 
     def test_first_replica_release_cannot_start_against_two_legacy_nodes(self):
         self.rows["perimetr"]["release_sha"] = self.old
