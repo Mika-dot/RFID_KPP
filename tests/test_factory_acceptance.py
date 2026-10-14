@@ -106,10 +106,18 @@ class FactoryAcceptanceTests(unittest.TestCase):
 
     def test_new_reads_not_caught_up_not_accepted(self):
         before={"sql":dict(self.sql),"web":dict(self.web)}
-        self.sql.update(rfid_max_id=45,aggregator_cursor=42,event_max_id=10)
+        self.sql.update(rfid_max_id=45,aggregator_cursor=40,event_max_id=10)
         result=compare_snapshots(before,self.collect())
         self.assertFalse(result["rfid_sql_aggregator_observed"])
         self.assertFalse(result["event_web_progress_observed"])
+
+    def test_partial_aggregator_progress_counts_even_with_live_backlog(self):
+        before={"sql":dict(self.sql),"web":dict(self.web)}
+        self.sql.update(rfid_max_id=45,aggregator_cursor=42)
+        result=compare_snapshots(before,self.collect())
+        self.assertTrue(result["rfid_sql_aggregator_observed"])
+        self.assertFalse(result["aggregator_cursor_caught_up"])
+        self.assertEqual(3,result["aggregator_backlog_estimate"])
 
     def test_credentials_and_raw_records_not_emitted(self):
         data=json.dumps(self.collect())
