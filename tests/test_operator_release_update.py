@@ -40,52 +40,65 @@ class OperatorUpdateTests(unittest.TestCase):
                     self.fail("runtime mutation with a busy Guardian")
 
     @unittest.skipUnless(os.name == "nt", "Windows Task Scheduler cleanup only")
-    def test_verified_orphan_shutdown_requires_stopped_task_and_exact_identity(self):
+    def test_verified_orphan_shutdown_identifies_child_without_reading_locked_file(self):
         import psutil
         self.cfg["node_id"] = "physical"
-        marker = self.state / "guardian.lock"
-        marker.write_text("pid=12345\n", encoding="ascii")
         agent = Mock()
         agent.pid = 12345
         agent.exe.return_value = self.cfg["python"]
         agent.cmdline.return_value = [self.cfg["python"], "-m", "guardian",
                                       "--config", str(self.args.config), "serve"]
-        with patch.object(psutil, "Process", return_value=agent), \
-                patch.object(update, "run", return_value="Ready") as run:
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent]),
+            patch.object(update, "run", return_value="Ready") as run
+        ):
             self.assertTrue(update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config))
         agent.terminate.assert_called_once_with()
         agent.wait.assert_called_once_with(timeout=15)
-        run.assert_called_once()
+        self.assertEqual(2, run.call_count)
 
         agent.reset_mock()
-        with patch.object(psutil, "Process", return_value=agent), \
-                patch.object(update, "run", return_value="Running"):
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent]),
+            patch.object(update, "run", return_value="Running")
+        ):
             with self.assertRaisesRegex(RuntimeError, "ScheduledTaskNotStopped"):
                 update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
         agent.terminate.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", "Windows Task Scheduler cleanup only")
-    def test_orphan_shutdown_never_kills_wrong_process(self):
+    def test_orphan_shutdown_rejects_wrong_or_ambiguous_process(self):
         import psutil
         self.cfg["node_id"] = "physical"
-        (self.state / "guardian.lock").write_text("pid=12345\n", encoding="ascii")
         agent = Mock()
         agent.pid = 12345
         agent.exe.return_value = self.cfg["python"]
-        for line in (
+        valid = [self.cfg["python"], "-m", "guardian", "--config",
+                 str(self.args.config), "serve"]
+        for command in (
             [self.cfg["python"], "-m", "guardian", "--config", str(self.args.config), "doctor"],
-            [self.cfg["python"], "-m", "guardian", "--config", "C:\\another.json", "serve"],
-            [self.cfg["python"], "-u", "D:\\other-service.py"]
+            [self.cfg["python"], "-m", "guardian", "--config", "C:/another.json", "serve"],
+            [self.cfg["python"], "-u", "D:/other-service.py"]
         ):
-            with self.subTest(line=line):
+            with self.subTest(command=command):
                 agent.reset_mock()
-                agent.cmdline.return_value = line
-                with patch.object(psutil, "Process", return_value=agent), \
-                        patch.object(update, "run") as run:
-                    with self.assertRaisesRegex(RuntimeError, "GuardianLockOwner"):
+                agent.cmdline.return_value = command
+                with (
+                    patch.object(psutil, "process_iter", return_value=[agent]),
+                    patch.object(update, "run", return_value="Ready")
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "WithoutVerifiedGuardian"):
                         update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
                 agent.terminate.assert_not_called()
-                run.assert_not_called()
+        agent.reset_mock()
+        agent.cmdline.return_value = valid
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent, agent]),
+            patch.object(update, "run", return_value="Ready")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "MultipleGuardianProcesses"):
+                update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
+        agent.terminate.assert_not_called()
 
     def test_ambiguous_native_stop_retains_journal_when_restoration_fails(self):
         with patch.object(update, "check_prepared", return_value=(self.folder, self.receipt)), \
