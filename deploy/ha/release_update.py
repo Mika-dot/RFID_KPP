@@ -298,6 +298,16 @@ def recover(args, cfg, env):
 def apply(args, cfg, env):
     from guardian.processes import Processes
     folder, receipt = check_prepared(args,cfg)
+    if getattr(args, "pin_release", False):
+        # A legacy Guardian cannot honor a pin merely by reading a new field.
+        # This check happens before native stop or journal creation.
+        try:
+            contract = json.loads((Path(receipt["root"]) / MANIFEST).read_text(encoding="utf-8"))
+            supported = "operator-pinned-release" in contract.get("capabilities", [])
+        except (OSError, UnicodeError, ValueError, TypeError):
+            supported = False
+        if not supported:
+            raise RuntimeError("PinnedReleaseCapabilityRequired")
     token, own = env["PERIMETER_HA_TOKEN"], cfg["node_id"]
     recovery = getattr(args, "recover_reserve", False)
     hold = getattr(args, "hold_maintenance", False)
