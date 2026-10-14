@@ -175,9 +175,21 @@ def compare_snapshots(baseline, current):
 def collect(cfg, env, release, request=json_request, sql_reader=sql_snapshot, web_reader=web_snapshot):
     cluster = diagnose(cfg["nodes"], env["PERIMETER_HA_TOKEN"], request)
     gate = check_cluster(cluster, release)
+    mirrors = {name: row.get("metadata_mirror", {})
+               for name, row in cluster["nodes"].items()}
+    mirror_warnings = [name for name, mirror in mirrors.items()
+                       if mirror.get("enabled") is not True
+                       or mirror.get("reported_error") is True
+                       or mirror.get("blocked_stream_count") not in (0,)]
     outcome = {"read_only":True, "kind":KIND, "release":release,
                "observed_at_utc":datetime.now(timezone.utc).isoformat(),
                "cluster":cluster, "deployment":gate,
+               "redundancy":{"replication_configured":all(
+                    row.get("replication_enabled") and row.get("fallback_enabled")
+                    for row in cluster["nodes"].values()),
+                    "metadata_mirror_warnings":mirror_warnings,
+                    "faulted_passive":gate["faulted_passive"],
+                    "actual_failover_test":"not_performed"},
                "sql":None, "web":None, "checks":[]}
     try:
         outcome["sql"] = sql_reader(env["PERIMETER_HA_SQL"])
