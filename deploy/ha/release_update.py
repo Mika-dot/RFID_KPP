@@ -124,12 +124,66 @@ def native(action):
         run(["systemctl", action, "perimeter-guardian.service"], 40)
 
 
+def reap_verified_windows_guardian_orphan(cfg, config_path):
+    """Stop only the exact locked Guardian child after its task is stopped.
+
+    Task Scheduler may terminate run-windows.ps1 while its spawned Python
+    child survives, still holding guardian.lock. Never trust a bare PID:
+    verify the private lock marker, process executable, module, exact config,
+    and stopped task before terminating; caller reaps identity-bound workers
+    only after acquiring the lock.
+    """
+    if os.name != "nt" or cfg.get("node_id") != "physical":
+        return False
+    import psutil
+    marker = Path(cfg["state_dir"]) / "guardian.lock"
+    try:
+        value = marker.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return False
+    match = re.fullmatch(r"pid=([1-9][0-9]*)", value)
+    if not match:
+        return False
+    try:
+        process = psutil.Process(int(match.group(1)))
+        cmd = process.cmdline()
+        executable = process.exe()
+    except psutil.NoSuchProcess:
+        return False
+    if (os.path.normcase(os.path.abspath(executable))
+            != os.path.normcase(os.path.abspath(cfg["python"]))):
+        raise RuntimeError("GuardianLockOwnerInterpreterMismatch")
+    if not ("-m" in cmd and cmd.index("-m") + 1 < len(cmd)
+            and cmd[cmd.index("-m") + 1] == "guardian"
+            and "--config" in cmd and cmd.index("--config") + 1 < len(cmd)
+            and "serve" in cmd):
+        raise RuntimeError("GuardianLockOwnerCommandMismatch")
+    actual_config = cmd[cmd.index("--config") + 1]
+    if os.path.normcase(os.path.abspath(actual_config)) != os.path.normcase(os.path.abspath(str(config_path))):
+        raise RuntimeError("GuardianLockOwnerConfigMismatch")
+    task = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        "(Get-ScheduledTask -TaskName 'PerimeterGuardian' -ErrorAction Stop).State.ToString()"], 20)
+    if task != "Ready":
+        raise RuntimeError("GuardianScheduledTaskNotStopped:" + task)
+    try:
+        # This is the checked, now-orphaned guardian itself; not a reader,
+        # worker, arbitrary python process or SQL lease owner override.
+        process.terminate()
+        process.wait(timeout=15)
+    except psutil.NoSuchProcess:
+        pass
+    print("Stopped verified orphaned Windows Guardian: PID " + str(process.pid), file=sys.stderr)
+    return True
+
+
 @contextmanager
-def stopped_guardian_lock(state, timeout=90):
+def stopped_guardian_lock(state, timeout=90, cfg=None, config_path=None):
     """Keep the lock while mutating runtime; native stop can return before exit."""
     from common.single_instance import SingleInstanceError, SingleInstanceLock
     path = str(Path(state) / "guardian.lock")
     deadline = None
+    first_contention = None
+    orphan_checked = False
     while True:
         try:
             lock = SingleInstanceLock(path)
@@ -138,6 +192,14 @@ def stopped_guardian_lock(state, timeout=90):
             now = time.monotonic()
             if deadline is None:
                 deadline = now + timeout
+                first_contention = now
+            # The scheduled task may have exited without its Python child.
+            # Never terminate anything without identifying the lock owner and
+            # independently proving that Task Scheduler stopped the supervisor.
+            if (not orphan_checked and cfg is not None and config_path is not None
+                    and os.name == "nt" and now - first_contention >= 5):
+                orphan_checked = True
+                reap_verified_windows_guardian_orphan(cfg, config_path)
             if now >= deadline:
                 raise RuntimeError("GuardianShutdownTimeout:guardian.lock; installation journal retained if recovery cannot stop Guardian") from None
             time.sleep(min(1, deadline - now))
@@ -296,7 +358,7 @@ def restore(args, rollback):
     cfg = rollback["config"]
     state = Path(cfg["state_dir"])
     native("stop")
-    with stopped_guardian_lock(state):
+    with stopped_guardian_lock(state, cfg=cfg, config_path=args.config):
         Processes(cfg).reap_orphans()
         write_private(args.config, cfg, state)
         write_private(state / "release.json", rollback["record"], state)
@@ -373,7 +435,7 @@ def apply(args, cfg, env):
         stopped = True
         native("stop")
         # The stable launcher must be stopped; the lock rules out another Guardian.
-        with stopped_guardian_lock(state):
+        with stopped_guardian_lock(state, cfg=cfg, config_path=args.config):
             Processes(cfg).reap_orphans()
             write_private(maintenance,{"enabled":True},state)
             if own == owner:
