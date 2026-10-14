@@ -28,7 +28,7 @@ PLAYLIST = "mositlab-perimeter-wallboard"
 PLAYLIST_ROUTE = "/apis/playlist.grafana.app/v1/namespaces/default/playlists/" + PLAYLIST
 PANEL_PLUGIN = "volkovlabs-echarts-panel"
 LOCAL_ROUTES = (
-    "/projects", "/summary", "/attention",
+    "/projects", "/attention",
     "/perimeter-ha/summary", "/perimeter-ha/nodes",
     "/perimeter-ha/diagram", "/perimeter-ha/queues",
     "/perimeter-ha/recent", "/perimeter-ha/status",
