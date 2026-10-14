@@ -162,8 +162,16 @@ def reap_verified_windows_guardian_orphan(cfg, config_path):
         except (psutil.NoSuchProcess, psutil.ZombieProcess):
             continue
         except psutil.AccessDenied:
-            # Do not kill anything if any likely Guardian cannot be inspected.
-            raise RuntimeError("GuardianProcessInspectionDenied") from None
+            # Protected Windows system processes are normally unreadable and
+            # unrelated. Refuse an unreadable Python process, but do not let
+            # PID 4/System prevent recovery of an otherwise verified orphan.
+            try:
+                executable_name = process.name().lower()
+            except psutil.Error:
+                raise RuntimeError("GuardianProcessInspectionDenied") from None
+            if executable_name in {"python.exe", "pythonw.exe", "py.exe"}:
+                raise RuntimeError("GuardianProcessInspectionDenied") from None
+            continue
 
     if not matches:
         raise RuntimeError("GuardianLockHeldWithoutVerifiedGuardian")
