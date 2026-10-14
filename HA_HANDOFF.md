@@ -1,3 +1,5 @@
+> **АКТУАЛЬНАЯ ПЕРЕДАЧА 14.10.2026:** [текущие факты установки Gateway/Grafana, настройки/IP и нерешённый failover](deploy/ha/HANDOFF_2026-10-14_LIVE_GATEWAY_GRAFANA.md). Закреплённый runtime `7fc779e406c250b69b5fa34c6cab0e0d1d3bd5a6` не менять. Исторические выводы ниже не являются текущим статусом.
+
 # RFID_KPP / «Периметр»: передача работ по HA другой нейронке
 
 > 07.10.2026: подготовлен [кандидат расширения отказоустойчивости](deploy/ha/RESILIENCE_CANDIDATE_2026-10-07.md): replica queues, Web gateway, release qualification и Behavior Observer. Ветка `feature/ha-resilience-2026-10-07`; установка на оборудование ещё не выполнена.
