@@ -1,3 +1,5 @@
+**АКТУАЛЬНАЯ ПЕРЕДАЧА 14.10.2026:** [фактический deployment на ub22, Grafana playlist, IP/порты и последнее нестабильное состояние трёх узлов](HANDOFF_2026-10-14_LIVE_GATEWAY_GRAFANA.md). Pinned runtime `7fc779e406c250b69b5fa34c6cab0e0d1d3bd5a6`; не запускать старый rollout. Задача на продолжение — диагностика `faulted=true` и `update.pending=true` без переустановки.
+
 # Резервирование «Периметра»
 
 **Кандидат от 09.10.2026:** [обновление Comparator, Perimetr, физики и ub22](READY_TO_INSTALL_2026-10-09.md).
