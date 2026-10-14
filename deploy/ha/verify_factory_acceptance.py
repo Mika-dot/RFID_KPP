@@ -40,6 +40,8 @@ def check_cluster(report, release):
         reasons.append("release_mismatch")
     if not report["all_nodes_pinned"]:
         reasons.append("operator_pin_not_verified")
+    if any(n.get("qualification_passed") is not True for n in nodes.values()):
+        reasons.append("qualification_not_verified")
     if not report["epoch_consistent"]:
         reasons.append("epoch_inconsistent")
     if any(not n.get("replication_enabled") or not n.get("fallback_enabled") for n in nodes.values()):
@@ -204,8 +206,18 @@ def main(argv=None):
             raise ValueError("baseline_does_not_match")
         if result["sql"]:
             result["business_delta"] = compare_snapshots(baseline, result)
+    if a.check and result.get("business_delta"):
+        delta = result["business_delta"]
+        result["business_observed"] = bool(
+            delta["rfid_sql_aggregator_observed"] and delta["event_web_progress_observed"])
+        result["evidence_status"] = ("progress_observed_not_identity_verified" if
+                                     result["business_observed"] else "business_progress_not_observed")
     print(json.dumps(result,ensure_ascii=False,indent=2))
-    return 0 if result["endpoints_ready"] else 2
+    if not result["endpoints_ready"]:
+        return 2
+    if a.check and not result.get("business_observed"):
+        return 3  # Unproven traffic, not a release rollback or forced fault.
+    return 0
 
 
 if __name__ == "__main__":
