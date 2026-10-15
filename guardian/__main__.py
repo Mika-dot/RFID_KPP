@@ -90,7 +90,7 @@ def main(argv=None):
         from guardian.repair import LmRepair
         functions += [Controller(cfg, store, telemetry, stop).run,
                       LmRepair(cfg, store, telemetry, stop).run]
-    functions.append(node.replication_loop)
+    functions += [node.bus_loop, node.replication_loop]
     threads = [threading.Thread(target=f, daemon=True) for f in functions]
     for thread in threads:
         thread.start()

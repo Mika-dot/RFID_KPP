@@ -268,7 +268,17 @@ def prepare(args, cfg, env):
     record_path = Path(cfg["state_dir"]) / "release.json"
     record = json.loads(record_path.read_text(encoding="utf-8-sig"))
     if record.get("pending"):
-        raise RuntimeError("ExistingTrialMustFinish")
+        current = record.get("current", {}).get("sha")
+        qualification = record.get("qualification", {})
+        # A pinned broken trial cannot finish by repeatedly reinstalling itself.
+        # Permit qualification of its replacement only by explicit operator
+        # request. Do not clear pending, confirm a trial, or touch native services.
+        if not (getattr(args, "replace_pinned_trial", False)
+                and re.fullmatch(r"[0-9a-f]{40}", str(current))
+                and record.get("operator_pinned_release") == current
+                and qualification.get("status") == "passed"
+                and qualification.get("sha") == current):
+            raise RuntimeError("ExistingTrialMustFinishOrExplicitPinnedReplacementRequired")
     source = Path(record["current"]["root"])
     if git(cfg, "remote", "get-url", "origin").removesuffix(".git") != "https://github.com/Mika-dot/RFID_KPP":
         raise RuntimeError("UnexpectedSourceRepository")
@@ -300,8 +310,14 @@ def prepare(args, cfg, env):
         "tree":git(cfg,"-C",str(candidate),"rev-parse","HEAD^{tree}"),
         "qualified":True, "prepared_at":time.time(), "installed":False}
     write_private(folder / "receipt.json", receipt, args.config)
+    bootstrap = Path(cfg["update_source"]) / "guardian/boot.py"
+    try:
+        pin_guard = "operator_pinned_release" in bootstrap.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        pin_guard = False
     return {"prepared":True, "release":args.release, "node":cfg["node_id"],
-            "physical_acceptance":"not_measured", "services_changed":False}
+            "physical_acceptance":"not_measured", "services_changed":False,
+            "source_bootstrap_pin_guard_present":pin_guard}
 
 
 def check_prepared(args, cfg):
@@ -608,6 +624,8 @@ def main(argv=None):
     p.add_argument("--release",required=True);p.add_argument("--handoff",action="store_true")
     p.add_argument("--pin-release", action="store_true",
                    help="Keep the qualified exact release installed on runtime faults; do not bypass fencing or preflight")
+    p.add_argument("--replace-pinned-trial", action="store_true",
+                   help="Prepare a replacement for a qualified operator-pinned pending trial without confirming it")
     p.add_argument("--recover-reserve", action="store_true",
                    help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
     p.add_argument("--hold-maintenance", action="store_true",
@@ -617,7 +635,8 @@ def main(argv=None):
     args=p.parse_args(argv)
     if ((args.hold_maintenance and not (args.apply and args.recover_reserve))
             or (args.release_reserves and (args.handoff or args.recover_reserve))
-            or (args.pin_release and not args.apply)):
+            or (args.pin_release and not args.apply)
+            or (args.replace_pinned_trial and not args.prepare)):
 
         raise ValueError("InvalidHeldReserveMode")
     if not re.fullmatch(r"[0-9a-f]{40}",args.release):

@@ -76,6 +76,7 @@ class Node:
             self.mirror_status = {"enabled": True, **self.mirror.stats()}
         self.bus_metrics = {}
         self.bus_metrics_at = 0
+        self.bus_sample_errors = {}
         from guardian.probation import BusinessProbation
         self.business_probation = BusinessProbation(cfg.get("probation_stall_sec", 120))
         if cfg.get("replication_enabled", False):
@@ -118,6 +119,7 @@ class Node:
             if isinstance(launch_counts, dict) and launch_counts:
                 result["ha_runtime_metrics"]["worker_restarts"] = sum(max(0, count - 1) for count in launch_counts.values())
             result["bus_sample_age"] = time.monotonic()-getattr(self, "bus_metrics_at", 0)
+            result["bus_sample_errors"] = dict(getattr(self, "bus_sample_errors", {}))
             counts=getattr(self.telemetry,"kind_counts",{})
             result["event_counts"] = dict(counts) if isinstance(counts,dict) else {}
             timing=getattr(getattr(self.telemetry,"recovery",None),"last",None)
@@ -231,44 +233,78 @@ class Node:
         # commit merely replays idempotent UUIDs, never skips an undelivered row.
         self.replica.save_peer_cursor(peer["id"], position, pending)
 
+    def spool_paths(self):
+        # Workers use cwd=root; the stable supervisor may use a different cwd.
+        env = dict(os.environ, **self.cfg.get("env", {}))
+        root = Path(self.cfg["root"])
+        values = {"rfid": env.get("RFID_SPOOL_PATH", "rfid_spool_v4.sqlite"),
+                  "video": env.get("RFID_VIDEO_SPOOL", "recordings/video_spool_v3.sqlite")}
+        paths = {}
+        for stream, value in values.items():
+            path = Path(value)
+            paths[stream] = (path if path.is_absolute() else root / path).resolve()
+        return paths
+
+    def sample_bus(self):
+        """Read local queues independently of SQL mirrors and peer network I/O."""
+        import sqlite3
+        from datetime import datetime
+        with self.mutation:
+            identity = (self.cfg["root"], self.processes.epoch)
+            paths = self.spool_paths()
+        sampled_at = time.monotonic()
+        metrics, errors = {}, {}
+        for stream, source in paths.items():
+            try:
+                if not source.is_file():
+                    errors[stream] = "SpoolMissing"
+                    continue
+                db = sqlite3.connect(source.as_uri()+"?mode=ro", uri=True, timeout=1)
+                try:
+                    # A slow scan is unavailable evidence, never fresh success.
+                    deadline = time.monotonic() + 2
+                    db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+                    table = "reads" if stream == "rfid" else "events"
+                    pending, oldest = db.execute("SELECT COUNT(*),MIN(created_at) FROM "+table+" WHERE state='PENDING'").fetchone()
+                    sent = db.execute("SELECT COUNT(*) FROM "+table+" WHERE state='SENT'").fetchone()[0]
+                finally:
+                    db.close()
+                metrics[stream+"_pending"] = pending
+                metrics[stream+"_sent"] = sent
+                metrics[stream+"_oldest_pending_sec"] = max(0, (datetime.now()-datetime.fromisoformat(oldest)).total_seconds()) if oldest else 0
+            except Exception as exc:
+                errors[stream] = type(exc).__name__
+        fallback = getattr(self, "fallback", None)
+        if fallback is not None:
+            try:
+                metrics.update({"fallback_" + key: value for key, value in fallback.stats().items()})
+            except Exception as exc:
+                errors["fallback"] = type(exc).__name__
+        with self.mutation:
+            if identity != (self.cfg["root"], self.processes.epoch):
+                return  # A role/release change invalidates an in-flight sample.
+            with self.lock:
+                self.bus_metrics = metrics
+                self.bus_metrics_at = sampled_at
+                self.bus_sample_errors = errors
+
+    def bus_loop(self):
+        while not self.stop.is_set():
+            self.sample_bus()
+            self.stop.wait(5)
+
     def replication_loop(self):
         from common.replicated_ingest import MAX_BODY, replay_local
         from guardian.net import json_request
         while not self.stop.is_set():
-            import sqlite3
-            from datetime import datetime
-            env = dict(os.environ, **self.cfg.get("env", {}))
-            paths = {"rfid": env.get("RFID_SPOOL_PATH", str(Path(self.cfg["root"])/"rfid_spool_v4.sqlite")),
-                     "video": env.get("RFID_VIDEO_SPOOL", str(Path(self.cfg["root"])/"recordings/video_spool_v3.sqlite"))}
-            metrics = {}
-            for stream, path in paths.items():
-                try:
-                    source = Path(path).resolve()
-                    if not source.is_file():
-                        continue
-                    db = sqlite3.connect(source.as_uri()+"?mode=ro", uri=True, timeout=1)
-                    try:
-                        table = "reads" if stream == "rfid" else "events"
-                        pending, oldest = db.execute("SELECT COUNT(*),MIN(created_at) FROM "+table+" WHERE state='PENDING'").fetchone()
-                        sent = db.execute("SELECT COUNT(*) FROM "+table+" WHERE state='SENT'").fetchone()[0]
-                    finally:
-                        db.close()
-                    metrics[stream+"_pending"] = pending
-                    metrics[stream+"_sent"] = sent
-                    metrics[stream+"_oldest_pending_sec"] = max(0, (datetime.now()-datetime.fromisoformat(oldest)).total_seconds()) if oldest else 0
-                except Exception:
-                    continue
+            paths = self.spool_paths()
             fallback = getattr(self, "fallback", None)
             if fallback is not None:
                 try:
-                    metrics.update({"fallback_" + key: value for key, value in fallback.stats().items()})
                     fallback.maintenance()
                 except Exception as exc:
                     self.telemetry.event("fallback_error", error=type(exc).__name__)
             self.sync_mirror()
-            with self.lock:
-                self.bus_metrics = metrics
-                self.bus_metrics_at = time.monotonic()
             if self.replica is not None:
                 try:
                     lease = self.store.lease()
@@ -420,10 +456,17 @@ class Node:
         healthy = owned and self.processes.alive() and len(health) == 5 and all(h["ok"] for h in health.values())
         now = time.monotonic()
         complete = True
-        if self.updates.state.get("pending") and self.updates.state.get("trial_started") and hasattr(self, "business_probation"):
-            complete = (now-getattr(self,"bus_metrics_at",0) <= 15 and all(k in self.bus_metrics for k in
+        if owned and self.processes.children and self.updates.state.get("pending") and self.updates.state.get("trial_started") and hasattr(self, "business_probation"):
+            with self.lock:
+                metrics = dict(self.bus_metrics)
+                sample_age = now-getattr(self,"bus_metrics_at",0)
+            fresh = 0 <= sample_age <= 15
+            complete = (fresh and all(k in metrics for k in
                 ("rfid_pending", "rfid_sent", "video_pending", "video_sent")))
-            problem = self.business_probation.assess(getattr(self, "bus_metrics", {}), now)
+            if not complete:
+                self.business_probation.streams.clear()
+            # Re-reading a cached sample must not advance the observed stall.
+            problem = self.business_probation.assess(metrics, now-sample_age) if fresh else None
             if not complete and time.time()-self.updates.state.get("trial_started_at",time.time()) > 240:
                 problem = "candidate_business_metrics_unavailable"
             if problem:

@@ -13,6 +13,35 @@ from guardian.release_contract import MANIFEST
 
 
 class OperatorUpdateTests(unittest.TestCase):
+    def test_preparing_pinned_trial_replacement_keeps_trial_state_and_native_services(self):
+        self.record.update(pending=True, operator_pinned_release=self.record["current"]["sha"],
+            qualification={"status":"passed", "sha":self.record["current"]["sha"]})
+        (self.state / "release.json").write_text(json.dumps(self.record))
+        before = (self.state / "release.json").read_bytes()
+        self.args.replace_pinned_trial = True
+        # Stop at the first source fetch; preparation must leave the live trial alone.
+        with patch.object(update, "git", side_effect=RuntimeError("fetch-marker")), \
+                patch.object(update, "native") as native:
+            with self.assertRaisesRegex(RuntimeError, "fetch-marker"):
+                update.prepare(self.args, self.cfg, self.env)
+        self.assertEqual(before, (self.state / "release.json").read_bytes())
+        native.assert_not_called()
+
+    def test_unpinned_or_unqualified_pending_trial_cannot_use_replacement_option(self):
+        for pin, qualified in ((False, True), (True, False)):
+            with self.subTest(pin=pin, qualified=qualified):
+                self.record.update(pending=True,
+                    operator_pinned_release=self.record["current"]["sha"] if pin else None,
+                    qualification={"status":"passed" if qualified else "failed",
+                                   "sha":self.record["current"]["sha"]})
+                (self.state / "release.json").write_text(json.dumps(self.record))
+                self.args.replace_pinned_trial = True
+                with patch.object(update, "git") as git, patch.object(update, "native") as native:
+                    with self.assertRaisesRegex(RuntimeError, "ExistingTrialMustFinish"):
+                        update.prepare(self.args, self.cfg, self.env)
+                git.assert_not_called()
+                native.assert_not_called()
+
     def test_shutdown_wait_retries_and_keeps_acquired_lock_through_mutation(self):
         from common.single_instance import SingleInstanceError
         held = Mock()
