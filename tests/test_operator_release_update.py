@@ -496,6 +496,93 @@ class OperatorUpdateTests(unittest.TestCase):
         self.assertEqual("not_yet_confirmed",result["cluster_health"])
         self.assertTrue(result["reserves_released"])
 
+    def test_physical_comparator_pair_releases_while_old_perimetr_remains_owner(self):
+        self.held_receivers()
+        self.rows["perimetr"].update(release_sha=self.old, active=True, healthy=True,
+                                    operator_maintenance=False)
+        self.rows["physical"] = dict(self.rows["comparator"], node="physical")
+        posts = []
+        result = update.release_reserves(self.args, self.cfg, self.env, self.receiver_request(posts))
+        self.assertEqual(["physical", "comparator"], posts)
+        self.assertEqual(["physical", "comparator"], result["nodes"])
+        self.assertEqual(self.old, self.rows["perimetr"]["release_sha"])
+
+    def test_passive_physical_can_be_installed_held_without_updating_active_linux_first(self):
+        self.cfg["node_id"] = "physical"
+        self.args.hold_maintenance = True
+        self.rows["physical"].update(active=False, healthy=False)
+        self.rows["perimetr"].update(active=True, healthy=True, release_sha=self.old)
+        self.rows["comparator"]["release_sha"] = self.old
+        def request(url, token, **kwargs):
+            if url.endswith("/maintenance"):
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="physical",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"perimetr")), \
+                patch.object(update,"native"),patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"):
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result["maintenance_held"])
+        self.assertFalse(result["workers_started"])
+
+    def test_active_node_cannot_use_held_install_even_when_handoff_was_omitted(self):
+        self.args.hold_maintenance = True
+        self.cfg["node_id"] = "physical"
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"HoldRequiresPassiveNode"):
+                update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called()
+
+    def test_active_perimetr_requires_both_updated_reserves(self):
+        self.rows["comparator"]["release_sha"] = self.release
+        with self.assertRaisesRegex(RuntimeError,"QualifiedReserveRequired:physical"):
+            update.require_reserves(self.rows, "perimetr", self.release)
+
+    def test_held_install_journals_and_rebinds_supervisor_before_native_start(self):
+        from deploy.ha import supervisor_binding as binding
+        self.args.refresh_bootstrap = self.args.hold_maintenance = self.args.recover_reserve = True
+        saved = {"kind":"systemd-dropin", "previous":"old binding"}
+        def request(url, token, **kwargs):
+            if url.endswith('/maintenance'):
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="comparator",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native") as native, patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"), patch.object(binding,"capture",return_value=saved), \
+                patch.object(binding,"install") as install:
+            def installed(*args):
+                journal=json.loads((self.state/'operator-release-install.json').read_text())
+                self.assertEqual(saved,journal['supervisor_binding'])
+                self.assertEqual([('stop',)],[call.args for call in native.call_args_list])
+                self.assertEqual(self.release,json.loads((self.state/'release.json').read_text())['current']['sha'])
+            install.side_effect=installed
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result['maintenance_held'])
+        install.assert_called_once()
+
+    def test_failed_bootstrap_rebind_restores_original_binding_and_release(self):
+        from deploy.ha import supervisor_binding as binding
+        self.args.refresh_bootstrap = True
+        saved = {"kind":"systemd-dropin", "previous":"old binding"}
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native"), patch.object(update,"json_request",return_value=(200,{})), \
+                patch("guardian.processes.Processes"), patch.object(binding,"capture",return_value=saved), \
+                patch.object(binding,"install",side_effect=RuntimeError('rebind failed')), \
+                patch.object(binding,"restore") as restore:
+            with self.assertRaisesRegex(RuntimeError,'rebind failed'):
+                update.apply(self.args,self.cfg,self.env)
+        self.assertEqual(saved,restore.call_args.args[0])
+        self.assertEqual(self.record,json.loads((self.state/'release.json').read_text()))
+        self.assertFalse((self.state/'operator-release-install.json').exists())
+
     def test_bad_second_receiver_prevents_releasing_first(self):
         for problem in ("legacy", "replication", "preflight", "active", "endpoint", "stale_probe", "active_probe", "sdk"):
             with self.subTest(problem=problem):

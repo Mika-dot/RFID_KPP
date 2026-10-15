@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -28,7 +29,7 @@ class BusSamplingTests(unittest.TestCase):
 
     def spool(self, path, table, pending=2, sent=1):
         path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute(f"CREATE TABLE {table}(state TEXT, created_at TEXT)")
             db.executemany(f"INSERT INTO {table} VALUES(?,?)",
                 [(state, "2026-10-15T06:00:00")
@@ -77,7 +78,7 @@ class BusSamplingTests(unittest.TestCase):
                 self.assertTrue(entered.wait(2))
                 node.sample_bus()
                 self.assertEqual(node.bus_metrics["rfid_sent"], 1)
-                with sqlite3.connect(root / "rfid_spool_v4.sqlite") as db:
+                with closing(sqlite3.connect(root / "rfid_spool_v4.sqlite")) as db, db:
                     db.execute("UPDATE reads SET state='SENT' WHERE state='PENDING'")
                 node.sample_bus()
                 self.assertEqual(node.bus_metrics["rfid_pending"], 0)

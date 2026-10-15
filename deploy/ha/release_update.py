@@ -104,7 +104,7 @@ def inventory(cfg, token, request=json_request, allow_degraded=False):
 
 
 def require_reserves(rows, own, release):
-    for key in ("perimetr", "comparator"):
+    for key in rows:
         if key == own:
             continue
         row = rows[key]
@@ -396,6 +396,9 @@ def restore(args, rollback):
         write_private(args.config, cfg, state)
         write_private(state / "release.json", rollback["record"], state)
         write_private(state / "operator-maintenance.json", rollback["maintenance"], state)
+        if rollback.get("supervisor_binding") is not None:
+            from deploy.ha import supervisor_binding
+            supervisor_binding.restore(rollback["supervisor_binding"], args, run)
     native("start")
 
 
@@ -431,9 +434,11 @@ def apply(args, cfg, env):
     token, own = env["PERIMETER_HA_TOKEN"], cfg["node_id"]
     recovery = getattr(args, "recover_reserve", False)
     hold = getattr(args, "hold_maintenance", False)
-    if hold and (not recovery or args.handoff or own not in {"perimetr", "comparator"}):
+    if hold and args.handoff:
         raise RuntimeError("HoldRequiresPassiveReserveRecovery")
     rows, owner = inventory(cfg,token, allow_degraded=recovery)
+    if hold and own == owner:
+        raise RuntimeError("HoldRequiresPassiveNode")
     if recovery and (own not in {"perimetr", "comparator"} or own == owner or args.handoff):
         raise RuntimeError("RecoveryRequiresPassiveLinuxReserve")
     if not hold and not any(key != own and row.get("release_sha") == args.release
@@ -441,7 +446,7 @@ def apply(args, cfg, env):
         raise RuntimeError("SecondReplicaReceiverRequiredUseHeldReserveStage")
     if rows[own].get("release_sha") != receipt["base"]["sha"]:
         raise RuntimeError("InstalledReleaseChanged")
-    if own == "physical" or own == owner:
+    if own == owner or (own == "physical" and not hold):
         require_reserves(rows,own,args.release)
     if own == owner and not args.handoff:
         raise RuntimeError("ActiveNodeRequiresHandoffMode")
@@ -455,6 +460,9 @@ def apply(args, cfg, env):
     rollback = {"node":own,"release":args.release,"config":cfg,"record":old_record,
         "maintenance":old_maintenance,"installed":False,"config_path":str(args.config.resolve()),
         "old_config_digest":digest(args.config),"candidate_config_digest":digest(folder / "node.json")}
+    if getattr(args, "refresh_bootstrap", False):
+        from deploy.ha import supervisor_binding
+        rollback["supervisor_binding"] = supervisor_binding.capture(run)
     write_private(journal_path,rollback,args.config)
     stopped = False
     try:
@@ -486,6 +494,8 @@ def apply(args, cfg, env):
             record["qualification"] = {"status":"passed","sha":args.release,"mode":"operator_exact_release"}
             write_private(args.config,new_cfg,state)
             write_private(record_path,record,state)
+            if rollback.get("supervisor_binding") is not None:
+                supervisor_binding.install(rollback["supervisor_binding"], args, new_cfg, receipt["root"], run)
         native("start")
         url=next(n["url"] for n in cfg["nodes"] if n["id"] == own).rstrip("/")
         deadline=time.monotonic()+180
@@ -578,7 +588,7 @@ def apply(args, cfg, env):
 
 
 def release_reserves(args, cfg, env, request=json_request):
-    """Release held reserves only after two exact-release receivers are live.
+    """Release held nodes only after two exact-release receivers are live.
 
     Retrying skips an already released node and never resets its verification.
     Promotion/SQL writes remain exclusively in the ordinary HA controller.
@@ -587,9 +597,9 @@ def release_reserves(args, cfg, env, request=json_request):
         raise RuntimeError("ReserveReleaseRequiresLinuxNode")
     token = env["PERIMETER_HA_TOKEN"]
     rows, _ = inventory(cfg, token, request, allow_degraded=True)
-    peers = [node for node in cfg["nodes"] if node["id"] in {"perimetr", "comparator"}]
-    if {node["id"] for node in peers} != {"perimetr", "comparator"}:
-        raise RuntimeError("TwoLinuxReservesRequired")
+    peers = [node for node in cfg["nodes"] if rows[node["id"]].get("release_sha") == args.release]
+    if len(peers) < 2:
+        raise RuntimeError("TwoExactReplicaReceiversRequired")
     for peer in peers:
         row = rows[peer["id"]]
         if (row.get("release_sha") != args.release or row.get("replication_enabled") is not True
@@ -629,14 +639,17 @@ def main(argv=None):
     p.add_argument("--recover-reserve", action="store_true",
                    help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
     p.add_argument("--hold-maintenance", action="store_true",
-                   help="Keep a recovered reserve passive until both Linux replica receivers are installed")
+                   help="Keep a passive node held until two exact-release replica receivers are installed")
+    p.add_argument("--refresh-bootstrap", action="store_true",
+                   help="Journal and rebind the native supervisor to the qualified bootstrap, preserving the old binding for rollback")
     p.add_argument("--config",type=Path,default=Path("D:/PerimeterHA/node.json" if os.name=="nt" else "/etc/perimeter/node.json"))
     p.add_argument("--environment",type=Path,default=Path("D:/PerimeterHA/transfer-private/environment.local.json" if os.name=="nt" else "/etc/perimeter/environment"))
     args=p.parse_args(argv)
-    if ((args.hold_maintenance and not (args.apply and args.recover_reserve))
+    if ((args.hold_maintenance and not args.apply)
             or (args.release_reserves and (args.handoff or args.recover_reserve))
             or (args.pin_release and not args.apply)
-            or (args.replace_pinned_trial and not args.prepare)):
+            or (args.replace_pinned_trial and not args.prepare)
+            or (args.refresh_bootstrap and not args.apply)):
 
         raise ValueError("InvalidHeldReserveMode")
     if not re.fullmatch(r"[0-9a-f]{40}",args.release):

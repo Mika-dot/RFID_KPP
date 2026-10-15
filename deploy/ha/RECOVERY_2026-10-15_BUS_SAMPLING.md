@@ -67,12 +67,49 @@ not prove which launcher the native service/task actually executes. Inspect
 that binding before applying a pinned replacement. Updating a release alone
 does not update a supervisor that still executes an older bootstrap file.
 
-Next stage: prepare the same exact candidate on each node, inspect results,
-then apply to passive nodes before handing off Perimetr. Do not overwrite
-installed trees, delete queues, force SQL flags, or assume the old Perimetr
-runtime has the current repair/update API. The existing installer's physical
-and active-owner reserve gates must be respected or deliberately revised with
-regression evidence before executing a mixed-version rolling update.
+The reviewed rolling path is implemented in `recover_bus_rollout.py`:
+
+1. On **Comparator**, `--phase hold`: require a healthy other owner and a
+   passive local node, enter its SQL-checked maintenance endpoint, qualify,
+   then install exact code and leave workers stopped. If qualification fails,
+   restore the previous maintenance state. Retain an incomplete native recovery
+   journal instead of releasing an uncertain runtime.
+2. On **Physical**, run the same `--phase hold`. The explicitly held path may
+   stage a passive Physical without first updating active Perimetr. It does
+   not allow an active Physical to bypass handoff or start without a replica.
+3. On **Comparator**, `--phase release`: prove both Physical and Comparator
+   are exact-release replica receivers, then release their maintenance and wait
+   for independent verification. This generalizes the earlier Linux-only pair
+   and removes the mixed-version circular gate without starting a single new
+   receiver alone. Expect `PAIR_READY` before proceeding.
+4. On **Perimetr**, `--phase finish`: require both updated reserves ready,
+   qualify, perform ordinary fenced handoff if still active, and update last.
+   The already-installed case proceeds to verification without reinstalling.
+
+All phases require `--release <exact published SHA>`, execute from a clean
+separate worktree at that SHA, and hold the local operator-update lock. There
+is no force-election or SQL-flag reset. An active node refuses the held phase
+before any mutation; report that output instead of applying an ad-hoc stop.
+The old Perimetr runtime is not assumed to have the newer maintenance API.
+
+Each apply explicitly journals and refreshes the **native supervisor binding**
+to the qualified bootstrap. Linux uses a dedicated systemd drop-in; Windows
+changes only the existing task action and preserves its triggers, principal
+and settings. The old drop-in/task XML is kept in the private recovery journal
+and restored along with configuration/release on failure. No old Git checkout
+is edited. The effective binding is checked before restarting the supervisor.
+
+The final verifier requires three consecutive same-owner/epoch samples with
+all nodes exact/pinned/prepared/not-faulted, five healthy owner workers, fresh
+queue metrics and owner `pending=false`, plus independent Gateway HTTP 200.
+It prints `CORE_HA_ACCEPTED`. Mirror errors are reported separately as
+`mirrors_without_reported_errors`; that field is not a 93-day completeness
+or full SQL-backup acceptance. No timeout automatically reverts a pinned code
+version or weakens fencing. Inspect a failed phase before continuing.
+
+Do not overwrite installed trees, delete queues, force SQL flags, or treat a
+held node (`prepared=false` by design) as a failed install. Held nodes answer
+replica RPC while their five workers remain stopped.
 
 ## Limits
 
@@ -83,6 +120,13 @@ separate checkout of pre-change `4b8b54b`, with zero business replay differences
 This includes 12 new regression tests (10 sampling/probation and 2 guarded
 replacement-preparation checks). Windows, native systemd and real SQL Server
 integration are not certified by this run.
+
+The subsequent installer/rollout suite has 718 discovered tests with the same
+17 Linux-environment skips. The first GitHub Actions run of `94fda86` passed
+Linux but exposed Windows cleanup errors in two **new test fixtures** that
+left SQLite connections to temporary files open. Those fixture connections
+now close explicitly. Native Windows CI must pass for the final published
+candidate before claiming cross-platform qualification.
 
 This change repairs reproduced monitoring defects, not a certification that all
 factory failures share that cause. SQL mirror contention, controller SQL errors,
