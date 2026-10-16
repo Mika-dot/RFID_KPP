@@ -64,10 +64,11 @@ class Updates:
         """
         current = self.state.get("current", {}).get("sha")
         qualification = self.state.get("qualification") or {}
+        candidate = self.staged.get("sha") if self.staged else None
         return (self.state.get("pending") is True
                 and self.operator_pinned()
                 and qualification.get("status") == "passed"
-                and qualification.get("sha") == current)
+                and qualification.get("sha") in {current, candidate})
 
     def stage(self):
         if not self.cfg.get("auto_update", True) or not self.cfg.get("update_source"):
