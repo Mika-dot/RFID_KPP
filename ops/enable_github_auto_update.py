@@ -40,10 +40,13 @@ def main():
 
     if current != args.expected_release:
         raise RuntimeError("UnexpectedInstalledRelease")
-    if release.get("pending"):
-        raise RuntimeError("PendingTrialMustFinishFirst")
     if release.get("operator_pinned_release") != current:
         raise RuntimeError("ExpectedPinnedBaselineRequired")
+    qualification = release.get("qualification") or {}
+    if (release.get("pending") and
+            (qualification.get("status") != "passed"
+             or qualification.get("sha") != current)):
+        raise RuntimeError("PendingTrialNotQualifiedForPinnedReplacement")
     if (cfg.get("replication_enabled") is not True
             or cfg.get("fallback_enabled") is not True
             or cfg.get("auto_failback") is not False):
