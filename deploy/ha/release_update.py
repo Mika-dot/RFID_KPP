@@ -240,7 +240,7 @@ def candidate_config(cfg, env, runtime_root=None):
             overrides[key] = str((Path(runtime_root or cfg["root"]) / location).resolve())
     value = prepare_config(original, env)
     value["auto_failback"] = False  # Keep a healthy owner through reserve recovery.
-    value["auto_update"] = False  # main is changed only after this rollout is accepted.
+    value["auto_update"] = original.get("auto_update") is True  # Preserve explicit operator opt-in.
     value["env"].update(KPP_ADAPTIVE_WINDOWS_ENABLED="1", KPP_ADAPTIVE_WINDOWS_MODE="shadow")
     # Guardian itself, not only workers, needs the separately provisioned read-only sources.
     for key in ("PERIMETER_OBSERVER_SQL", "PERIMETER_OBSERVER_TASK_SQL", "KPP_TASK_CONN_STR"):
