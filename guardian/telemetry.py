@@ -15,13 +15,20 @@ class Telemetry:
         self.cfg = cfg
         self.queue = queue.Queue(maxsize=1000)
         self.events = 0
+        self.kind_counts = {}
         self.dropped = 0
         self.resource_exhausted = threading.Event()
+        from guardian.recovery import RecoveryTimings
+        try:
+            self.recovery = RecoveryTimings(Path(cfg["state_dir"])/"recovery-timings.json")
+        except (ValueError, OSError):
+            self.recovery = RecoveryTimings()
         threading.Thread(target=self._writer, daemon=True).start()
 
     def event(self, kind, **fields):
         record = dict(time=time.time(), node=self.cfg["node_id"], kind=kind, **fields)
         self.events += 1
+        self.kind_counts[kind] = self.kind_counts.get(kind,0)+1
         logging.info("HA %s %s", kind, json.dumps(fields, ensure_ascii=False))
         try:
             self.queue.put_nowait(record)
@@ -39,6 +46,8 @@ class Telemetry:
         while True:
             record = self.queue.get()
             try:
+                if record["kind"].startswith("handoff_"):
+                    self.recovery.record(record)
                 if path.exists() and path.stat().st_size > 10*1024*1024:
                     path.replace(path.with_suffix(".previous.jsonl"))
                 with path.open("a", encoding="utf-8") as f:
@@ -67,6 +76,10 @@ class Telemetry:
             "perimeter_ha_events_total": self.events,
             "perimeter_ha_audit_dropped_total": self.dropped,
         }
+        recovery = getattr(self, "recovery", None)
+        if recovery is not None and recovery.last:
+            rows["perimeter_ha_last_readiness_rto_seconds"] = self.recovery.last["readiness_rto_sec"]
+        rows["perimeter_ha_handoff_incomplete"] = int(recovery is not None and recovery.pending is not None)
         resources = status.get("resources", {})
         for key in ("open_fds", "fd_limit", "open_handles"):
             if resources.get(key) is not None:

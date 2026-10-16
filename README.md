@@ -1,6 +1,20 @@
+> **АКТУАЛЬНАЯ ПЕРЕДАЧА НА 14.10.2026:** [установленные ub22 Gateway и Grafana, IP/порты, exact pinned SHA, логи приёмки и незакрытый отказ HA](deploy/ha/HANDOFF_2026-10-14_LIVE_GATEWAY_GRAFANA.md). Последний заводской снимок: все три `faulted=true`, `active=false`, `update.pending=true`, `preflight` без ошибок; статус волатилен. Не раскатывать релиз повторно. Следующее действие — GET-only диагностика устойчивости/причины fault, а не повторная установка.
+
+> 12.10.2026, итог перепроверки: закрываются четыре замечания ревью — runtime quarantine, обновление старых складских IDs в зеркале, durable/pending-first replica recovery и аппаратный rollback по фактическому SQL epoch.651 локальный тест прошёл; native acceptance после восстановленной связи RFID ещё требует свежей заводской диагностики. [Продолжение](deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md).
+
+> 12.10.2026, заводская диагностика11:35 МСК: оба Linux установлены на `7ae0283`, проверка резервов завершилась, но RFID TCP8888 получает SYN→RST; SQL-зеркало событий блокируется (native1222). Подготовлены изоляция блокировок streams, изолированный recycle failed Wine SDK bridge и SELECT-only DMV diagnosis. [Свидетельства, исправления и продолжение](deploy/ha/TCP_RST_SQL_LOCK_RECOVERY_2026-10-12.md). 12:15 МСК пользователь сообщил о восстановлении связи RFID; свежий SDK/business/owner snapshot ещё ожидается. Physical/ub22 и недельное наблюдение ещё не приняты.
+
 # RFID КПП «Периметр» — production runbook
 
-> **Последнее подтверждение завода — 06.10.2026 18:54 МСК:** все3 узла на runtime
+> 12.10.2026: после первого apply Comparator вернулся на старый `1c793091`; RFID не готов. [Первый переход к репликации и диагностика](deploy/ha/BOOTSTRAP_REPLICA_ROLLOUT_2026-10-12.md). Нужны два held Linux receivers перед запуском workers. Установка остальных узлов и текущая готовность ещё не подтверждены.
+
+> 10.10.2026: по скриншоту физика — unhealthy ведущий `7677849`, Perimetr и Comparator — в ремонте на `1c793091`, epoch 816. [Диагностика и восстановление](deploy/ha/RECOVERY_2026-10-10.md). Это новое сообщение о runtime, не выполненный здесь live poll. Новый кандидат на узлы здесь не установлен.
+
+> 08.10.2026: [повторная сверка плана с фактом](deploy/ha/PLAN_AUDIT_2026-10-08.md): из 33 пунктов 20 готовы программно, 4 частично, 8 требуют оборудования/установки/истории, 1 отложен. [PR #9](https://github.com/Mika-dot/RFID_KPP/pull/9) содержит адаптивные окна, локальные копии и визуальную Grafana. На оборудование новая ветка не установлена. Для продолжения читать [handoff](deploy/ha/CONTINUE_HERE_2026-10-08.md).
+
+> 07.10.2026: подготовлен [кандидат расширения отказоустойчивости](deploy/ha/RESILIENCE_CANDIDATE_2026-10-07.md): replica queues, Web gateway, release qualification и Behavior Observer. Ветка `feature/ha-resilience-2026-10-07`; установка на оборудование ещё не выполнена.
+
+> **Предыдущее подтверждение готовности — 06.10.2026 18:54 МСК:** все3 узла на runtime
 > `1c7930912ad84e8f205cf16fbdd715c76c9eb74e`, protocol2, physical epoch264,
 > все5 служб ready, оба резерва prepared/nonfaulted, controller Comparator.
 > [Подтверждение запуска](deploy/ha/DEPLOYED_STATUS_2026-10-06.md).
@@ -8,6 +22,8 @@
 > установка нового кода на узлы отдельно не подтверждена. Исходник без HA сохранён
 > в `archive/perimeter-original-no-ha-2026-10-07`. Текущие границы приёмки:
 > [ACCEPTANCE_2026-10-07.md](deploy/ha/ACCEPTANCE_2026-10-07.md).
+> Продолжение проверки Warehouse/направления и identity, подготовленное в отдельной ветке:
+> [RECONCILIATION_CONTINUATION_2026-10-07.md](deploy/ha/RECONCILIATION_CONTINUATION_2026-10-07.md).
 > При HA ON запуском управляет PerimeterGuardian, legacy не запускать.
 
 > Канонический репозиторий production-системы КПП. Если вы продолжаете работу после паузы, **сначала прочитайте этот README целиком** и только потом меняйте код/мониторинг.

@@ -11,7 +11,7 @@ DOWN = Observation()
 
 class PolicyTests(unittest.TestCase):
     def setUp(self):
-        self.policy = Policy(NODES, recovery_seconds=60, startup_seconds=30)
+        self.policy = Policy(NODES, recovery_seconds=60, startup_seconds=30, auto_failback=True)
         self.lease = {"owner": "physical", "valid": True, "age": 100}
         self.obs = {"physical": READY, "perimetr": STANDBY, "comparator": STANDBY}
 
@@ -79,3 +79,24 @@ class PolicyTests(unittest.TestCase):
         self.obs["physical"] = STANDBY
         self.assertEqual("physical", self.policy.choose(dict(self.lease, age=1, epoch=2), self.obs, 1))
         self.assertEqual("perimetr", self.policy.choose(dict(self.lease, age=31, epoch=2), self.obs, 31))
+
+
+class StickyOwnerTests(unittest.TestCase):
+    def test_recovered_priority_node_never_displaces_healthy_owner(self):
+        for owner in ('perimetr', 'comparator'):
+            policy = Policy(NODES)
+            lease = dict(owner=owner, valid=True, age=500, epoch=40)
+            obs = {n['id']: STANDBY for n in NODES}
+            obs[owner] = READY
+            for now in (0, 121, 600, 86400):
+                self.assertEqual(owner, policy.choose(lease, obs, now))
+
+    def test_sticky_owner_still_fails_over_and_fences_expired_lease(self):
+        for broken in (DOWN, Observation(True, True, True, True), STANDBY):
+            policy = Policy(NODES)
+            lease = dict(owner='perimetr', valid=True, age=500, epoch=40)
+            obs = dict(physical=STANDBY, perimetr=READY, comparator=STANDBY)
+            policy.choose(lease, obs, 0)
+            obs['perimetr'] = broken
+            self.assertEqual('physical', policy.choose(lease, obs, 1))
+        self.assertEqual('physical', policy.choose(dict(lease, valid=False), obs, 2))

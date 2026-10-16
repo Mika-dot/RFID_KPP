@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-12",
+  "oracle_sha": "2fcf01650b42106519bf35fcc6c6b12ca575280f",
+  "qualification": {
+    "adapter_contracts": 6,
+    "golden_traces": 27,
+    "ha_model_scenarios": 8,
+    "mode": "offline_recorded_inputs_no_production_connections",
+    "python_files_parsed": 128,
+    "shadow_differences": 0,
+    "status": "passed",
+    "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+  },
+  "local_tests": {
+    "total": 650,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 15,
+    "executed": 635,
+    "seconds": 30.056
+  },
+  "compile": "passed",
+  "diff_check": "passed",
+  "native_acceptance": "not_measured",
+  "reviews_fixed": {
+    "4246484518": "only qualified new untried release can arm automatic passive verification; stable runtime fault requires concrete repair",
+    "4246484527": "bounded durable cyclic warehouse/tasks refresh retains append watermark; locks do not advance refresh cursor",
+    "4245655720": "durable peer cursors; passive sync and authenticated pending-first page before retained history; archive failure does not advance",
+    "4245655730": "rollback reads actual committed SQL epoch, emergency deny requires live controller/faulted target and pre/post authority"
+  },
+  "physical_ub22_installation": "not_confirmed",
+  "rfid_connectivity": "user reported restored; awaiting fresh SDK/business/owner snapshot",
+  "week_test_started": false
+}

@@ -88,11 +88,27 @@ class RfidEvidenceOrderingTests(unittest.TestCase):
             snapshot = watchdog._query_snapshot()
         self.assertEqual(snapshot[-2:], (0, 0))
         self.assertIn("MAX(COALESCE", queries[2][0])
+        self.assertIn("MAX(Dt)", queries[4][0])
         counts = [q for q in queries if "COUNT_BIG" in q[0]]
         self.assertEqual(len(counts), 2)
         for query, params in counts:
             self.assertIn("> CAST(? AS datetime2)", query)
             self.assertEqual(params, (-1800, self.rfid))
+
+    def test_out_of_order_warehouse_inserts_do_not_hide_one_video_missing_read(self):
+        warehouse_at = self.now - timedelta(seconds=20)
+        answers = iter([(self.now,), (self.rfid,), (self.now - timedelta(seconds=10),),
+                        (1,), (warehouse_at,), (1,)])
+        cursor = SimpleNamespace(execute=lambda *_args: None, fetchone=lambda: next(answers), close=lambda: None)
+        conn = SimpleNamespace(cursor=lambda: cursor, close=lambda: None)
+        watchdog = _BusinessFlowWatchdog.__new__(_BusinessFlowWatchdog)
+        watchdog.connection_string, watchdog.evidence_window_sec = "offline", 1800
+        with patch.dict("sys.modules", {"pyodbc": SimpleNamespace(connect=lambda *a, **k: conn)}):
+            now, rfid, video, warehouse, video_count, warehouse_count = watchdog._query_snapshot()
+        result = assess_rfid_flow(now=now, rfid_at=rfid, video_at=video, warehouse_at=warehouse,
+                                  video_recent_events=video_count, warehouse_recent_events=warehouse_count,
+                                  stall_seconds=900)
+        self.assertTrue(result.latch_fault)
 
     def test_production_loop_does_not_reconnect_or_mutate_contradicted_latch(self):
         with tempfile.TemporaryDirectory() as folder:

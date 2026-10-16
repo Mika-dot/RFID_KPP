@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "dedicated_reader_paths_confirmed": false,
+  "snmpget": "/usr/bin/snmpget",
+  "snmpset": "/usr/bin/snmpset",
+  "credentials_dir": "/etc/perimeter/snmpv3-private",
+  "nodes": {
+    "physical": {"switch_ip": "FILL_ACTUAL_SWITCH_IP", "if_index": null, "exclusive": false},
+    "perimetr": {"switch_ip": "FILL_ACTUAL_SWITCH_IP", "if_index": null, "exclusive": false},
+    "comparator": {"switch_ip": "FILL_ACTUAL_SWITCH_IP", "if_index": null, "exclusive": false}
+  }
+}

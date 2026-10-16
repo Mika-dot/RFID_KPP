@@ -1,0 +1,92 @@
+{
+  "date": "2026-10-10",
+  "scope": "offline_recovery_candidate_not_factory_restoration",
+  "screenshot": {
+    "epoch": 816,
+    "physical_release": "76778494851d03c5c3c5650b40e54986ddcfddd1",
+    "reserve_release": "1c7930912ad84e8f205cf16fbdd715c76c9eb74e",
+    "physical_unready": [
+      "RfidReader",
+      "Aggregator",
+      "WebDashboard"
+    ],
+    "reserves_faulted": [
+      "perimetr",
+      "comparator"
+    ],
+    "source": "user_screenshot_not_live_poll"
+  },
+  "tests": {
+    "total": 619,
+    "skipped": 15,
+    "executed": 604,
+    "failures": 0,
+    "errors": 0,
+    "python": "3.12.14",
+    "platform": "Linux"
+  },
+  "qualifications": {
+    "previous_candidate": {
+      "adapter_contracts": 6,
+      "golden_traces": 27,
+      "ha_model_scenarios": 8,
+      "mode": "offline_recorded_inputs_no_production_connections",
+      "python_files_parsed": 126,
+      "shadow_differences": 0,
+      "status": "passed",
+      "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+    },
+    "physical_baseline": {
+      "adapter_contracts": 6,
+      "golden_traces": 27,
+      "ha_model_scenarios": 8,
+      "mode": "offline_recorded_inputs_no_production_connections",
+      "python_files_parsed": 126,
+      "shadow_differences": 3,
+      "status": "passed",
+      "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+    },
+    "reserve_baseline": {
+      "adapter_contracts": 6,
+      "golden_traces": 27,
+      "ha_model_scenarios": 8,
+      "mode": "offline_recorded_inputs_no_production_connections",
+      "python_files_parsed": 126,
+      "shadow_differences": 3,
+      "status": "passed",
+      "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+    }
+  },
+  "legacy_transition": {
+    "scope": "two_clean_exact_SHA_and_tree_baselines_only",
+    "differences": [
+      {
+        "trace": "warehouse_cannot_resolve_conflict",
+        "field": "report_directions",
+        "old": [
+          "OUT"
+        ],
+        "new": [
+          "UNKNOWN"
+        ]
+      },
+      {
+        "trace": "warehouse_cannot_resolve_conflict",
+        "field": "report_warehouse_conflicts",
+        "old": 0,
+        "new": 1
+      },
+      {
+        "trace": "warehouse_later_nullable_tag",
+        "field": "report_warehouse_conflicts",
+        "old": 0,
+        "new": 1
+      }
+    ]
+  },
+  "protected_business_checks": 15,
+  "review_threads_audited": 13,
+  "factory_installation": "not_performed",
+  "physical_RTO_RPO": "not_measured",
+  "native_SQL_SDK_checks": "required_on_hosts"
+}

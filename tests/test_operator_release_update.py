@@ -1,0 +1,642 @@
+import copy
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from deploy.ha import release_update as update
+from guardian.release_contract import MANIFEST
+
+
+class OperatorUpdateTests(unittest.TestCase):
+    def test_preparing_pinned_trial_replacement_keeps_trial_state_and_native_services(self):
+        self.record.update(pending=True, operator_pinned_release=self.record["current"]["sha"],
+            qualification={"status":"passed", "sha":self.record["current"]["sha"]})
+        (self.state / "release.json").write_text(json.dumps(self.record))
+        before = (self.state / "release.json").read_bytes()
+        self.args.replace_pinned_trial = True
+        # Stop at the first source fetch; preparation must leave the live trial alone.
+        with patch.object(update, "git", side_effect=RuntimeError("fetch-marker")), \
+                patch.object(update, "native") as native:
+            with self.assertRaisesRegex(RuntimeError, "fetch-marker"):
+                update.prepare(self.args, self.cfg, self.env)
+        self.assertEqual(before, (self.state / "release.json").read_bytes())
+        native.assert_not_called()
+
+    def test_unpinned_or_unqualified_pending_trial_cannot_use_replacement_option(self):
+        for pin, qualified in ((False, True), (True, False)):
+            with self.subTest(pin=pin, qualified=qualified):
+                self.record.update(pending=True,
+                    operator_pinned_release=self.record["current"]["sha"] if pin else None,
+                    qualification={"status":"passed" if qualified else "failed",
+                                   "sha":self.record["current"]["sha"]})
+                (self.state / "release.json").write_text(json.dumps(self.record))
+                self.args.replace_pinned_trial = True
+                with patch.object(update, "git") as git, patch.object(update, "native") as native:
+                    with self.assertRaisesRegex(RuntimeError, "ExistingTrialMustFinish"):
+                        update.prepare(self.args, self.cfg, self.env)
+                git.assert_not_called()
+                native.assert_not_called()
+
+    def test_shutdown_wait_retries_and_keeps_acquired_lock_through_mutation(self):
+        from common.single_instance import SingleInstanceError
+        held = Mock()
+        events = []
+        held.__enter__ = Mock(side_effect=lambda: events.append("acquired"))
+        held.__exit__ = Mock(side_effect=lambda *args: events.append("released"))
+        with patch("common.single_instance.SingleInstanceLock", side_effect=[
+                SingleInstanceError("busy"), SingleInstanceError("busy"), held]) as acquire, \
+                patch.object(update.time, "monotonic", side_effect=[0, 1]), \
+                patch.object(update.time, "sleep") as sleep:
+            with update.stopped_guardian_lock(self.state, timeout=3):
+                events.append("write")
+                self.assertEqual(["acquired", "write"], events)
+        self.assertEqual(["acquired", "write", "released"], events)
+        self.assertEqual(3, acquire.call_count)
+        self.assertEqual(2, sleep.call_count)
+
+    def test_shutdown_timeout_never_enters_runtime_mutation(self):
+        from common.single_instance import SingleInstanceError
+        with patch("common.single_instance.SingleInstanceLock", side_effect=SingleInstanceError("busy")), \
+                patch.object(update.time, "monotonic", side_effect=[0, 2]), \
+                patch.object(update.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "GuardianShutdownTimeout"):
+                with update.stopped_guardian_lock(self.state, timeout=2):
+                    self.fail("runtime mutation with a busy Guardian")
+
+    @unittest.skipUnless(os.name == "nt", "Windows Task Scheduler cleanup only")
+    def test_verified_orphan_shutdown_identifies_child_without_reading_locked_file(self):
+        import psutil
+        self.cfg["node_id"] = "physical"
+        agent = Mock()
+        agent.pid = 12345
+        agent.exe.return_value = self.cfg["python"]
+        agent.cmdline.return_value = [self.cfg["python"], "-m", "guardian",
+                                      "--config", str(self.args.config), "serve"]
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent]),
+            patch.object(update, "run", return_value="Ready") as run
+        ):
+            self.assertTrue(update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config))
+        agent.terminate.assert_called_once_with()
+        agent.wait.assert_called_once_with(timeout=15)
+        self.assertEqual(2, run.call_count)
+
+        agent.reset_mock()
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent]),
+            patch.object(update, "run", return_value="Running")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ScheduledTaskNotStopped"):
+                update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
+        agent.terminate.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows Task Scheduler cleanup only")
+    def test_orphan_shutdown_rejects_wrong_or_ambiguous_process(self):
+        import psutil
+        self.cfg["node_id"] = "physical"
+        agent = Mock()
+        agent.pid = 12345
+        agent.exe.return_value = self.cfg["python"]
+        valid = [self.cfg["python"], "-m", "guardian", "--config",
+                 str(self.args.config), "serve"]
+        for command in (
+            [self.cfg["python"], "-m", "guardian", "--config", str(self.args.config), "doctor"],
+            [self.cfg["python"], "-m", "guardian", "--config", "C:/another.json", "serve"],
+            [self.cfg["python"], "-u", "D:/other-service.py"]
+        ):
+            with self.subTest(command=command):
+                agent.reset_mock()
+                agent.cmdline.return_value = command
+                with (
+                    patch.object(psutil, "process_iter", return_value=[agent]),
+                    patch.object(update, "run", return_value="Ready")
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "WithoutVerifiedGuardian"):
+                        update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
+                agent.terminate.assert_not_called()
+        agent.reset_mock()
+        agent.cmdline.return_value = valid
+        with (
+            patch.object(psutil, "process_iter", return_value=[agent, agent]),
+            patch.object(update, "run", return_value="Ready")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "MultipleGuardianProcesses"):
+                update.reap_verified_windows_guardian_orphan(self.cfg, self.args.config)
+        agent.terminate.assert_not_called()
+
+    def test_ambiguous_native_stop_retains_journal_when_restoration_fails(self):
+        with patch.object(update, "check_prepared", return_value=(self.folder, self.receipt)), \
+                patch.object(update, "inventory", return_value=(self.rows, "physical")), \
+                patch.object(update, "json_request", return_value=(200, {})), \
+                patch.object(update, "native", side_effect=RuntimeError("native stop timeout")), \
+                patch.object(update, "restore", side_effect=RuntimeError("recovery blocked")) as restore:
+            with self.assertRaisesRegex(RuntimeError, "recovery blocked"):
+                update.apply(self.args, self.cfg, self.env)
+        restore.assert_called_once()
+        self.assertTrue((self.state / "operator-release-install.json").exists())
+        self.assertEqual(self.record, json.loads((self.state / "release.json").read_text()))
+
+    def test_command_failure_reports_stage_and_traceback_without_credentials(self):
+        secret = "private-token-from-factory"
+        connection = "Server=sql;UID=operator;PWD=private-password"
+        result = subprocess.CompletedProcess([], 1,
+            (secret + "\n" + connection).encode(),
+            b"Traceback: ModuleNotFoundError: tests.test_ha_resilience")
+        with patch.dict(os.environ, PERIMETER_HA_TOKEN=secret,
+                        RFID_DB_CONNECTION=connection), patch.object(
+                        update.subprocess, "run", return_value=result):
+            with self.assertRaises(RuntimeError) as raised:
+                update.run(["python", "-m", "unittest", secret])
+        message = str(raised.exception)
+        self.assertIn("DeploymentCommandFailed:unittest:exit=1", message)
+        self.assertIn("ModuleNotFoundError: tests.test_ha_resilience", message)
+        self.assertNotIn(secret, message)
+        self.assertNotIn(connection, message)
+        self.assertNotIn("private-password", message)
+
+    def test_command_timeout_retains_bounded_redacted_diagnostics(self):
+        secret = "private-token-from-factory"
+        expired = subprocess.TimeoutExpired(["python", secret], 5,
+            output=("x" * 13000 + secret).encode(), stderr=b"qualifier stalled")
+        with patch.dict(os.environ, PERIMETER_HA_TOKEN=secret), patch.object(
+                update.subprocess, "run", side_effect=expired):
+            with self.assertRaises(RuntimeError) as raised:
+                update.run(["python", "qualification.py"], timeout=5)
+        message = str(raised.exception)
+        self.assertIn("DeploymentCommandTimeout:qualification.py", message)
+        self.assertIn("qualifier stalled", message)
+        self.assertNotIn(secret, message)
+        self.assertLess(len(message), 12500)
+
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        self.release="b"*40;self.old="a"*40
+        self.nodes=[dict(id=name,priority=i+1,url="http://"+name+":18200")
+                    for i,name in enumerate(("physical","perimetr","comparator"))]
+        self.cfg=dict(node_id="comparator",nodes=self.nodes,root=str(self.root/"source"),update_source=str(self.root/"source"),
+            state_dir=str(self.root/"state"),release_dir=str(self.root/"releases"),python="python",env=dict(
+            RFID_SPOOL_PATH=str(self.root/"persistent/rfid.sqlite"),RFID_VIDEO_SPOOL=str(self.root/"persistent/video.sqlite")))
+        self.state=Path(self.cfg["state_dir"]);self.state.mkdir()
+        self.args=SimpleNamespace(release=self.release,config=self.root/"node.json",environment=self.root/"private.env",handoff=False)
+        update.write_private(self.args.config,self.cfg);self.args.environment.write_text("private",encoding="utf-8")
+        self.record=dict(current=dict(sha=self.old,root=self.cfg["root"],python="python"),pending=False)
+        update.write_private(self.state/"release.json",self.record)
+        self.folder=self.state/"prepared"/self.release;self.folder.mkdir(parents=True)
+        self.candidate=Path(self.cfg["release_dir"])/self.release;self.candidate.mkdir(parents=True)
+        update.write_private(self.folder/"node.json",update.candidate_config(self.cfg,{}))
+        self.receipt=dict(release=self.release,qualified=True,base=self.record["current"],root=str(self.candidate),tree="tree",
+            config_digest=update.digest(self.args.config),record_digest=update.digest(self.state/"release.json"),
+            candidate_config_digest=update.digest(self.folder/"node.json"),environment_digest=update.digest(self.args.environment))
+        update.write_private(self.folder/"receipt.json",self.receipt)
+        self.rows={n["id"]:dict(node=n["id"],sample_age=1,fencing_protocol=2,epoch=9,active=n["id"]=="physical",
+            healthy=n["id"]=="physical",release_sha=self.old,prepared=True,faulted=False,operator_maintenance=False,
+            replication_enabled=True) for n in self.nodes}
+        self.rows["perimetr"]["release_sha"] = self.release
+        self.env={"PERIMETER_HA_TOKEN":"x"*64}
+
+    def test_preparation_changes_no_services_and_runs_tests_from_candidate(self):
+        manifest=self.candidate/MANIFEST;manifest.parent.mkdir(parents=True,exist_ok=True)
+        manifest.write_bytes((update.ROOT/MANIFEST).read_bytes())
+        def git(cfg,*args):
+            if "get-url" in args:return "https://github.com/Mika-dot/RFID_KPP.git"
+            if "HEAD" in args:return self.release
+            if "HEAD^{tree}" in args:return "tree"
+            return ""
+        with patch.object(update,"git",side_effect=git),patch.object(update,"run") as run,patch.object(update,"native") as native:
+            result=update.prepare(self.args,self.cfg,self.env)
+        native.assert_not_called()
+        self.assertFalse(result["services_changed"])
+        self.assertEqual(self.record,json.loads((self.state/"release.json").read_text(encoding="utf-8")))
+        self.assertEqual(self.candidate,run.call_args_list[-1].kwargs["cwd"])
+        value=json.loads((self.folder/"node.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.cfg["env"]["RFID_SPOOL_PATH"],value["env"]["RFID_SPOOL_PATH"])
+        self.assertFalse(value["auto_failback"])
+        self.assertFalse(value["auto_update"]);self.assertEqual("shadow",value["env"]["KPP_ADAPTIVE_WINDOWS_MODE"])
+
+    def test_changed_secret_config_record_or_candidate_refuses_before_native_stop(self):
+        with patch.object(update,"git",return_value="tree"):
+            self.args.environment.write_text("changed",encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError,"InputsChanged"):
+                update.check_prepared(self.args,self.cfg)
+            self.args.environment.write_text("private",encoding="utf-8")
+            update.write_private(self.folder/"node.json",{"changed":True})
+            with self.assertRaisesRegex(RuntimeError,"InputsChanged"):
+                update.check_prepared(self.args,self.cfg)
+
+    def test_relative_spools_are_frozen_at_actual_installed_worker_root(self):
+        cfg=copy.deepcopy(self.cfg);cfg["env"]["RFID_SPOOL_PATH"]="existing.sqlite"
+        cfg["env"]["RFID_READER_LOCK_FILE"]="existing.lock"
+        runtime=self.root/"actual-runtime"
+        prepared=update.candidate_config(cfg,{},runtime)
+        self.assertEqual((runtime/"existing.sqlite").resolve(),Path(prepared["env"]["RFID_SPOOL_PATH"]).resolve())
+        self.assertEqual((runtime/"existing.lock").resolve(),Path(prepared["env"]["RFID_READER_LOCK_FILE"]).resolve())
+        self.assertEqual("existing.sqlite",cfg["env"]["RFID_SPOOL_PATH"])
+
+    def test_active_upgrade_without_handoff_is_rejected_without_service_changes(self):
+        self.cfg["node_id"]="physical"
+        for key in ("perimetr","comparator"):self.rows[key]["release_sha"]=self.release
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"HandoffMode"):
+                update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called();self.assertFalse((self.state/"operator-release-install.json").exists())
+
+    def test_handoff_cannot_ignore_another_active_owner_or_unknown_epoch(self):
+        self.rows["perimetr"].update(active=True,healthy=True,release_sha=self.release,update=dict(pending=False))
+        self.rows["physical"]["update"]={"pending":False}
+        def request(url,*args,**kwargs):return 200,next(row for row in self.rows.values() if url.startswith("http://"+row["node"]+":"))
+        with self.assertRaisesRegex(RuntimeError,"HandoffNotConfirmed"):
+            update.wait_handoff(self.cfg,"token","comparator",self.release,request,timeout=0)
+        self.rows["physical"].update(active=False,epoch=10)
+        with self.assertRaises(RuntimeError):update.wait_handoff(self.cfg,"token","comparator",self.release,request,timeout=0)
+        self.rows["physical"]["epoch"]=9
+        self.assertEqual("perimetr",update.wait_handoff(self.cfg,"token","comparator",self.release,request,timeout=0)["node"])
+
+    def test_pinned_pending_handoff_confirms_stable_fenced_owner_without_probation_wait(self):
+        # A flapping production line must not make the Windows installer wait
+        # for the independent 180-second probation to complete.
+        self.rows["physical"].update(active=False, healthy=False)
+        self.rows["perimetr"].update(active=True, healthy=True, release_sha=self.release,
+            update={"pending": True, "trial_started": True, "operator_pinned": True,
+                    "qualification": "passed"})
+        visits = []
+        def request(url, *args, **kwargs):
+            visits.append(url)
+            return 200, copy.deepcopy(next(row for row in self.rows.values()
+                if url.startswith("http://" + row["node"] + ":")))
+        with patch.object(update.time, "monotonic", return_value=0), \
+                patch.object(update.time, "sleep") as sleep:
+            result = update.wait_handoff(self.cfg, "token", "physical", self.release,
+                                         request, timeout=1)
+        self.assertEqual("perimetr", result["node"])
+        self.assertTrue(result["update"]["pending"])
+        self.assertEqual(6, len(visits))  # Two fresh peers, three identical epochs.
+        self.assertEqual(2, sleep.call_count)  # Not a 180-second gate.
+
+    def test_pinned_pending_handoff_rejects_unqualified_or_split_owner(self):
+        self.rows["physical"].update(active=False, healthy=False)
+        row = self.rows["perimetr"]
+        row.update(active=True, healthy=True, release_sha=self.release,
+                   update={"pending": True, "trial_started": True,
+                           "operator_pinned": True, "qualification": "passed"})
+        def request(url, *args, **kwargs):
+            return 200, copy.deepcopy(next(row for row in self.rows.values()
+                if url.startswith("http://" + row["node"] + ":")))
+        failures = [
+            ("pin", lambda: row["update"].update(operator_pinned=False)),
+            ("trial", lambda: row["update"].update(trial_started=False)),
+            ("qualification", lambda: row["update"].update(qualification="failed")),
+            ("fault", lambda: row.update(faulted=True)),
+            ("unhealthy", lambda: row.update(healthy=False)),
+            ("not_prepared", lambda: row.update(prepared=False)),
+            ("maintenance", lambda: row.update(operator_maintenance=True)),
+            ("epoch", lambda: self.rows["comparator"].update(epoch=10)),
+            ("other_owner", lambda: self.rows["comparator"].update(active=True)),
+        ]
+        for name, mutate in failures:
+            with self.subTest(name):
+                row.update(active=True, healthy=True, prepared=True, faulted=False,
+                    operator_maintenance=False,
+                    update={"pending": True, "trial_started": True,
+                            "operator_pinned": True, "qualification": "passed"})
+                self.rows["comparator"].update(active=False, epoch=9)
+                mutate()
+                with self.assertRaisesRegex(RuntimeError, "QualifiedHandoffNotConfirmed"):
+                    update.wait_handoff(self.cfg, "token", "physical", self.release,
+                                        request, timeout=0)
+
+    def test_degraded_inventory_is_opt_in_and_rejects_two_owners(self):
+        self.rows["physical"]["healthy"] = False
+        def request(url,*args,**kwargs):return 200,next(row for row in self.rows.values() if url.startswith("http://"+row["node"]+":"))
+        with self.assertRaisesRegex(RuntimeError,"HealthySingleOwnerRequired"):
+            update.inventory(self.cfg,"token",request)
+        self.assertEqual("physical",update.inventory(self.cfg,"token",request,allow_degraded=True)[1])
+        self.rows["physical"]["active"] = False
+        self.assertIsNone(update.inventory(self.cfg,"token",request,allow_degraded=True)[1])
+        self.rows["physical"]["active"] = self.rows["perimetr"]["active"] = True
+        with self.assertRaises(RuntimeError):update.inventory(self.cfg,"token",request,allow_degraded=True)
+
+    def test_legacy_shadow_exceptions_are_bound_to_clean_exact_baseline(self):
+        sha, tree = next(iter(update.LEGACY_BASELINES.items()))
+        self.record["current"]["sha"] = sha
+        def git(cfg,*args):
+            if "HEAD" in args:return sha
+            if "HEAD^{tree}" in args:return tree
+            return ""
+        with patch.object(update,"git",side_effect=git):
+            self.assertEqual("--allowlist",update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"]))[0])
+        with patch.object(update,"git",return_value="dirty"):
+            with self.assertRaisesRegex(RuntimeError,"BaselineChanged"):
+                update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"]))
+        self.record["current"]["sha"] = self.old
+        with patch.object(update,"git") as git:
+            self.assertEqual([],update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"])))
+            git.assert_not_called()
+
+    def test_recovery_flag_never_updates_physical_or_active_reserve(self):
+        self.args.recover_reserve = True
+        for own, owner in (("physical","physical"),("physical",None),("comparator","comparator")):
+            self.cfg["node_id"] = own
+            with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,owner)),patch.object(update,"native") as native:
+                with self.assertRaisesRegex(RuntimeError,"PassiveLinuxReserve"):
+                    update.apply(self.args,self.cfg,self.env)
+                native.assert_not_called()
+
+    def test_successful_passive_install_preserves_bootstrap_and_spools(self):
+        requests=[]
+        def request(url,token,**kwargs):
+            requests.append((url,kwargs))
+            if url.endswith("/maintenance"):return 200,{}
+            maintenance=sum(u.endswith("/maintenance") for u,_ in requests)<2
+            return 200,dict(node="comparator",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=maintenance,active=False,preflight=dict(ok=True),prepared=True,faulted=False,
+                replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native,patch.object(update,"json_request",side_effect=request),patch("guardian.processes.Processes") as processes:
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result["installed"]);self.assertFalse((self.state/"operator-release-install.json").exists())
+        installed=json.loads(self.args.config.read_text(encoding="utf-8"))
+        record=json.loads((self.state/"release.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.cfg["root"],installed["root"])
+        self.assertEqual(self.cfg["env"]["RFID_SPOOL_PATH"],installed["env"]["RFID_SPOOL_PATH"])
+        self.assertEqual(str(self.candidate),record["current"]["root"])
+        self.assertTrue(record["pending"])  # Passive readiness is not completed business probation.
+        processes.return_value.reap_orphans.assert_called_once()
+        self.assertEqual([("stop",),("start",)],[call.args for call in native.call_args_list])
+
+    def test_pinned_passive_install_sets_exact_release_and_preserves_pending(self):
+        self.args.pin_release = True
+        manifest = self.candidate/MANIFEST
+        manifest.parent.mkdir(parents=True,exist_ok=True)
+        manifest.write_text(json.dumps({"capabilities":["operator-pinned-release"]}),encoding="utf-8")
+        requests = []
+        def request(url, token, **kwargs):
+            requests.append(url)
+            if url.endswith("/maintenance"):
+                return 200, {}
+            return 200, dict(node="comparator", sample_age=1, fencing_protocol=2,
+                release_sha=self.release, operator_maintenance=(
+                    sum(u.endswith("/maintenance") for u in requests) < 2),
+                active=False, preflight=dict(ok=True), prepared=True, faulted=False,
+                replication_enabled=True, fallback_enabled=True)
+        with patch.object(update, "check_prepared", return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native"), patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"):
+            result = update.apply(self.args,self.cfg,self.env)
+        record = json.loads((self.state/"release.json").read_text(encoding="utf-8"))
+        self.assertTrue(result["installed"])
+        self.assertEqual(self.release, record["operator_pinned_release"])
+        self.assertEqual(self.release, record["current"]["sha"])
+        self.assertTrue(record["pending"])  # Pin is not a passed trial.
+
+    def test_physical_pinned_active_install_completes_without_pending_false(self):
+        self.cfg["node_id"] = "physical"
+        self.args.pin_release = True
+        self.args.handoff = True
+        self.rows["physical"]["active"] = True
+        self.rows["physical"]["healthy"] = True
+        self.rows["comparator"]["release_sha"] = self.release
+        manifest = self.candidate / MANIFEST
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"capabilities": ["operator-pinned-release"]}), encoding="utf-8")
+        calls = []
+        def request(url, token, **kwargs):
+            calls.append(url)
+            if url.endswith("/maintenance"):
+                return 200, {"operator_maintenance": False}
+            if len([x for x in calls if x.endswith("/status")]) == 1:
+                return 200, dict(node="physical", sample_age=1, fencing_protocol=2,
+                    release_sha=self.release, operator_maintenance=True, active=False,
+                    prepared=False, preflight={"ok": True}, epoch=9)
+            return 200, dict(node="physical", sample_age=1, fencing_protocol=2,
+                release_sha=self.release, operator_maintenance=False, active=True,
+                prepared=True, healthy=True, faulted=False, epoch=9,
+                replication_enabled=True, fallback_enabled=True,
+                update={"pending": True, "trial_started": True,
+                        "operator_pinned": True, "qualification": "passed"})
+        with patch.object(update, "check_prepared", return_value=(self.folder, self.receipt)), \
+                patch.object(update, "inventory", return_value=(self.rows, "physical")), \
+                patch.object(update, "wait_handoff", return_value={"node": "perimetr"}), \
+                patch.object(update, "json_request", side_effect=request), \
+                patch.object(update, "native"), patch("guardian.processes.Processes"), \
+                patch.object(update.time, "sleep"):
+            result = update.apply(self.args, self.cfg, self.env)
+        self.assertTrue(result["installed"])
+        self.assertGreaterEqual(len([x for x in calls if x.endswith("/status")]), 4)
+        recorded = json.loads((self.state / "release.json").read_text())
+        self.assertEqual(self.release, recorded["current"]["sha"])
+        self.assertEqual(self.release, recorded["operator_pinned_release"])
+        self.assertTrue(recorded["pending"])  # Trial remains independent of install.
+        self.assertFalse((self.state / "operator-release-install.json").exists())
+
+    def test_legacy_candidate_pin_refused_before_native_stop(self):
+        self.args.pin_release = True
+        with patch.object(update, "check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"PinnedReleaseCapabilityRequired"):
+                update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called()
+        self.assertFalse((self.state/"operator-release-install.json").exists())
+
+    def test_first_replica_release_cannot_start_against_two_legacy_nodes(self):
+        self.rows["perimetr"]["release_sha"] = self.old
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"SecondReplicaReceiverRequired"):
+                update.apply(self.args,self.cfg,self.env)
+            native.assert_not_called()
+            self.assertFalse((self.state/"operator-release-install.json").exists())
+
+    def test_held_first_reserve_keeps_workers_stopped_and_probation_pending(self):
+        self.args.recover_reserve = self.args.hold_maintenance = True
+        self.rows["perimetr"]["release_sha"] = self.old
+        requests=[]
+        def request(url, token, **kwargs):
+            requests.append((url, kwargs))
+            if url.endswith("/maintenance"):
+                self.assertTrue(kwargs["body"]["enabled"])
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="comparator",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native"),patch.object(update,"json_request",side_effect=request),patch("guardian.processes.Processes"):
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result["maintenance_held"])
+        self.assertFalse(result["workers_started"])
+        self.assertEqual("not_started",result["probation"])
+        self.assertTrue(json.loads((self.state/"operator-maintenance.json").read_text())["enabled"])
+        self.assertTrue(json.loads((self.state/"release.json").read_text())["pending"])
+        self.assertEqual(1,sum(url.endswith("/maintenance") for url,_ in requests))
+
+    def held_receivers(self):
+        for key in ("perimetr","comparator"):
+            self.rows[key].update(release_sha=self.release,operator_maintenance=True,active=False,
+                prepared=False,faulted=True,preflight={"ok":True,"checks":{"ports_free":True,"sdk_load":True}},
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True,
+                update={"qualification":"passed","pending":True})
+        self.rows["physical"]["healthy"] = False
+
+    def receiver_request(self, posts):
+        def request(url, token, **kwargs):
+            key = next(n["id"] for n in self.nodes if url.startswith(n["url"]))
+            if url.endswith("/status"):return 200,copy.deepcopy(self.rows[key])
+            if url.endswith("/replica/stats"):return 200,{"records":0,"pending":0,"quorum_pending":0}
+            posts.append(key)
+            self.assertEqual({"enabled":False,"release":self.release},kwargs["body"])
+            self.rows[key]["operator_maintenance"] = False
+            return 200,{"operator_maintenance":False}
+        return request
+
+    def test_pair_release_proves_both_receivers_before_any_release(self):
+        self.held_receivers();posts=[]
+        result=update.release_reserves(self.args,self.cfg,self.env,self.receiver_request(posts))
+        self.assertEqual(["perimetr","comparator"],posts)
+        self.assertEqual("not_yet_confirmed",result["cluster_health"])
+        self.assertTrue(result["reserves_released"])
+
+    def test_physical_comparator_pair_releases_while_old_perimetr_remains_owner(self):
+        self.held_receivers()
+        self.rows["perimetr"].update(release_sha=self.old, active=True, healthy=True,
+                                    operator_maintenance=False)
+        self.rows["physical"] = dict(self.rows["comparator"], node="physical")
+        posts = []
+        result = update.release_reserves(self.args, self.cfg, self.env, self.receiver_request(posts))
+        self.assertEqual(["physical", "comparator"], posts)
+        self.assertEqual(["physical", "comparator"], result["nodes"])
+        self.assertEqual(self.old, self.rows["perimetr"]["release_sha"])
+
+    def test_passive_physical_can_be_installed_held_without_updating_active_linux_first(self):
+        self.cfg["node_id"] = "physical"
+        self.args.hold_maintenance = True
+        self.rows["physical"].update(active=False, healthy=False)
+        self.rows["perimetr"].update(active=True, healthy=True, release_sha=self.old)
+        self.rows["comparator"]["release_sha"] = self.old
+        def request(url, token, **kwargs):
+            if url.endswith("/maintenance"):
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="physical",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"perimetr")), \
+                patch.object(update,"native"),patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"):
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result["maintenance_held"])
+        self.assertFalse(result["workers_started"])
+
+    def test_active_node_cannot_use_held_install_even_when_handoff_was_omitted(self):
+        self.args.hold_maintenance = True
+        self.cfg["node_id"] = "physical"
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native") as native:
+            with self.assertRaisesRegex(RuntimeError,"HoldRequiresPassiveNode"):
+                update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called()
+
+    def test_active_perimetr_requires_both_updated_reserves(self):
+        self.rows["comparator"]["release_sha"] = self.release
+        with self.assertRaisesRegex(RuntimeError,"QualifiedReserveRequired:physical"):
+            update.require_reserves(self.rows, "perimetr", self.release)
+
+    def test_held_install_journals_and_rebinds_supervisor_before_native_start(self):
+        from deploy.ha import supervisor_binding as binding
+        self.args.refresh_bootstrap = self.args.hold_maintenance = self.args.recover_reserve = True
+        saved = {"kind":"systemd-dropin", "previous":"old binding"}
+        def request(url, token, **kwargs):
+            if url.endswith('/maintenance'):
+                return 200, {"operator_maintenance":True}
+            return 200, dict(node="comparator",sample_age=1,fencing_protocol=2,release_sha=self.release,
+                operator_maintenance=True,active=False,preflight=dict(ok=True,checks={"ports_free":True,"sdk_load":True}),
+                preflight_sample_age=1,replication_enabled=True,fallback_enabled=True)
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native") as native, patch.object(update,"json_request",side_effect=request), \
+                patch("guardian.processes.Processes"), patch.object(binding,"capture",return_value=saved), \
+                patch.object(binding,"install") as install:
+            def installed(*args):
+                journal=json.loads((self.state/'operator-release-install.json').read_text())
+                self.assertEqual(saved,journal['supervisor_binding'])
+                self.assertEqual([('stop',)],[call.args for call in native.call_args_list])
+                self.assertEqual(self.release,json.loads((self.state/'release.json').read_text())['current']['sha'])
+            install.side_effect=installed
+            result=update.apply(self.args,self.cfg,self.env)
+        self.assertTrue(result['maintenance_held'])
+        install.assert_called_once()
+
+    def test_failed_bootstrap_rebind_restores_original_binding_and_release(self):
+        from deploy.ha import supervisor_binding as binding
+        self.args.refresh_bootstrap = True
+        saved = {"kind":"systemd-dropin", "previous":"old binding"}
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)), \
+                patch.object(update,"inventory",return_value=(self.rows,"physical")), \
+                patch.object(update,"native"), patch.object(update,"json_request",return_value=(200,{})), \
+                patch("guardian.processes.Processes"), patch.object(binding,"capture",return_value=saved), \
+                patch.object(binding,"install",side_effect=RuntimeError('rebind failed')), \
+                patch.object(binding,"restore") as restore:
+            with self.assertRaisesRegex(RuntimeError,'rebind failed'):
+                update.apply(self.args,self.cfg,self.env)
+        self.assertEqual(saved,restore.call_args.args[0])
+        self.assertEqual(self.record,json.loads((self.state/'release.json').read_text()))
+        self.assertFalse((self.state/'operator-release-install.json').exists())
+
+    def test_bad_second_receiver_prevents_releasing_first(self):
+        for problem in ("legacy", "replication", "preflight", "active", "endpoint", "stale_probe", "active_probe", "sdk"):
+            with self.subTest(problem=problem):
+                self.held_receivers();posts=[]
+                if problem=="legacy":self.rows["comparator"]["release_sha"]=self.old
+                if problem=="replication":self.rows["comparator"]["replication_enabled"]=False
+                if problem=="preflight":self.rows["comparator"]["preflight"]["ok"]=False
+                if problem=="active":self.rows["physical"]["active"]=False;self.rows["comparator"]["active"]=True
+                if problem=="stale_probe":self.rows["comparator"]["preflight_sample_age"]=91
+                if problem=="active_probe":self.rows["comparator"]["preflight"]["checks"].pop("ports_free")
+                if problem=="sdk":self.rows["comparator"]["preflight"]["checks"]["sdk_load"]=False
+                delegate=self.receiver_request(posts)
+                def request(url,*args,**kwargs):
+                    if problem=="endpoint" and url=="http://comparator:18200/replica/stats":return 404,{}
+                    return delegate(url,*args,**kwargs)
+                with self.assertRaises(RuntimeError):update.release_reserves(self.args,self.cfg,self.env,request)
+                self.assertEqual([],posts)
+
+    def test_pair_release_retry_skips_node_already_released_after_lost_response(self):
+        self.held_receivers();posts=[]
+        delegate=self.receiver_request(posts)
+        def request(url,*args,**kwargs):
+            if url=="http://comparator:18200/maintenance":raise TimeoutError()
+            return delegate(url,*args,**kwargs)
+        with self.assertRaises(TimeoutError):update.release_reserves(self.args,self.cfg,self.env,request)
+        self.assertEqual(["perimetr"],posts)
+        update.release_reserves(self.args,self.cfg,self.env,delegate)
+        self.assertEqual(["perimetr","comparator"],posts)
+
+    def test_failure_restores_config_record_and_maintenance(self):
+        requests=Mock(side_effect=[(200,{}),RuntimeError("offline")])
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native,patch.object(update,"json_request",requests),patch.object(update.time,"monotonic",side_effect=[0,200]),patch("guardian.processes.Processes"):
+            with self.assertRaisesRegex(RuntimeError,"PreflightFailed"):
+                update.apply(self.args,self.cfg,self.env)
+        self.assertEqual(self.cfg,json.loads(self.args.config.read_text(encoding="utf-8")))
+        self.assertEqual(self.record,json.loads((self.state/"release.json").read_text(encoding="utf-8")))
+        self.assertFalse((self.state/"operator-maintenance.json").read_text(encoding="utf-8").find('"enabled": false')<0)
+        self.assertEqual([("stop",),("start",),("stop",),("start",)],[call.args for call in native.call_args_list])
+
+    def test_ambiguous_maintenance_response_is_restored_even_before_stop(self):
+        request=Mock(side_effect=[TimeoutError(),(200,{})])
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"native") as native,patch.object(update,"json_request",request):
+            with self.assertRaises(TimeoutError):update.apply(self.args,self.cfg,self.env)
+        native.assert_not_called();self.assertFalse((self.state/"operator-release-install.json").exists())
+        self.assertFalse(request.call_args.kwargs["body"]["enabled"])
+
+    def test_failed_rollback_keeps_journal_for_explicit_crash_recovery(self):
+        request=Mock(side_effect=[TimeoutError(),(503,{})])
+        with patch.object(update,"check_prepared",return_value=(self.folder,self.receipt)),patch.object(update,"inventory",return_value=(self.rows,"physical")),patch.object(update,"json_request",request):
+            with self.assertRaisesRegex(RuntimeError,"JournalRetained"):
+                update.apply(self.args,self.cfg,self.env)
+        journal=self.state/"operator-release-install.json";self.assertTrue(journal.exists())
+        with patch.object(update,"native") as native,patch("guardian.processes.Processes"):
+            result=update.recover(self.args,self.cfg,self.env)
+        self.assertTrue(result["restored"]);self.assertFalse(journal.exists())
+        self.assertEqual([("stop",),("start",)],[call.args for call in native.call_args_list])

@@ -1,0 +1,22 @@
+# Private /etc/perimeter-resilience.env, root:root 0600. Values provisioned locally.
+# Use the existing cluster token and actual SQL destination; never commit values.
+PERIMETER_HA_TOKEN=CHANGE_EXISTING_CLUSTER_TOKEN
+PERIMETER_HA_SQL=CHANGE_EXISTING_CONTROL_CONNECTION_OR_SQL_HA_LISTENER
+PERIMETER_OBSERVER_SQL=CHANGE_DEDICATED_READ_ONLY_SQL_CONNECTION
+# If Warehouse/RfidTags live in another database, provision its SELECT-only
+# connection here; otherwise the mirror falls back to KPP_TASK_CONN_STR.
+# PERIMETER_OBSERVER_TASK_SQL=CHANGE_DEDICATED_READ_ONLY_TASK_CONNECTION
+# Enable only after the new runtime/config is qualified and installed.
+KPP_ADAPTIVE_WINDOWS_ENABLED=1
+KPP_ADAPTIVE_WINDOWS_MODE=shadow
+# Active requires an accepted holdout report produced by tune_adaptive_windows.py.
+# KPP_ADAPTIVE_WINDOW_ACCEPTED_PROFILE=/var/lib/perimeter-ha/accepted-windows.json
+KPP_ADAPTIVE_WINDOW_MIN_SAMPLES=8
+KPP_ADAPTIVE_WINDOW_MARGIN_SEC=30
+KPP_ADAPTIVE_WINDOW_HARD_MAX_SEC=604800
+# Same locally provisioned Web credentials are required for authenticated cache view.
+# KPP_WEB_AUTH_USER=CHANGE_EXISTING_WEB_USER
+# KPP_WEB_AUTH_PASSWORD=CHANGE_EXISTING_WEB_PASSWORD
+# Optional delivery to an existing operator-managed notification endpoint.
+# PERIMETER_ALERT_WEBHOOK=https://existing.internal.notification.endpoint
+# PERIMETER_ALERT_TOKEN=CHANGE_PRIVATE_NOTIFICATION_TOKEN

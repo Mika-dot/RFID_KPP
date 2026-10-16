@@ -1,4 +1,8 @@
+> **АКТУАЛЬНАЯ ПЕРЕДАЧА 14.10.2026:** [текущие факты установки Gateway/Grafana, настройки/IP и нерешённый failover](deploy/ha/HANDOFF_2026-10-14_LIVE_GATEWAY_GRAFANA.md). Закреплённый runtime `7fc779e406c250b69b5fa34c6cab0e0d1d3bd5a6` не менять. Исторические выводы ниже не являются текущим статусом.
+
 # RFID_KPP / «Периметр»: передача работ по HA другой нейронке
+
+> 07.10.2026: подготовлен [кандидат расширения отказоустойчивости](deploy/ha/RESILIENCE_CANDIDATE_2026-10-07.md): replica queues, Web gateway, release qualification и Behavior Observer. Ветка `feature/ha-resilience-2026-10-07`; установка на оборудование ещё не выполнена.
 
 > **Последнее подтверждение завода — 06.10.2026 18:54 МСК:** на всех3 runtime
 > `1c7930912ad84e8f205cf16fbdd715c76c9eb74e`, protocol2, physical epoch264.
@@ -10,6 +14,8 @@
 > принятие нового runtime на узлах не подтверждено. Исходник без HA:
 > `archive/perimeter-original-no-ha-2026-10-07`, exact `49da7e9ba61cfb843f7fa672e85193c2eae285f7`.
 > [Уточнения приёмки от 07.10](deploy/ha/ACCEPTANCE_2026-10-07.md).
+> Продолжение в отдельной ветке, без новой заводской установки:
+> [Warehouse/направление/identity](deploy/ha/RECONCILIATION_CONTINUATION_2026-10-07.md).
 > Разделы ниже сохраняют историю первоначальной передачи; их HA OFF/old SHA
 > статусы не описывают текущие машины и не являются командами для нового включения.
 

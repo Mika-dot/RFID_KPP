@@ -47,15 +47,23 @@ class WineLibrary:
     def __init__(self, dll_path):
         self.lock = threading.Lock()
         self.seq = 0
-        self.queue = queue.Queue(maxsize=4)
+        self.dll_path = dll_path
+        self._needs_restart = False
         self.timeout = float(os.getenv("RFID_WINE_RPC_TIMEOUT_SEC", "25"))
+        self._spawn()
+        atexit.register(self.close)
+        for name in ("TCPConnect", "TCPDisconnect", "UHFInventory", "UHFStopGet", "UHF_GetReceived_EX"):
+            setattr(self, name, Function(self, name))
+
+    def _spawn(self):
+        self.queue = queue.Queue(maxsize=4)
         python = os.environ["RFID_WINE_PYTHON"]
         env = os.environ.copy()
         env["WINEDEBUG"] = "-all"
         env["WINEPREFIX"] = os.environ["RFID_WINE_PREFIX"]
         worker = Path(__file__).with_name("wine_worker.py")
         args = [os.getenv("RFID_WINE_BIN", "wine"), wine_path(python), "-u",
-                wine_path(worker), wine_path(dll_path)]
+                wine_path(worker), wine_path(self.dll_path)]
         if not env.get("DISPLAY"):
             args = ["xvfb-run", "-a"] + args
         self.process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -73,8 +81,8 @@ class WineLibrary:
         except BaseException:
             self.close()
             raise
-        threading.Thread(target=self._read, daemon=True).start()
-        atexit.register(self.close)
+        # Retired readers must never enqueue EOF into a newly spawned bridge.
+        threading.Thread(target=self._read, args=(self.process, self.queue), daemon=True).start()
         try:
             ready = self.queue.get(timeout=60)
             if ready != {"ready": True, "bits": 32}:
@@ -82,22 +90,26 @@ class WineLibrary:
         except BaseException:
             self.close()
             raise
-        for name in ("TCPConnect", "TCPDisconnect", "UHFInventory", "UHFStopGet", "UHF_GetReceived_EX"):
-            setattr(self, name, Function(self, name))
-
-    def _read(self):
+    def _read(self, process, responses):
         try:
-            for line in self.process.stdout:
-                self.queue.put(json.loads(line), timeout=1)
+            for line in process.stdout:
+                responses.put(json.loads(line), timeout=1)
         except Exception:
             pass
         try:
-            self.queue.put(None, timeout=1)
+            responses.put(None, timeout=1)
         except queue.Full:
             pass
 
     def call(self, name, data):
         with self.lock:
+            if self._needs_restart:
+                if name in {"TCPDisconnect", "UHFStopGet"}:
+                    return {"rc": None if name == "TCPDisconnect" else 0}
+                if name != "TCPConnect":
+                    raise RuntimeError("SDK bridge has no connected session")
+                self._spawn()
+                self._needs_restart = False
             self.seq += 1
             req = dict(data, op=name, id=self.seq)
             try:
@@ -106,6 +118,14 @@ class WineLibrary:
                 response = self.queue.get(timeout=self.timeout)
                 if not response or response.get("id") != self.seq:
                     raise RuntimeError("SDK bridge disconnected or response mismatch")
+                if name == "TCPConnect" and response.get("rc") != 0:
+                    # The vendor retains a socket on failed connect and its
+                    # disconnect deletes a critical section initialized only
+                    # on success. Retire the isolated SDK process instead.
+                    # SQL/spools remain in the parent; retry lazily starts one
+                    # new bridge only after this process is confirmed stopped.
+                    self.close()
+                    self._needs_restart = True
                 return response
             except BaseException:
                 self.close()

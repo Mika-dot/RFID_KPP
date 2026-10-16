@@ -98,6 +98,14 @@ class LmRepair:
             return
         code, result = get_json(base + "/repair", token, timeout=120,
                                body={"action": "restart_service", "service": "all"})
+        if code != 200:
+            return
+        if result.get("preflight", {}).get("ok") is True:
+            # Node independently verifies for verify_sec before SQL recovery.
+            # Do not reset that timer or wait for LM inference while another
+            # reserve still needs its deterministic repair.
+            self.telemetry.event("repair_verification_pending", target=nid)
+            return
         evidence = {"node": nid, "result": result}
         for _ in range(6):
             if (self.stop.is_set() or not self.store.controller_owned()

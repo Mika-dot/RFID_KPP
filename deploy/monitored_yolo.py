@@ -17,6 +17,7 @@ if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
 from common.observability import flush_sentry, get_reporter, safe_error_name  # noqa: E402
+from common.bus_statistics import record  # noqa: E402
 
 
 def _load_app():
@@ -146,6 +147,7 @@ def main() -> int:
         packet = original_read_new(stream, after_sequence)
         dep = f"camera_{stream.camera_id}"
         if packet is not None:
+            record(f"camera_{stream.camera_id}_fresh_fps")
             reporter.touch_dependency(dep, data_age_seconds=0.0)
             return packet
 
@@ -156,6 +158,9 @@ def main() -> int:
             return None
 
         age = max(0.0, time.monotonic() - latest.captured_mono)
+        if latest.sequence != getattr(stream, "telemetry_stale_sequence", None) and age > app.Config.MAX_FRAME_AGE_SEC:
+            record(f"camera_{stream.camera_id}_stale_rate")
+            stream.telemetry_stale_sequence = latest.sequence
         stale_limit = max(5.0, float(app.Config.MAX_FRAME_AGE_SEC) * 3.0)
         if age <= stale_limit:
             reporter.touch_dependency(dep, data_age_seconds=age)
@@ -169,6 +174,29 @@ def main() -> int:
         return None
 
     app.RTSPStream.read_new = monitored_read_new
+
+    original_detect = app.detect
+    def monitored_detect(*args, **kwargs):
+        shown, detections = original_detect(*args, **kwargs)
+        for detection in detections:
+            record("video_detection_rate")
+            # Fixed classes avoid arbitrary labels and unbounded cardinality.
+            key = "reel" if detection.class_name == app.Config.REEL_CLASS else "other"
+            record("video_class_distribution_" + key + "_rate")
+            value = float(detection.confidence)
+            import math
+            if math.isfinite(value):
+                record("video_confidence_distribution_bucket_" + str(min(4, max(0, int(value * 5)))) + "_rate")
+        return shown, detections
+    app.detect = monitored_detect
+    original_tracks = app.CentroidTracker.update
+    def monitored_tracks(tracker, *args, **kwargs):
+        known = set(tracker.tracks)
+        tracks = original_tracks(tracker, *args, **kwargs)
+        for _track_id in set(tracker.tracks) - known:
+            record("video_tracks_per_min")
+        return tracks
+    app.CentroidTracker.update = monitored_tracks
 
     # Video spool is the durability boundary. Core logic deliberately retains
     # transitions in RAM and retries when enqueue fails. Therefore writer/spool

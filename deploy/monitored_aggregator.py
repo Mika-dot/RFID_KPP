@@ -18,6 +18,7 @@ if str(SERVICE_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICE_DIR))
 
 from common.observability import flush_sentry, get_reporter, safe_error_name  # noqa: E402
+from common.bus_statistics import record  # noqa: E402
 
 
 def _load_app():
@@ -80,6 +81,7 @@ def main() -> int:
             )
             return 0
         except Exception as exc:
+            record("processing_exception_rate")
             # IMPORTANT: do NOT call reporter.progress() here.  The old adapter
             # refreshed the watchdog on every failed iteration, so an endlessly
             # failing aggregator could remain alive forever and never trigger

@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - fix/warehouse-ntext-sql-8116-20261016
   pull_request:
     branches:
       - main
+      - feature/ha-resilience-2026-10-07
 
 permissions:
   contents: read
@@ -29,10 +31,12 @@ jobs:
           python -m py_compile \
             common/warehouse_identity.py \
             common/warehouse_report.py \
+            common/warehouse_direction.py \
             KPP/kpp_aggregator_v3.py \
             KPP/kpp_aggregator_v3_warehouse.py \
             KPP/kpp_aggregator_v3_warehouse_v3.py \
             web/kpp_reel_dashboard_v3_fixed.py \
+            tools/audit_reconciliation_export.py \
             deploy/apply_migration_v3.py \
             deploy/precheck_v3.py
 
@@ -40,6 +44,11 @@ jobs:
         run: |
           python -m unittest -v \
             tests.test_warehouse_identity \
+            tests.test_warehouse_direction \
             tests.test_warehouse_report \
             tests.test_warehouse_aggregator \
+            tests.test_warehouse_ntext_json \
+            tests.test_warehouse_decimal_rssi \
+            tests.test_peer_heartbeat_fallback \
+            tests.test_reconciliation_export \
             tests.test_deployment_hotfix

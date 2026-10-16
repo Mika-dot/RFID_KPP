@@ -18,12 +18,87 @@ class UpdateTests(unittest.TestCase):
         with patch.object(Updates,"git",return_value="a"*40):
             self.updates = Updates(self.cfg,Mock(),Mock())
 
+    def test_hot_update_opt_in_reads_only_flag_without_restart(self):
+        path = Path(self.tmp.name) / "node-config.json"
+        self.cfg.update(_config_path=str(path), node_id="physical", auto_update=False)
+        path.write_text(json.dumps({"node_id": "physical", "auto_update": True}))
+        self.updates._refresh_auto_update_opt_in()
+        self.assertTrue(self.cfg["auto_update"])
+        path.write_text(json.dumps({"node_id": "physical", "auto_update": False}))
+        self.updates._refresh_auto_update_opt_in()
+        self.assertFalse(self.cfg["auto_update"])
+
+    def test_hot_update_refuses_broken_or_wrong_node_config(self):
+        path = Path(self.tmp.name) / "node-config.json"
+        self.cfg.update(_config_path=str(path), node_id="physical", auto_update=True)
+        for raw in ('{broken', json.dumps({"node_id": "comparator", "auto_update": True}),
+                    json.dumps({"node_id": "physical", "auto_update": "true"})):
+            path.write_text(raw)
+            self.updates._refresh_auto_update_opt_in()
+            self.assertFalse(self.cfg["auto_update"])
+            self.cfg["auto_update"] = True
+
     def test_pending_release_not_replaced_again(self):
         self.updates.staged={"root":"/new","sha":"b"*40}
         self.assertTrue(self.updates.activate())
         self.updates.staged={"root":"/third","sha":"c"*40}
         self.assertFalse(self.updates.activate())
         self.assertEqual("b"*40,self.updates.state["current"]["sha"])
+
+    def test_qualified_pinned_pending_baseline_can_be_replaced_offline(self):
+        old = "a" * 40
+        new = "b" * 40
+        self.updates.state.update(
+            pending=True,
+            trial_started=False,
+            operator_pinned_release=old,
+            qualification={"status": "passed", "sha": old},
+        )
+        self.assertTrue(self.updates._qualified_pinned_replacement())
+        # Stage's independent qualification changes the recorded candidate
+        # SHA, but does not confirm the old candidate's trial.
+        self.updates.state["qualification"] = {"status": "passed", "sha": new}
+        self.updates.staged = {"root": "/new", "sha": new, "python": "python"}
+        self.assertTrue(self.updates.activate())
+        self.assertEqual(self.updates.state["current"]["sha"], new)
+        self.assertEqual(self.updates.state["previous"]["sha"], old)
+        self.assertTrue(self.updates.state["pending"])
+        self.assertFalse(self.updates.state["trial_started"])
+
+    def test_unqualified_or_unpinned_pending_baseline_cannot_be_replaced(self):
+        old = "a" * 40
+        new = "b" * 40
+        self.updates.state.update(
+            pending=True,
+            trial_started=True,
+            operator_pinned_release=old,
+            qualification={"status": "failed", "sha": new},
+        )
+        self.updates.staged = {"root": "/new", "sha": new, "python": "python"}
+        self.assertFalse(self.updates.activate())
+        self.assertEqual(self.updates.state["current"]["sha"], old)
+        self.updates.state["qualification"] = {"status": "passed", "sha": new}
+        self.updates.state["operator_pinned_release"] = "f" * 40
+        self.assertFalse(self.updates.activate())
+
+    def test_operator_pin_blocks_code_rollback_without_accepting_trial(self):
+        self.updates.staged={"root":"/new","sha":"b"*40}
+        self.updates.activate()
+        self.updates.state["operator_pinned_release"] = "b"*40
+        self.assertTrue(self.updates.operator_pinned())
+        self.assertTrue(self.updates.state["pending"])
+        with self.assertRaisesRegex(RuntimeError, "OperatorPinnedReleaseRollbackForbidden"):
+            self.updates.rollback()
+        self.assertEqual("b"*40, self.updates.state["current"]["sha"])
+        self.assertTrue(self.updates.state["pending"])
+        self.assertNotIn("b"*40, self.updates.quarantined)
+        self.assertFalse(self.updates.state.get("trial_started", False))
+
+    def test_operator_pin_requires_current_exact_sha(self):
+        self.updates.state["operator_pinned_release"] = "b"*40
+        self.assertFalse(self.updates.operator_pinned())
+        self.updates.state["operator_pinned_release"] = "not-a-commit"
+        self.assertFalse(self.updates.operator_pinned())
 
     def test_rollback_preserves_config_and_durable_state(self):
         spool=Path(self.tmp.name)/"rfid_spool_v4.sqlite"
@@ -57,6 +132,31 @@ class UpdateTests(unittest.TestCase):
             self.updates.rollback()
 
     @patch("guardian.update.subprocess.run")
+    def test_transient_live_preflight_retries_same_sha_after_agent_restart(self, run):
+        def qualified(command, **kwargs):
+            if "--report" in command:
+                Path(command[command.index("--report")+1]).write_text(json.dumps({"status":"passed"}),encoding="utf-8")
+            return Mock(returncode=0)
+        run.side_effect=qualified
+        def git(*args,**kwargs):
+            if args==("rev-parse","FETCH_HEAD"):return "b"*40
+            if args==("show","b"*40+":"+MANIFEST):return json.dumps(BASE_FLOOR)
+            if args[:2]==("diff","--name-only"):return "common/business_flow.py\n"
+            return ""
+        self.updates.git=git
+        with patch("guardian.update.preflight",return_value={"ok":False,"checks":{"exception":"TimeoutError"}}):
+            with self.assertRaisesRegex(RuntimeError,"CandidatePreflightFailed"):
+                self.updates.stage()
+        self.assertIsNone(self.updates.staged)
+        self.assertNotIn("b"*40,self.updates.quarantined)
+        self.assertNotIn("b"*40,self.updates.state.get("rejected",[]))
+        self.updates.telemetry.event.assert_called_with("update_candidate_deferred",sha="b"*40,reason="CandidatePreflightFailed")
+        restored=Updates(self.cfg,Mock(),Mock());restored.git=git
+        with patch("guardian.update.preflight",return_value={"ok":True}):
+            restored.stage()
+        self.assertEqual("b"*40,restored.staged["sha"])
+
+    @patch("guardian.update.subprocess.run")
     def test_protocol_two_deployment_rejects_main_without_epoch_barrier_before_running_candidate(self, run):
         self.updates.state["fencing_protocol_min"] = 2
         def git(*args, **kwargs):
@@ -86,6 +186,12 @@ class UpdateTests(unittest.TestCase):
     @patch("guardian.update.subprocess.run")
     def test_squash_merge_checks_main_ancestry_instead_of_feature_ancestry(self, run, preflight):
         run.return_value.returncode=0
+        def qualified_command(command, **kwargs):
+            if "--report" in command:
+                proof = Path(command[command.index("--report")+1])
+                proof.write_text(json.dumps({"status":"passed"}), encoding="utf-8")
+            return Mock(returncode=0)
+        run.side_effect = qualified_command
         self.updates.state["trusted_main_sha"]="d"*40
         calls=[]
         def git(*args,**kwargs):

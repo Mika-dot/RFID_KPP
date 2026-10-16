@@ -164,6 +164,8 @@ def sync_page() -> Tuple[int, int]:
         with pyodbc.connect(SRC_CONN, autocommit=True, timeout=15) as src:
             high_watermark = source_high_watermark(src)
             if high_watermark <= cursor_value:
+                from common.observability import get_reporter
+                get_reporter().set_metric("skud_sync_lag", 0)
                 return 0, cursor_value
             cur_src = src.cursor()
             cur_src.execute(SELECT_SQL, cursor_value, high_watermark, GATE_NAME)
@@ -175,6 +177,8 @@ def sync_page() -> Tuple[int, int]:
         if not rows:
             set_state(dst, high_watermark)
             dst.commit()
+            from common.observability import get_reporter
+            get_reporter().set_metric("skud_sync_lag", 0)
             log.info(
                 "RusGuard cursor advanced over unrelated source rows: %s -> %s",
                 cursor_value,
@@ -203,6 +207,8 @@ INSERT INTO {DEST_TABLE}(
         next_cursor = high_watermark if len(rows) < BATCH_SIZE else max_matching_id
         set_state(dst, next_cursor)
         dst.commit()
+        from common.observability import get_reporter
+        get_reporter().set_metric("skud_sync_lag", max(0, high_watermark - next_cursor))
         log.info(
             "RusGuard COMMIT: rows=%s cursor=%s source_high=%s last_event=%s",
             len(rows),

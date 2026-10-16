@@ -1,6 +1,14 @@
+**АКТУАЛЬНАЯ ПЕРЕДАЧА 14.10.2026:** [фактический deployment на ub22, Grafana playlist, IP/порты и последнее нестабильное состояние трёх узлов](HANDOFF_2026-10-14_LIVE_GATEWAY_GRAFANA.md). Pinned runtime `7fc779e406c250b69b5fa34c6cab0e0d1d3bd5a6`; не запускать старый rollout. Задача на продолжение — диагностика `faulted=true` и `update.pending=true` без переустановки.
+
 # Резервирование «Периметра»
 
-> **Текущее состояние, 06.10.2026 15:38 МСК:** система уже запущена, protocol2,
+**Кандидат от 09.10.2026:** [обновление Comparator, Perimetr, физики и ub22](READY_TO_INSTALL_2026-10-09.md).
+
+**Продолжение от 08.10.2026:** [handoff и сверка плана](CONTINUE_HERE_2026-10-08.md),
+[адаптивные окна, копии и новая Grafana](ADAPTIVE_CORRELATION_AND_STORAGE_2026-10-08.md).
+Новый кандидат опубликован отдельно от принятого runtime; живая установка не выполнена.
+
+> **Исторический снимок, 06.10.2026 15:38 МСК:** система уже запущена, protocol2,
 > exact runtime `f5fdb6aed1c3749b0ada51e28c5dec96ed2c59fa` на всех3. Physical189
 > all5 healthy, оба prepared/nonfaulted reserves, controller Comparator valid.
 > Full-stack takeover Comparator183 и Perimetr187 с автоматическим возвратом

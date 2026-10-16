@@ -19,6 +19,7 @@ from typing import Any, Dict, List
 
 import kpp_reel_dashboard_v3_ru as base
 from common.warehouse_report import build_report_records
+from common.warehouse_direction import project_warehouse_direction
 
 
 # WEB is read-only. Avoid SELECT/RECHECK deadlocks while the aggregator repairs a
@@ -37,11 +38,29 @@ def db_connect_readonly():
 base.db_connect = db_connect_readonly
 
 
+# Project old contradictory warehouse flags for display, without repairing or
+# rewriting historical SQL rows. List and detail endpoints share this route.
+_original_row_to_dict = base.row_to_dict
+
+
+def row_to_dict_with_warehouse_direction(cursor, row):
+    return project_warehouse_direction(_original_row_to_dict(cursor, row))
+
+
+base.row_to_dict = row_to_dict_with_warehouse_direction
+
+
 # Make the manager-facing meaning explicit: the address warehouse is an
 # independent confirmation that the reel left the workshop even if RFID missed.
 base.PAGE = base.PAGE.replace(
     "if (data.SessionCloseReason === 'WAREHOUSE_ONLY') return 'НА СКЛАДЕ БЕЗ КПП';",
     "if (data.SessionCloseReason === 'WAREHOUSE_ONLY') return 'ВЫЕЗД • ПОДТВЕРЖДЕНО АДРЕСНЫМ СКЛАДОМ';",
+)
+base.PAGE = base.PAGE.replace(
+    "return русНаправление(data.FinalDirection);",
+    "if (data.WarehouseDirectionConflict) return русНаправление(data.FinalDirection) + ' • РАСХОЖДЕНИЕ СО СКЛАДОМ';\n"
+    "      return русНаправление(data.FinalDirection);",
+    1,
 )
 
 
@@ -72,14 +91,16 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
     SELECT
         e.EventId,e.EventKey,e.SourceTag,e.EPC,e.TID,e.FirstSeen,e.LastSeen,e.FinalDirection,
         e.Task1CId,e.Task1CDt,e.Task1CDocIds,t.SeriesNumber AS Task1CSeriesNumber,
-        e.TaskMatchType,e.RfidReadCount,e.SessionCloseReason,
+        e.TaskMatchType,e.RfidReadCount,e.SessionCloseReason,e.ConfidencePct,e.ConsensusCode,e.WarningFlags,
         e.WarehouseId,e.WarehouseDt,e.WarehouseDocIds,
         COALESCE(w.SeriesNumber,'') AS WarehouseSeriesNumber,
         e.ReelClassification,e.PassageGroupKey,e.GroupReelCount,e.VideoEventId
     FROM dbo.KPP_ReelEvents e
     LEFT JOIN {base.Config.TASK_TABLE} t ON t.Id=e.Task1CId
     LEFT JOIN {warehouse_table} w ON w.Id=e.WarehouseId
-    WHERE e.FirstSeen>=? AND e.FirstSeen<?
+    -- Persisted WarehouseId is authoritative even outside the fallback
+    -- identity window (accepted adaptive delays can exceed 24 hours).
+    WHERE ((e.FirstSeen>=? AND e.FirstSeen<?) OR (w.Dt>=? AND w.Dt<?))
       AND e.IsReel=1 AND ISNULL(e.RfidReadCount,0)>0
       AND ISNULL(e.SessionCloseReason,'')<>'WAREHOUSE_ONLY'
     ORDER BY e.FirstSeen,e.EventId;
@@ -91,7 +112,7 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
         warehouse_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
         cur.execute(task_query, expanded_start, expanded_end)
         task_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
-        cur.execute(kpp_query, expanded_start, expanded_end)
+        cur.execute(kpp_query, expanded_start, expanded_end, start, end_exclusive)
         kpp_rows = [base.row_to_dict(cur, row) for row in cur.fetchall()]
 
     return build_report_records(warehouse_rows, task_rows, kpp_rows, start, end_exclusive)

@@ -6,6 +6,27 @@ from guardian.controller import Controller
 
 
 class ControllerTests(unittest.TestCase):
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_failed_rollback_before_commit_emergency_fences_actual_live_epoch(self, get):
+        controller,store=self.build()
+        store.grant.side_effect=TimeoutError("not committed")
+        store.lease.return_value={"owner":"perimetr","valid":True,"enabled":True,"epoch":12}
+        with patch("guardian.hardware_fence.fence_previous") as fence:
+            controller._rollback_hardware_handoff("perimetr",12)
+        fence.assert_called_once_with(controller.cfg,"perimetr",12,emergency=True,controller_store=store)
+        self.assertIn("perimetr",[c.args[0] for c in store.fault.call_args_list])
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_lost_rollback_ack_uses_actual_committed_epoch(self, get):
+        controller,store=self.build()
+        store.grant.side_effect=TimeoutError("lost ack after commit")
+        store.lease.return_value={"owner":None,"valid":False,"enabled":True,"epoch":14}
+        with patch("guardian.hardware_fence.fence_previous") as fence:
+            controller._rollback_hardware_handoff("perimetr",12)
+        fence.assert_called_once_with(controller.cfg,"perimetr",14)
+
     def build(self):
         cfg={"node_id":"comparator", "nodes":[
             {"id":"physical","priority":1,"url":"http://physical"},
@@ -36,6 +57,72 @@ class ControllerTests(unittest.TestCase):
         controller.poll=lambda node:(node["id"],{} if node["id"]=="physical" else {"prepared":True})
         controller.tick()
         self.assertEqual([None,"perimetr"],[c.args[0] for c in store.grant.call_args_list])
+
+    @patch.dict("os.environ",{"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_hardware_target_receipt_matches_new_owner_epoch(self,get):
+        controller,store=self.build()
+        controller.cfg["hardware_fencing_required"] = True
+        store.lease.side_effect=[
+            {"owner":"physical","valid":True,"enabled":True,"age":200,"epoch":10},
+            {"owner":"perimetr","valid":True,"enabled":True,"age":0,"epoch":12},
+        ]
+        store.pending_fences.return_value=[]
+        store.claim_controller.return_value=True
+        controller.poll=lambda node:(node["id"],{} if node["id"]=="physical" else {"prepared":True})
+        calls=[]
+        store.grant.side_effect=lambda owner,**kwargs:calls.append(("grant",owner,kwargs))
+        with patch("guardian.hardware_fence.allow_target", side_effect=lambda *args:calls.append(("allow",args)) ) as allow:
+            controller.tick()
+        allow.assert_called_once_with(controller.cfg,"perimetr",12)
+        self.assertLess(calls.index(("grant","perimetr",{})), calls.index(("allow",(controller.cfg,"perimetr",12))))
+
+    @patch.dict("os.environ",{"PERIMETER_HA_TOKEN":"test"})
+    @patch("guardian.controller.get_json",side_effect=TimeoutError)
+    def test_hardware_unfence_failure_rolls_back_and_quarantines_target(self,get):
+        controller,store=self.build()
+        controller.cfg["hardware_fencing_required"] = True
+        store.lease.side_effect=[
+            {"owner":"physical","valid":True,"enabled":True,"age":200,"epoch":10},
+            {"owner":"perimetr","valid":True,"enabled":True,"age":0,"epoch":12},
+        ]
+        store.pending_fences.side_effect=[[],[],[("perimetr",13)]]
+        store.claim_controller.return_value=True
+        controller.poll=lambda node:(node["id"],{} if node["id"]=="physical" else {"prepared":True})
+        with patch("guardian.hardware_fence.allow_target",side_effect=RuntimeError("unfence failed")) as allow, \
+             patch("guardian.hardware_fence.fence_previous",return_value={"verified":True}) as fence:
+            with self.assertRaisesRegex(RuntimeError,"unfence failed"):
+                controller.tick()
+        allow.assert_called_once_with(controller.cfg,"perimetr",12)
+        self.assertEqual([None,"perimetr",None],[c.args[0] for c in store.grant.call_args_list])
+        self.assertIn("perimetr", [c.args[0] for c in store.fault.call_args_list])
+        fence.assert_called_once_with(controller.cfg,"perimetr",13)
+
+    @patch.dict("os.environ", {"PERIMETER_HA_TOKEN": "test"})
+    @patch("guardian.controller.get_json", side_effect=TimeoutError)
+    def test_hardware_fence_runs_immediately_without_any_ready_reserve(self, get):
+        controller, store = self.build()
+        controller.cfg["hardware_fencing_required"] = True
+        controller.poll = lambda node: (node["id"], {})
+        store.pending_fences.side_effect = [[], [("physical", 2)]]
+        with patch("guardian.hardware_fence.fence_previous") as fence:
+            controller.tick()
+        store.grant.assert_called_once_with(None, fence_previous="physical")
+        fence.assert_called_once_with(controller.cfg, "physical", 2)
+        store.confirm_fence.assert_called_once_with("physical", 2)
+
+    def test_pending_fence_retried_with_empty_lease_and_no_reserves(self):
+        controller, store = self.build()
+        controller.cfg["hardware_fencing_required"] = True
+        store.lease.return_value.update(owner=None, valid=False, epoch=2)
+        store.pending_fences.return_value = [("physical", 2)]
+        controller.poll = lambda node: (node["id"], {})
+        with patch("guardian.hardware_fence.fence_previous", side_effect=TimeoutError) as fence:
+            with self.assertRaises(TimeoutError):
+                controller.tick()
+        fence.assert_called_once_with(controller.cfg, "physical", 2)
+        store.grant.assert_not_called()
+        store.confirm_fence.assert_not_called()
 
     def test_no_valid_reserve_means_no_new_owner(self):
         controller,store=self.build()

@@ -20,6 +20,7 @@ class Processes:
         self.children = {}
         self.logs = {}
         self.epoch = None
+        self.launch_counts = {}
         self.registry = Path(cfg["state_dir"]) / "children.json"
 
     def reap_orphans(self):
@@ -103,6 +104,16 @@ class Processes:
         env.update(PERIMETER_HA_NODE=self.cfg["node_id"], PERIMETER_HA_EPOCH=str(epoch),
                    PERIMETER_HA_STATE_DIR=self.cfg["state_dir"],
                    PERIMETER_HEALTH_HOST="127.0.0.1", RFID_HEADLESS="1")
+        if self.cfg.get("replication_enabled", False):
+            import json
+            env.update(PERIMETER_REPLICA_ENABLED="1",
+                       PERIMETER_REPLICA_NODES=json.dumps(self.cfg["nodes"]))
+        else:
+            env["PERIMETER_REPLICA_ENABLED"] = "0"
+        if self.cfg.get("fallback_enabled", False):
+            env.update(PERIMETER_FALLBACK_ENABLED="1",
+                       PERIMETER_FALLBACK_PATH=str(Path(self.cfg["state_dir"]) / "fallback.sqlite"),
+                       PERIMETER_FALLBACK_RETENTION_DAYS=str(max(93, int(self.cfg.get("fallback_retention_days", 93)))))
         registry = []
         try:
             for name, (_, script) in SERVICES.items():
@@ -113,6 +124,7 @@ class Processes:
                        cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, **options)
                 self.children[name] = p
+                self.launch_counts[name] = self.launch_counts.get(name, 0) + 1
                 thread = threading.Thread(target=self.capture, args=(p,logdir/(name+".log")), daemon=True)
                 self.logs[name] = thread
                 thread.start()

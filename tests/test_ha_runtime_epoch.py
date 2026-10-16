@@ -80,7 +80,7 @@ class EpochGrantTests(unittest.TestCase):
         store.grant("physical")
         closed = next(i for i, call in enumerate(calls) if call[1] == "CLOSE")
         gate = next(i for i, call in enumerate(calls) if "sp_getapplock" in call[1])
-        lease = next(i for i, call in enumerate(calls) if call[0] == 1 and "SELECT Id FROM dbo.KPP_HA_Lease" in call[1])
+        lease = next(i for i, call in enumerate(calls) if call[0] == 1 and "SELECT Epoch FROM dbo.KPP_HA_Lease" in call[1])
         self.assertLess(closed, gate)
         self.assertLess(gate, lease)
         connections[0].commit.assert_not_called()

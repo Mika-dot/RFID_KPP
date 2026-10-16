@@ -19,6 +19,15 @@ def rollback_failed_launch(cfg, record, launched):
             state = json.loads(record.read_text(encoding="utf-8"))
             if not state.get("pending") or not state.get("previous") or state["current"] != launched:
                 return False
+            # An operator-pinned release may be unhealthy, but its code identity
+            # is not rollback-eligible. This bootstrap guard must agree with
+            # Updates.rollback() even when the Guardian process never imports.
+            pin = state.get("operator_pinned_release")
+            if (isinstance(pin, str) and len(pin) == 40
+                    and all(c in "0123456789abcdef" for c in pin)
+                    and pin == launched.get("sha")):
+                print(json.dumps({"event":"bootstrap_pinned_failure", "sha":pin}), flush=True)
+                return False
             rejected = set(state.get("rejected", []))
             rejected.add(launched["sha"])
             state.update(current=state["previous"], previous=None, pending=False,

@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-12",
+  "reviewed_parent_sha": "70d71f93c80a45fbdd5b87336c429f76bef753f3",
+  "mode": "offline_no_production_connections",
+  "local_tests": {
+    "total": 655,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 15,
+    "executed": 640
+  },
+  "qualification": {
+    "status": "passed",
+    "golden_traces": 27,
+    "adapter_contracts": 6,
+    "ha_model_scenarios": 8,
+    "shadow_differences": 0,
+    "python_files_parsed": 128,
+    "trace_sha256": "a7ee0f8c63b6ff352989efdbd19e3c82454e0dde9f8b64c9769280bef7282096"
+  },
+  "review_fixes": {
+    "4247663857": "durable refresh-cycle membership deletes source-removed registry rows only after a complete cycle; legacy partial cursors restart safely",
+    "4247663863": "installation verification requires update.pending to be explicitly false on every node",
+    "4247663869": "public gateway rejects every executor host and the example points to ub22",
+    "4247663874": "warehouse supersession ratio uses ReelClassification or persisted WarningFlags"
+  },
+  "compile": "passed",
+  "diff_check": "passed",
+  "factory_runtime": {
+    "measured_at_msk": "2026-10-12T15:06:00+03:00",
+    "epoch": 3457,
+    "active": "comparator",
+    "active_release": "1c7930912ad84e8f205cf16fbdd715c76c9eb74e",
+    "candidate_7ae0283": "rejected_and_rolled_back",
+    "rfid": "TCPConnect_code_1_not_sustained",
+    "camera_1": "unavailable",
+    "web_port": "unavailable",
+    "healthy_owner": null
+  },
+  "native_acceptance": "not_measured",
+  "physical_ub22_installation": "not_started_for_this_candidate",
+  "week_test_started": false
+}

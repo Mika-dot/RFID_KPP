@@ -7,6 +7,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
+from common.warehouse_direction import project_warehouse_direction
+
 from common.warehouse_identity import (
     IdentityCandidate,
     IdentityRecord,
@@ -137,7 +139,6 @@ def build_report_records(
                 -int(event.get("EventId") or 0),
             ),
         ) if exact else None
-        matched_candidate = None
         if matched is not None:
             matched_method = _linked_method(warehouse, matched, resolution.candidates)
         else:
@@ -159,14 +160,13 @@ def build_report_records(
                             -int(event.get("EventId") or 0),
                         ),
                     )
-                    matched_candidate = candidate
                     matched_method = candidate.method
                     break
 
         if matched is not None:
             record = dict(matched)
             used_event_ids.add(int(record["EventId"]))
-            task = (matched_candidate.task if matched_candidate else None) or resolution.primary_task
+            task = resolution.task_for_tag(record.get("SourceTag"))
             record.update(
                 {
                     "Task1CId": record.get("Task1CId") or (task.row_id if task else None),
@@ -175,15 +175,10 @@ def build_report_records(
                     "Task1CSeriesNumber": record.get("Task1CSeriesNumber") or (task.series_number if task else ""),
                     "WarehouseMatchMethod": matched_method,
                     "WarehouseLinkStatus": f"MATCH_{matched_method}",
-                    "FinalDirection": (
-                        "OUT"
-                        if record.get("FinalDirection") in (None, "", "UNKNOWN")
-                        else record["FinalDirection"]
-                    ),
                 }
             )
         else:
-            task = resolution.primary_task
+            task = resolution.task_for_tag(resolution.preferred_tag)
             method = resolution.candidates[0].method if resolution.candidates else resolution.primary_method
             link_status = (
                 MATCH_AMBIGUOUS_SERIES
@@ -223,7 +218,7 @@ def build_report_records(
                 "WarehouseSeriesAmbiguous": resolution.series_ambiguous,
             }
         )
-        records.append(record)
+        records.append(project_warehouse_direction(record))
 
     for event in events:
         event_id = int(event.get("EventId") or 0)
@@ -235,7 +230,7 @@ def build_report_records(
         record["WarehouseMatchMethod"] = MATCH_NONE
         record["WarehouseLinkStatus"] = "KPP_ONLY"
         record["WarehouseSeriesAmbiguous"] = False
-        records.append(record)
+        records.append(project_warehouse_direction(record))
 
     records.sort(
         key=lambda row: (

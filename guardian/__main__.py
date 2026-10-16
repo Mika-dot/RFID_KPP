@@ -45,6 +45,13 @@ def main(argv=None):
     repair.add_argument("--action", choices=ACTIONS, default="verify")
     args = parser.parse_args(argv)
     cfg = read_config(args.config)
+    # Carry the authenticated local path for a narrowly scoped live refresh of
+    # auto_update.  All other topology, lease, SQL and secret config stays
+    # immutable for the life of the process.
+    cfg["_config_path"] = str(Path(args.config).resolve())
+    # Private node overrides apply also to Guardian's mirror/replication, not
+    # just the child workers. Existing credentials/destinations remain local.
+    os.environ.update(cfg.get("env", {}))
     Path(cfg["state_dir"]).mkdir(parents=True, exist_ok=True)
     # Pooling is a process-wide ODBC environment setting; configure it before
     # any agent thread or readiness check can create the first connection.
@@ -87,6 +94,7 @@ def main(argv=None):
         from guardian.repair import LmRepair
         functions += [Controller(cfg, store, telemetry, stop).run,
                       LmRepair(cfg, store, telemetry, stop).run]
+    functions += [node.bus_loop, node.replication_loop]
     threads = [threading.Thread(target=f, daemon=True) for f in functions]
     for thread in threads:
         thread.start()
