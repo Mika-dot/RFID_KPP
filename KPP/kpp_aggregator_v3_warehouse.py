@@ -425,7 +425,7 @@ SET WarehouseId=?, WarehouseDt=?, WarehouseDocIds=?,
     END,
     EvidenceJson=JSON_MODIFY(
         CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,
-        '$.warehouse',JSON_QUERY(?)),
+        '$.warehouse',JSON_QUERY(CONVERT(nvarchar(max), ?))),
     UpdatedAt=SYSDATETIME()
 WHERE EventId=?;
 """,
@@ -678,7 +678,7 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
         if evidence is not None:
             cur.execute(f"""UPDATE {Config.EVENT_TABLE}
 SET EvidenceJson=JSON_MODIFY(CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,
-    '$.retrospective',JSON_QUERY(?)),UpdatedAt=SYSDATETIME()
+    '$.retrospective',JSON_QUERY(CONVERT(nvarchar(max), ?))),UpdatedAt=SYSDATETIME()
 WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;""",
                         json.dumps(evidence, ensure_ascii=False), warehouse_id)
         return "warehouse_only", identity.series_ambiguous
