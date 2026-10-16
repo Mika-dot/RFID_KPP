@@ -49,5 +49,6 @@ jobs:
             tests.test_warehouse_aggregator \
             tests.test_warehouse_ntext_json \
             tests.test_warehouse_decimal_rssi \
+            tests.test_peer_heartbeat_fallback \
             tests.test_reconciliation_export \
             tests.test_deployment_hotfix
