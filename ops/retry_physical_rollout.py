@@ -9,7 +9,6 @@ import argparse
 import ctypes
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -97,6 +96,29 @@ def main():
         if journal.exists():
             raise RuntimeError("STOP: InstallRecoveryJournalExists; no retry")
 
+        # Qualify before waiting for a healthy HA window.  A Guardian failover
+        # may rewrite release.json, invalidating the byte-bound receipt.  Do not
+        # spend that narrow healthy window on tests and then discard it.
+        receipt_args = SimpleNamespace(release=RELEASE, config=CONFIG, environment=ENVIRONMENT)
+        try:
+            u.check_prepared(receipt_args, cfg)
+        except (RuntimeError, FileNotFoundError) as exc:
+            if str(exc) != "PreparedDeploymentInputsChanged" and not isinstance(exc, FileNotFoundError):
+                raise
+            output("REFRESH_QUALIFICATION")
+            rc, _ = execute(prep)
+            if rc:
+                raise RuntimeError("PrepareFailed: inspect output above")
+            # Continue into admission checks immediately; never 'continue'
+            # straight into a fresh HA wait after a successful qualification.
+            try:
+                u.check_prepared(receipt_args, cfg)
+            except RuntimeError as after:
+                if str(after) != "PreparedDeploymentInputsChanged":
+                    raise
+                output("RECEIPT_CHANGED_DURING_QUALIFICATION")
+                continue
+
         try:
             rows, owner = u.inventory(cfg, token, allow_degraded=True)
             for name in ("perimetr", "comparator"):
@@ -121,18 +143,6 @@ def main():
             continue
 
         output("HA_ADMISSION_OK", "owner=" + str(owner), "epoch=" + str(rows[owner]["epoch"]))
-        # Validate the exact receipt AFTER a healthy observation; never rewrite a
-        # qualified candidate or ledger manually.
-        try:
-            u.check_prepared(SimpleNamespace(release=RELEASE, config=CONFIG), cfg)
-        except (RuntimeError, FileNotFoundError) as exc:
-            if str(exc) != "PreparedDeploymentInputsChanged" and not isinstance(exc, FileNotFoundError):
-                raise
-            output("REFRESH_QUALIFICATION")
-            rc, _ = execute(prep)
-            if rc:
-                raise RuntimeError("PrepareFailed: inspect output above")
-            continue
 
         # Recheck the admission gate immediately before the native updater.
         try:
