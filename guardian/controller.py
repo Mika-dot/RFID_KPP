@@ -137,19 +137,45 @@ class Controller:
                 and lease["epoch"] == self.handoff[1] and observations[lease["owner"]].healthy):
             self.telemetry.event("handoff_ready", target=lease["owner"], epoch=lease["epoch"])
             self.handoff = None
-        # Roll an automatic main update through a validated reserve first.
+        # Automatic main rollouts must NEVER elect a fresh candidate while
+        # only one replica receiver has the candidate.  Qualify both passive
+        # receivers at the same exact SHA, in the same SQL epoch, before the
+        # planned HA handoff.  Ordinary fault failover remains independent.
         updating = False
-        if chosen == previous and previous and observations[previous].healthy:
+        if (self.cfg.get("auto_update", False) is True
+                and chosen == previous and previous and observations[previous].healthy):
             old = snapshots[previous].get("release_sha")
             target = snapshots[previous].get("main_sha")
-            if target and old != target:
-                for node in sorted(self.cfg["nodes"], key=lambda n: n["priority"]):
-                    nid = node["id"]
-                    if (nid != previous and snapshots[nid].get("release_sha") == target
-                        and observations[nid].prepared and not observations[nid].faulted
-                        and time.monotonic()-self.policy.stable.get(nid, time.monotonic()) >= self.policy.recovery_seconds):
-                        chosen, updating = nid, True
-                        break
+            peers = sorted(
+                (node for node in self.cfg["nodes"] if node["id"] != previous),
+                key=lambda node: node["priority"],
+            )
+            def receiver_ready(node):
+                row = snapshots[node["id"]]
+                preflight = row.get("preflight") or {}
+                update = row.get("update") or {}
+                age = row.get("preflight_sample_age")
+                return (
+                    row.get("release_sha") == target
+                    and row.get("active") is False
+                    and row.get("prepared") is True
+                    and row.get("faulted") is False
+                    and row.get("operator_maintenance") is False
+                    and row.get("replication_enabled") is True
+                    and row.get("fallback_enabled") is True
+                    and row.get("epoch") == lease["epoch"]
+                    and preflight.get("ok") is True
+                    and type(age) in (int, float) and 0 <= age < 90
+                    and update.get("qualification") == "passed"
+                    and time.monotonic() - self.policy.stable.get(
+                        node["id"], time.monotonic()) >= self.policy.recovery_seconds
+                )
+            if (target and target != old and len(peers) == 2
+                    and all(receiver_ready(node) for node in peers)):
+                chosen, updating = peers[0]["id"], True
+                self.telemetry.event("rolling_update_admitted",
+                                     previous=previous, target=target,
+                                     receivers=[node["id"] for node in peers])
         if chosen != previous:
             self.telemetry.event("handoff_detected", previous=previous, target=chosen)
             failure = previous and not observations[previous].healthy
