@@ -70,7 +70,29 @@ class Updates:
                 and qualification.get("status") == "passed"
                 and qualification.get("sha") in {current, candidate})
 
+    def _refresh_auto_update_opt_in(self):
+        """Hot-reload ONLY the explicit GitHub opt-in from local node.json.
+
+        This changes no SQL/fencing/topology/secret setting and never activates
+        code by itself; the existing candidate qualification and passive
+        activation gate still control every transition.
+        """
+        path = self.cfg.get("_config_path")
+        if not path:
+            return  # Legacy tests and in-process configurations.
+        try:
+            raw = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+            if type(raw) is not dict or type(raw.get("auto_update")) is not bool:
+                raise ValueError("AutoUpdateFlagMissingOrInvalid")
+            if raw.get("node_id") != self.cfg.get("node_id"):
+                raise ValueError("AutoUpdateConfigNodeMismatch")
+            self.cfg["auto_update"] = raw["auto_update"]
+        except (OSError, UnicodeError, ValueError, TypeError, KeyError):
+            # An unreadable/tampered configuration cannot enable deployment.
+            self.cfg["auto_update"] = False
+
     def stage(self):
+        self._refresh_auto_update_opt_in()
         if not self.cfg.get("auto_update", True) or not self.cfg.get("update_source"):
             return
         # Main must advance from the deployed base; reject force-pushed unrelated history.
