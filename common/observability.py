@@ -18,6 +18,7 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.request import Request, ProxyHandler, build_opener
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 
@@ -350,31 +351,66 @@ class HealthReporter:
             if previous_status != "unavailable":
                 self.capture_exception(exc)
 
+    @staticmethod
+    def _live_peer_ready(peer_service: str) -> bool:
+        """Never trust a stale heartbeat over a fresh local /health/ready 200.
+
+        This is a strict fallback, not a replacement for readiness: HTTP 503,
+        timeout, an unexpected service identity, or any malformed response
+        remain unavailable.  These dependencies are acyclic (Aggregator reads
+        readers; Web reads Aggregator), so the local requests cannot recurse.
+        """
+        config = SERVICE_CONFIG.get(peer_service)
+        if config is None:
+            return False
+        key = peer_service.upper().replace(".", "_") + "_HEALTH_PORT"
+        try:
+            port = int(os.getenv(key, str(config["port"])))
+            if port < 1 or port > 65535:
+                return False
+            opener = build_opener(ProxyHandler({}))
+            req = Request(f"http://127.0.0.1:{port}/health/ready",
+                          headers={"Connection": "close"})
+            with opener.open(req, timeout=0.65) as response:
+                if response.status != 200:
+                    return False
+                payload = json.loads(response.read(65536).decode("utf-8"))
+            return (isinstance(payload, dict) and
+                    payload.get("status") == "ok" and
+                    payload.get("service") == peer_service)
+        except (OSError, ValueError, TypeError, UnicodeError):
+            return False
+
     def _refresh_peers(self) -> None:
         with self.lock:
             peers = dict(self.peers)
         for dep_name, (peer_service, max_age) in peers.items():
             peer_path = self.heartbeat_path.parent / f"{peer_service}.json"
+            age = None
             try:
                 raw = json.loads(peer_path.read_text(encoding="utf-8"))
                 updated = datetime.fromisoformat(str(raw["heartbeat_at"]).replace("Z", "+00:00"))
                 age = max(0.0, (utc_now() - updated.astimezone(timezone.utc)).total_seconds())
                 peer_status = str(raw.get("status", "unknown")).lower()
-                status = "ok" if age <= max_age and peer_status == "ok" else "unavailable"
-                self.set_dependency(
-                    dep_name,
-                    status,
-                    data_age_seconds=age,
-                    stale_after_seconds=max_age,
-                    detail=None if status == "ok" else "peer_not_ready",
-                )
-            except Exception as exc:
-                self.set_dependency(
-                    dep_name,
-                    "unavailable",
-                    stale_after_seconds=max_age,
-                    detail=safe_error_name(exc),
-                )
+                if age <= max_age and peer_status == "ok":
+                    self.set_dependency(dep_name, "ok", data_age_seconds=age,
+                                        stale_after_seconds=max_age)
+                    continue
+            except (OSError, ValueError, TypeError, KeyError, OverflowError):
+                pass
+
+            # A file may describe a previous worker, or be several seconds
+            # behind its live HTTP status. Only an actual 200/ok from the same
+            # service may override this negative heartbeat evidence.
+            if self._live_peer_ready(peer_service):
+                self.set_dependency(dep_name, "ok", data_age_seconds=0,
+                                    stale_after_seconds=max_age,
+                                    detail="live_health_confirmed")
+            else:
+                self.set_dependency(dep_name, "unavailable",
+                                    data_age_seconds=age,
+                                    stale_after_seconds=max_age,
+                                    detail="peer_not_ready")
 
     def _dependency_snapshot(self) -> Dict[str, Dict[str, Any]]:
         now_mono = time.monotonic()
