@@ -45,6 +45,10 @@ def main(argv=None):
     repair.add_argument("--action", choices=ACTIONS, default="verify")
     args = parser.parse_args(argv)
     cfg = read_config(args.config)
+    # Carry the authenticated local path for a narrowly scoped live refresh of
+    # auto_update.  All other topology, lease, SQL and secret config stays
+    # immutable for the life of the process.
+    cfg["_config_path"] = str(Path(args.config).resolve())
     # Private node overrides apply also to Guardian's mirror/replication, not
     # just the child workers. Existing credentials/destinations remain local.
     os.environ.update(cfg.get("env", {}))
