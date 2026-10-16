@@ -124,7 +124,7 @@ def main():
         # Validate the exact receipt AFTER a healthy observation; never rewrite a
         # qualified candidate or ledger manually.
         try:
-            u.check_prepared(SimpleNamespace(release=RELEASE), cfg)
+            u.check_prepared(SimpleNamespace(release=RELEASE, config=CONFIG), cfg)
         except (RuntimeError, FileNotFoundError) as exc:
             if str(exc) != "PreparedDeploymentInputsChanged" and not isinstance(exc, FileNotFoundError):
                 raise
