@@ -18,6 +18,26 @@ class UpdateTests(unittest.TestCase):
         with patch.object(Updates,"git",return_value="a"*40):
             self.updates = Updates(self.cfg,Mock(),Mock())
 
+    def test_hot_update_opt_in_reads_only_flag_without_restart(self):
+        path = Path(self.tmp.name) / "node-config.json"
+        self.cfg.update(_config_path=str(path), node_id="physical", auto_update=False)
+        path.write_text(json.dumps({"node_id": "physical", "auto_update": True}))
+        self.updates._refresh_auto_update_opt_in()
+        self.assertTrue(self.cfg["auto_update"])
+        path.write_text(json.dumps({"node_id": "physical", "auto_update": False}))
+        self.updates._refresh_auto_update_opt_in()
+        self.assertFalse(self.cfg["auto_update"])
+
+    def test_hot_update_refuses_broken_or_wrong_node_config(self):
+        path = Path(self.tmp.name) / "node-config.json"
+        self.cfg.update(_config_path=str(path), node_id="physical", auto_update=True)
+        for raw in ('{broken', json.dumps({"node_id": "comparator", "auto_update": True}),
+                    json.dumps({"node_id": "physical", "auto_update": "true"})):
+            path.write_text(raw)
+            self.updates._refresh_auto_update_opt_in()
+            self.assertFalse(self.cfg["auto_update"])
+            self.cfg["auto_update"] = True
+
     def test_pending_release_not_replaced_again(self):
         self.updates.staged={"root":"/new","sha":"b"*40}
         self.assertTrue(self.updates.activate())
