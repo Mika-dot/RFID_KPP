@@ -57,7 +57,7 @@ class Updates:
         return result.stdout
 
     def stage(self):
-        if not self.cfg.get("auto_update", True) or not self.cfg.get("update_source"):
+        if self.cfg.get("auto_update") is not True or not self.cfg.get("update_source"):
             return
         # Main must advance from the deployed base; reject force-pushed unrelated history.
         self.git("fetch", "origin", "main")
