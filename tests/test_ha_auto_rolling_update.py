@@ -46,6 +46,7 @@ def fixture(auto_update=True):
     store.node_state.return_value = {"faulted": False}
     store.claim_controller.return_value = True
     controller = Controller(cfg, store, Mock(), threading.Event())
+    controller.policy.lease_identity = ("physical", 400)
     controller.policy.stable = {
         "perimetr": time.monotonic() - 240,
         "comparator": time.monotonic() - 240,
