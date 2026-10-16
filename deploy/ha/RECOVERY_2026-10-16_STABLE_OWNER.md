@@ -90,3 +90,52 @@ The first cross-platform run exposed a Windows-only decoding failure in the
 development SVG preview: Node emits UTF-8 while Python's pipe reader used the
 Windows locale. The preview now explicitly decodes UTF-8. The renderer tests
 remain enabled on Windows; no failing test or readiness gate was removed.
+
+## Host evidence and installer compatibility correction (16 October, evening)
+
+Operator output confirms Physical and Comparator installed the pinned target
+`62d0caa2863765419f98251372d7d376944fe004`, and `PAIR_READY` was reached.
+ub22 applied the observer/Grafana changes; backend queries passed; dashboard
+versions are overview 19 and visual 2, backup `visual-pr47rf26`.
+Perimetr remains on `1c7930912ad84e8f205cf16fbdd715c76c9eb74e` from
+`/opt/perimeter/source`; no Perimetr install success has been received.
+
+Subsequent observations show repeated ownership changes, Physical repair-rate
+attempts spaced about five seconds apart (three slots used), and at 18:08 all
+three sampled nodes passive/faulted after Comparator's unhealthy ownership.
+The observed Windows task restart completed, restarting its independent
+verification timer. `WriterLeaseInvalid` in an Aggregator tail proves fencing
+rejected that connection; without the matching lease chronology it does not
+identify the original service failure. Mirror lock errors remain unresolved.
+No new core acceptance is claimed.
+
+The passive Linux recovery path `release_update.py --apply --recover-reserve`
+is appropriate when Perimetr is not owner and no healthy owner is available.
+It retains exact candidate qualification, replica receiver checks, SQL lease
+checks, native binding journal/rollback and independent post-install checks.
+It refuses to replace an active reserve. Ordinary `finish` requires two ready
+reserves and cannot recover this observed all-faulted state.
+
+Perimetr preparation stopped at `InstalledLegacyBaselineChanged`. The operator
+then proved HEAD and tree equal the known legacy baseline (tree
+`eb3dbddd5f73c3fc7c32fa53e14e612ee96d3cd5`), with exactly one tracked change:
+`guardian/boot.py`, nine additions. The historical commit `93dbe1b` adds exactly
+nine lines protecting operator-pinned releases from bootstrap rollback.
+
+The installer compatibility fix accepts this one insertion only: original boot
+content is read from the validated baseline Git object, the published literal
+pin guard is inserted at its unique anchor, and the actual file must match the
+result. Other changed paths, changes to the guard, other boot edits, unexpected
+HEAD/tree and missing files remain blocked. The existing three exact legacy
+business replay exceptions and all qualification stages remain unchanged.
+Installed source files, the pin, SQL flags, queues and repair-rate files are not
+rewritten to obtain admission.
+
+Use a separate clean checkout of the installer fix for `--prepare` and
+`--apply --recover-reserve --pin-release --refresh-bootstrap`, targeting the
+**existing runtime SHA 62d0caa**, not the installer commit. Then use the original
+62d0caa recovery-tools checkout for `--phase verify --release 62d0caa...` because
+that command requires its own checkout HEAD to match the runtime target.
+Physical, Comparator and Grafana do not require installation of this installer
+compatibility change. The host still must confirm the exact boot insertion;
+nine additions alone are not sufficient authorization for arbitrary content.
