@@ -17,7 +17,9 @@ from pathlib import Path
 
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
-    cli.add_argument("--enable", action="store_true")
+    mode = cli.add_mutually_exclusive_group()
+    mode.add_argument("--enable", action="store_true")
+    mode.add_argument("--disable", action="store_true")
     cli.add_argument("--expected-release", required=True)
     cli.add_argument("--config", type=Path,
                      default=Path("D:/PerimeterHA/node.json" if os.name == "nt"
@@ -40,13 +42,14 @@ def main():
 
     if current != args.expected_release:
         raise RuntimeError("UnexpectedInstalledRelease")
-    if release.get("operator_pinned_release") != current:
-        raise RuntimeError("ExpectedPinnedBaselineRequired")
-    qualification = release.get("qualification") or {}
-    if (release.get("pending") and
-            (qualification.get("status") != "passed"
-             or qualification.get("sha") != current)):
-        raise RuntimeError("PendingTrialNotQualifiedForPinnedReplacement")
+    if args.enable:
+        if release.get("operator_pinned_release") != current:
+            raise RuntimeError("ExpectedPinnedBaselineRequired")
+        qualification = release.get("qualification") or {}
+        if (release.get("pending") and
+                (qualification.get("status") != "passed"
+                 or qualification.get("sha") != current)):
+            raise RuntimeError("PendingTrialNotQualifiedForPinnedReplacement")
     if (cfg.get("replication_enabled") is not True
             or cfg.get("fallback_enabled") is not True
             or cfg.get("auto_failback") is not False):
@@ -69,7 +72,7 @@ def main():
     print("POLL_SECONDS", cfg.get("update_poll_sec", 60))
     print("GITHUB_TRACK", "origin/main")
     print("REQUIRES_GUARDIAN_RELOAD", cfg.get("auto_update") is not True)
-    if not args.enable:
+    if not (args.enable or args.disable):
         print("READ_ONLY_NO_CHANGE")
         return 0
 
@@ -78,11 +81,12 @@ def main():
     sys.path.insert(0, release["current"]["root"])
     from deploy.ha.release_update import write_private
     new_cfg = dict(cfg)
-    new_cfg["auto_update"] = True
-    new_cfg["update_poll_sec"] = 60
+    new_cfg["auto_update"] = bool(args.enable)
+    if args.enable:
+        new_cfg["update_poll_sec"] = 60
     if new_cfg != cfg:
         write_private(config, new_cfg, config)
-        print("CONFIG_ENABLED_GUARDIAN_RELOAD_REQUIRED")
+        print("CONFIG_AUTO_UPDATE", new_cfg["auto_update"], "LIVE_REFRESH_PENDING")
     else:
         print("CONFIG_ALREADY_ENABLED")
     # "enabled" is the disk state only; the running Guardian may still have
