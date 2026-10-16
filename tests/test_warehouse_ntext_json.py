@@ -99,7 +99,7 @@ class WarehouseNtextJsonTests(unittest.TestCase):
         agg.ADAPTIVE_WINDOWS_ENABLED = True
         agg.ADAPTIVE_WINDOWS_MODE = "shadow"
         agg.last_adaptive_refresh = datetime.min
-        agg.adaptive_windows = AdaptiveWindowModel()
+        agg.adaptive_windows = agg._new_adaptive_model()
         cursor = RecordingCursor()
         agg._refresh_adaptive_model(FakeConnection(cursor), force=True)
         self.assertEqual(len(cursor.statements), 1)
