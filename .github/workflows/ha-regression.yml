@@ -1,7 +1,7 @@
 name: Perimeter HA regression
 on:
   push:
-    branches: [main, feature/perimeter-ha-guardian, feature/adaptive-correlation-fallback-2026-10-08]
+    branches: [main, feature/perimeter-ha-guardian, feature/adaptive-correlation-fallback-2026-10-08, fix/warehouse-ntext-sql-8116-20261016]
   pull_request:
     branches: [main, feature/ha-resilience-2026-10-07]
 permissions:
