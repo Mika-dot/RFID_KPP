@@ -59,9 +59,14 @@ def main():
     if (state_dir / "operator-release-install.json").exists():
         raise RuntimeError("DeploymentRecoveryJournalRequiresInspection")
 
+    # Linux worktree belongs to the dedicated perimeter service account.
+    # Running Git as root triggers safe.directory ownership protection.
+    # Verify the exact remote WITHOUT disabling Git ownership checks.
+    git_cmd = ["git", "-C", cfg["update_source"], "remote", "get-url", "origin"]
+    if os.name != "nt":
+        git_cmd = ["runuser", "-u", "perimeter", "--", *git_cmd]
     origin = subprocess.run(
-        ["git", "-C", cfg["update_source"], "remote", "get-url", "origin"],
-        check=True, text=True, capture_output=True, timeout=20,
+        git_cmd, check=True, text=True, capture_output=True, timeout=20,
     ).stdout.strip().removesuffix(".git")
     if origin != "https://github.com/Mika-dot/RFID_KPP":
         raise RuntimeError("UntrustedGitOrigin")
