@@ -149,8 +149,8 @@ WHERE WarehouseId IS NOT NULL
   AND FirstSeen IS NOT NULL
   AND WarehouseDt IS NOT NULL
   AND WarehouseDt>=DATEADD(day,-?,SYSDATETIME())
-  AND JSON_VALUE(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,'$.warehouse.adaptive_match') IS NULL
-  AND JSON_VALUE(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,'$.warehouse.match_method') IN ('TAG','IDS')
+  AND JSON_VALUE(CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,'$.warehouse.adaptive_match') IS NULL
+  AND JSON_VALUE(CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,'$.warehouse.match_method') IN ('TAG','IDS')
 ORDER BY WarehouseDt DESC,EventId DESC;
 """,
             lookback_days,
@@ -381,7 +381,7 @@ ORDER BY CASE WHEN WarehouseId=? THEN 0 ELSE 1 END,
         task_dt = task.dt if task else None
         task_doc = task.ids if task else None
         link_status = f"MATCH_{match_method}"
-        cur.execute(f"SELECT JSON_QUERY(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,"
+        cur.execute(f"SELECT JSON_QUERY(CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,"
                     f"'$.warehouse') FROM {Config.EVENT_TABLE} "
                     "WITH (UPDLOCK) WHERE EventId=?", event_id)
         previous = cur.fetchone()
@@ -424,7 +424,7 @@ SET WarehouseId=?, WarehouseDt=?, WarehouseDocIds=?,
         ELSE CONCAT(WarningFlags,' | WAREHOUSE_CONFIRMED')
     END,
     EvidenceJson=JSON_MODIFY(
-        CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+        CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,
         '$.warehouse',JSON_QUERY(?)),
     UpdatedAt=SYSDATETIME()
 WHERE EventId=?;
@@ -457,7 +457,7 @@ SET IsReel=0,
         ELSE CONCAT(WarningFlags,' | SUPERSEDED_BY_KPP')
     END,
     EvidenceJson=JSON_MODIFY(
-        CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+        CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,
         '$.superseded_by_event_id',?),
     ProcessingVersion='3.4.5-warehouse-recheck',
     UpdatedAt=SYSDATETIME()
@@ -677,7 +677,7 @@ WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;
         evidence = self._retrospective_evidence(cur, identity.preferred_tag, warehouse_dt)
         if evidence is not None:
             cur.execute(f"""UPDATE {Config.EVENT_TABLE}
-SET EvidenceJson=JSON_MODIFY(CASE WHEN ISJSON(EvidenceJson)=1 THEN EvidenceJson ELSE '{{}}' END,
+SET EvidenceJson=JSON_MODIFY(CASE WHEN ISJSON(CONVERT(nvarchar(max), EvidenceJson))=1 THEN CONVERT(nvarchar(max), EvidenceJson) ELSE N'{{}}' END,
     '$.retrospective',JSON_QUERY(?)),UpdatedAt=SYSDATETIME()
 WHERE WarehouseId=? AND SessionCloseReason='WAREHOUSE_ONLY' AND IsReel=1;""",
                         json.dumps(evidence, ensure_ascii=False), warehouse_id)
