@@ -35,6 +35,7 @@ class RecordingCursor:
         assert sql.count("?") == len(parameters), (sql, parameters)
         assert "ISJSON(EvidenceJson)" not in sql, sql
         assert "THEN EvidenceJson ELSE" not in sql, sql
+        assert "JSON_QUERY(?)" not in sql, sql
         if "EvidenceJson" in sql and any(
             token in sql for token in ("JSON_QUERY(", "JSON_MODIFY(", "JSON_VALUE(")
         ):
@@ -69,6 +70,8 @@ class WarehouseNtextJsonTests(unittest.TestCase):
         self.assertEqual(source.count("THEN " + CAST + " ELSE N'{{}}'"), 6)
         self.assertNotIn("ISJSON(EvidenceJson)", source)
         self.assertNotIn("THEN EvidenceJson ELSE", source)
+        self.assertEqual(source.count("JSON_QUERY(CONVERT(nvarchar(max), ?))"), 2)
+        self.assertNotIn("JSON_QUERY(?)", source)
 
     def test_enrich_existing_event_reads_and_writes_with_safe_cast(self):
         cursor = RecordingCursor(rows=[(None,)])
@@ -82,8 +85,24 @@ class WarehouseNtextJsonTests(unittest.TestCase):
         self.assertIn("SELECT JSON_QUERY(" + SAFE, cursor.statements[0][0])
         self.assertIn("EvidenceJson=JSON_MODIFY(", cursor.statements[1][0])
         self.assertIn(SAFE, cursor.statements[1][0])
+        self.assertIn("JSON_QUERY(CONVERT(nvarchar(max), ?))", cursor.statements[1][0])
         payload = cursor.statements[1][1][-2]
         self.assertEqual(json.loads(payload)["id"], 101)
+
+    def test_large_pyodbc_json_parameter_is_explicitly_converted(self):
+        # With long JSON strings pyodbc may bind '?' as SQL_WLONGVARCHAR
+        # (ntext), which JSON_QUERY rejects with SQL error 8116.
+        cursor = RecordingCursor(rows=[(None,)])
+        agg = self.make_agg()
+        agg._adaptive_link_evidence = {44: {"audit_note": "x" * 6000}}
+        agg._enrich_existing_event(
+            cursor, 44, 101, self.dt, "00000000-0000-0000-0000-000000000001",
+            "7734/26", None, MATCH_TAG,
+        )
+        query, params = cursor.statements[-1]
+        self.assertGreater(len(params[-2]), 4000)
+        self.assertIn("JSON_QUERY(CONVERT(nvarchar(max), ?))", query)
+        self.assertEqual(json.loads(params[-2])["audit_note"], "x" * 6000)
 
     def test_supersede_synthetic_event_uses_safe_cast(self):
         cursor = RecordingCursor()
@@ -126,6 +145,7 @@ class WarehouseNtextJsonTests(unittest.TestCase):
         self.assertEqual(len(cursor.statements), 1)
         sql, params = cursor.statements[0]
         self.assertIn("EvidenceJson=JSON_MODIFY(" + SAFE, sql)
+        self.assertIn("JSON_QUERY(CONVERT(nvarchar(max), ?))", sql)
         self.assertEqual(json.loads(params[0])["id"], 101)
         self.assertEqual(params[1], 101)
 
