@@ -91,6 +91,7 @@ class Node:
             result["preflight_sample_age"] = time.monotonic()-getattr(self,"preflight_at",0)
             result["release_sha"] = self.updates.state["current"]["sha"]
             result["main_sha"] = self.updates.main_sha
+            result["auto_update"] = self.cfg.get("auto_update") is True
             result["update"] = {"pending": self.updates.state.get("pending", False),
                 "trial_started": self.updates.state.get("trial_started", False),
                 "quarantined": len(self.updates.quarantined) if isinstance(getattr(self.updates, "quarantined", None), (set, list, tuple)) else 0,
