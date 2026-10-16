@@ -1,6 +1,7 @@
 import copy
 import io
 import json
+import shutil
 import tempfile
 import time
 import unittest
@@ -91,6 +92,36 @@ class FakeGrafana:
 
 
 class VisualTests(unittest.TestCase):
+    def test_old_quarantine_is_history_and_maintenance_is_explicit(self):
+        data = sample_cluster()
+        for value in data['nodes'].values():
+            value['repair'] = {'verification_required': False}
+            value['update'] = {'pending': False, 'quarantined': 2}
+        data['nodes']['comparator']['operator_maintenance'] = True
+        rows = {row['id']:row for row in monitor.diagram_rows(data)}
+        self.assertEqual('ready', rows['repair']['state'])
+        self.assertIn('история', rows['repair']['detail'])
+        self.assertEqual('warning', rows['comparator']['state'])
+        self.assertIn('ОБСЛУЖИВАНИЕ', rows['comparator']['detail'])
+        self.assertIn('172.31.0.97', rows['gateway']['detail'])
+        data['nodes']['comparator']['faulted'] = True
+        data['nodes']['comparator']['operator_maintenance'] = False
+        self.assertEqual('critical', next(r for r in monitor.diagram_rows(data) if r['id']=='comparator')['state'])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for actual panel JS evaluation')
+    def test_panel_renders_every_route_and_arrow_without_claiming_live_flow(self):
+        from deploy.ha.render_visual_preview import evaluate, sample
+        for scenario in ('normal', 'physical-down', 'no-sql', 'stale'):
+            with self.subTest(scenario=scenario):
+                rows = monitor.diagram_rows(sample(scenario))
+                graphics = {g['id']:g for g in evaluate(rows)['graphic'][0]['children']}
+                for edge in (r for r in rows if r['kind']=='edge'):
+                    self.assertEqual('polyline', graphics[edge['id']]['type'])
+                    self.assertGreaterEqual(graphics[edge['id']]['style']['opacity'], .6)
+                    self.assertEqual('polygon', graphics[edge['id']+'-head']['type'])
+                if scenario in ('no-sql', 'stale'):
+                    self.assertFalse(any(r['state']=='active' for r in rows if r['kind']=='edge'))
+
     def test_partial_mirror_is_warning_and_never_a_ready_local_copy(self):
         data = sample_cluster()
         rows = monitor.diagram_rows(data)

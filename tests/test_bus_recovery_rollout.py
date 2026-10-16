@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from deploy.ha import recover_bus_rollout as rollout
 
@@ -17,7 +17,7 @@ class RecoveryRolloutTests(unittest.TestCase):
         self.args=rollout.options(SimpleNamespace(release='b'*40))
         self.env={'PERIMETER_HA_TOKEN':'test-token'}
         self.rows={key:dict(node=key,sample_age=1,fencing_protocol=2,release_sha='b'*40,
-            epoch=15,prepared=True,faulted=False,operator_maintenance=False,
+            auto_failback=False,epoch=15,prepared=True,faulted=False,operator_maintenance=False,
             active=key=='physical',healthy=key=='physical',
             update={'operator_pinned':True,'pending':key!='physical'},
             services={str(i):{'ok':True} for i in range(5)},
@@ -27,8 +27,9 @@ class RecoveryRolloutTests(unittest.TestCase):
 
     def test_acceptance_requires_all_pins_live_workers_fresh_metrics_and_completed_owner_trial(self):
         self.assertEqual((True,'physical',True),rollout.acceptance(self.rows,self.args.release))
-        for case in ('pin','version','fault','worker','metrics','trial','maintenance','two_owners'):
+        for case in ('pin','version','fault','worker','metrics','trial','maintenance','two_owners','failback'):
             rows=copy.deepcopy(self.rows)
+            if case=='failback':rows['comparator']['auto_failback']=True
             if case=='pin':rows['comparator']['update']['operator_pinned']=False
             if case=='version':rows['perimetr']['release_sha']='a'*40
             if case=='fault':rows['comparator']['faulted']=True
@@ -40,9 +41,52 @@ class RecoveryRolloutTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertFalse(rollout.acceptance(rows,self.args.release)[0])
 
+    def test_verify_requires_two_minutes_continuous_health_after_any_bad_sample(self):
+        clock = [0]
+        response = Mock(status=200)
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        opener = Mock()
+        opener.open.return_value = response
+        calls = [0]
+        def inventory(*args):
+            calls[0] += 1
+            rows = copy.deepcopy(self.rows)
+            if calls[0] == 13:  # Degrade once, 60 seconds into the first interval.
+                rows['physical']['services']['0']['ok'] = False
+            return rows, 'physical'
+        with patch.object(rollout.update, 'inventory', side_effect=inventory), \
+                patch.object(rollout.time, 'monotonic', side_effect=lambda: clock[0]), \
+                patch.object(rollout.time, 'sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0]+seconds)), \
+                patch.object(rollout, 'build_opener', return_value=opener), patch.object(rollout, 'emit'):
+            result = rollout.verify(self.args, self.cfg, self.env)
+        self.assertEqual(185, clock[0])
+        self.assertEqual(120, result['stable_seconds'])
+        opener.open.assert_called_once()
+
+    def test_verify_rejects_divergent_epochs_even_with_healthy_rows(self):
+        self.rows['comparator']['epoch'] = 14
+        with patch.object(rollout.update, 'inventory', return_value=(self.rows, 'physical')), \
+                patch.object(rollout.time, 'monotonic', side_effect=[0, 601]), \
+                patch.object(rollout, 'emit') as emit, patch.object(rollout, 'build_opener') as opener:
+            with self.assertRaisesRegex(RuntimeError, 'LiveAcceptanceNotConfirmed'):
+                rollout.verify(self.args, self.cfg, self.env)
+        self.assertEqual(0, emit.call_args.kwargs['accepted_samples'])
+        opener.assert_not_called()
+
     def test_mirror_error_is_explicitly_separate_from_core_ha_acceptance(self):
         self.rows['comparator']['metadata_mirror']['error']='MirrorReadBlocked'
         self.assertEqual((True,'physical',False),rollout.acceptance(self.rows,self.args.release))
+
+    def test_repeated_held_phase_does_not_reinstall_an_observed_pinned_target(self):
+        self.rows['comparator'].update(operator_maintenance=True, preflight={'ok':True})
+        with patch.object(rollout.update, 'inventory', return_value=(self.rows, 'physical')), \
+                patch.object(rollout.update, 'prepare') as prepare, \
+                patch.object(rollout.update, 'apply') as apply, patch.object(rollout, 'emit'):
+            result = rollout.stage_held(self.args, self.cfg, self.env)
+        self.assertTrue(result['already_installed'])
+        prepare.assert_not_called()
+        apply.assert_not_called()
 
     def test_hold_refuses_active_node_before_maintenance_preparation_or_install(self):
         with patch.object(rollout.update,'inventory',return_value=(self.rows,'comparator')), \

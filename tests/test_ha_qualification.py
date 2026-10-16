@@ -42,7 +42,7 @@ class QualificationTests(unittest.TestCase):
     def test_full_installed_pipeline_accepts_current_production_sources(self):
         proof=qualify(ROOT,ROOT)
         self.assertEqual(27,proof["golden_traces"]);self.assertEqual(0,proof["shadow_differences"])
-        self.assertEqual(6,proof["adapter_contracts"]);self.assertEqual(8,proof["ha_model_scenarios"])
+        self.assertEqual(6,proof["adapter_contracts"]);self.assertEqual(9,proof["ha_model_scenarios"])
 
     def test_candidate_owned_green_suite_cannot_hide_changed_sql_source_timestamp(self):
         with tempfile.TemporaryDirectory() as folder:

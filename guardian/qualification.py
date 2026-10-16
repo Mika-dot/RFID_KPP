@@ -139,7 +139,7 @@ def qualify(candidate, stable, traces=None, allowlist=None):
                 differences.append(diff)
                 if diff not in allowed:
                     raise RuntimeError("CandidateUnapprovedShadowDifference")
-    return {"status":"passed", "python_files_parsed":parsed, "adapter_contracts":6, "ha_model_scenarios":8, "golden_traces":len(current),
+    return {"status":"passed", "python_files_parsed":parsed, "adapter_contracts":6, "ha_model_scenarios":9, "golden_traces":len(current),
             "shadow_differences":len(differences), "trace_sha256":hashlib.sha256(traces.read_bytes()).hexdigest(),
             "mode":"offline_recorded_inputs_no_production_connections"}
 

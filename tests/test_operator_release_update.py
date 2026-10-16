@@ -215,6 +215,7 @@ class OperatorUpdateTests(unittest.TestCase):
         self.assertEqual(self.candidate,run.call_args_list[-1].kwargs["cwd"])
         value=json.loads((self.folder/"node.json").read_text(encoding="utf-8"))
         self.assertEqual(self.cfg["env"]["RFID_SPOOL_PATH"],value["env"]["RFID_SPOOL_PATH"])
+        self.assertFalse(value["auto_failback"])
         self.assertFalse(value["auto_update"]);self.assertEqual("shadow",value["env"]["KPP_ADAPTIVE_WINDOWS_MODE"])
 
     def test_changed_secret_config_record_or_candidate_refuses_before_native_stop(self):

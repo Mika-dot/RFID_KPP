@@ -39,6 +39,16 @@ def stage_held(args, cfg, env):
     rows, owner = update.inventory(cfg, token)
     if own == owner:
         raise RuntimeError('LocalNodeIsActive:held_stage_requires_passive_node; no services changed')
+    row = rows[own]
+    if (row.get('release_sha') == args.release and update.fresh_node(row, own)
+            and row.get('update', {}).get('operator_pinned') is True
+            and row.get('auto_failback') is False
+            and row.get('operator_maintenance') is True
+            and row.get('preflight', {}).get('ok') is True):
+        result = dict(installed=True, already_installed=True, node=own,
+                      maintenance_held=True, workers_started=False)
+        emit('HELD_NODE_INSTALLED', **result)
+        return result
     old_release = rows[own]['release_sha']
     was_held = rows[own].get('operator_maintenance') is True
     # This SQL-checked endpoint refuses a concurrent acquisition by this node.
@@ -106,7 +116,8 @@ def acceptance(rows, release):
         good = good and (update.fresh_node(row, key)
             and row.get('release_sha') == release and row.get('prepared') is True
             and row.get('faulted') is False and row.get('operator_maintenance') is False
-            and row.get('update', {}).get('operator_pinned') is True)
+            and row.get('update', {}).get('operator_pinned') is True
+            and row.get('auto_failback') is False)
     if owner:
         row = rows[owner]
         health = row.get('services', {})
@@ -127,31 +138,38 @@ def acceptance(rows, release):
 
 def verify(args, cfg, env):
     deadline, stable, identity = time.monotonic()+600, 0, None
+    stable_since = None
     while True:
         try:
             rows, _ = update.inventory(cfg, env['PERIMETER_HA_TOKEN'])
             good, owner, mirrors = acceptance(rows, args.release)
             epochs = {row.get('epoch') for row in rows.values()}
             new_identity = (owner, next(iter(epochs))) if len(epochs) == 1 else None
+            good = good and new_identity is not None
             stable = stable+1 if good and identity == new_identity else int(good)
+            if not good:
+                stable_since = None
+            elif identity != new_identity or stable_since is None:
+                stable_since = time.monotonic()
             identity = new_identity
+            stable_sec = time.monotonic()-stable_since if stable_since is not None else 0
             summary = {key:{field:row.get(field) for field in
                 ('release_sha','active','healthy','prepared','faulted','epoch')}
                 for key,row in rows.items()}
-            emit('VERIFYING', nodes=summary, accepted_samples=stable,
+            emit('VERIFYING', nodes=summary, accepted_samples=stable, stable_seconds=round(stable_sec, 1),
                  mirrors_without_reported_errors=mirrors)
-            if stable >= 3:
+            if stable >= 3 and stable_sec >= 120:
                 opener = build_opener(ProxyHandler({}))
                 with opener.open(Request('http://172.31.0.97:5051/health/ready'), timeout=5) as response:
                     gateway = response.status == 200
                 if gateway:
                     result = dict(core_ha_accepted=True, owner=owner, epoch=identity[1],
-                        gateway_ready=True, mirrors_without_reported_errors=mirrors,
+                        gateway_ready=True, stable_seconds=round(stable_sec, 1), mirrors_without_reported_errors=mirrors,
                         long_term_stability='not_yet_measured', physical_business_acceptance='not_measured')
                     emit('CORE_HA_ACCEPTED', **result)
                     return result
         except Exception as exc:
-            stable, identity = 0, None
+            stable, identity, stable_since = 0, None, None
             emit('WAITING_FOR_READINESS', error=type(exc).__name__)
         if time.monotonic() >= deadline:
             raise RuntimeError('LiveAcceptanceNotConfirmed:no_automatic_rollback; inspect_reported_status')

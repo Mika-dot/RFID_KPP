@@ -30,7 +30,7 @@ const text = (id, x, y, content, size, color, weight = 500) => ({
   style: { text: String(content || ""), font: `${weight} ${Math.max(10, size * scale)}px sans-serif`,
            fill: color, verticalAlign: "middle", align: "left" }
 });
-// Thin grey routes show reserves; only observed healthy paths are highlighted.
+// Thin grey routes show reserves; arrows remain visible even when telemetry is unavailable.
 for (const row of rows.filter(row => row.kind === "edge")) {
   const source = cards.get(row.source), target = cards.get(row.target);
   if (!source || !target) continue;
@@ -51,15 +51,15 @@ for (const row of rows.filter(row => row.kind === "edge")) {
   }
   points = points.map(point => [px(point[0]), py(point[1])]);
   items.push({ id: row.id, type: "polyline", silent: true, z: 0,
-    shape: { points }, style: { stroke: color, fill: null, lineWidth: active ? 2.8 : 1,
-      lineDash: active ? null : [3, 5], opacity: active ? 1 : .17,
+    shape: { points }, style: { stroke: color, fill: null, lineWidth: active ? 2.8 : 1.5,
+      lineDash: active ? null : [3, 5], opacity: active ? 1 : .65,
       shadowColor: active ? color : "transparent", shadowBlur: active ? 5 : 0 } });
-  if (active) {
+  {
     const end = points[points.length - 1], before = points[points.length - 2];
     const angle = Math.atan2(end[1] - before[1], end[0] - before[0]);
     const tip = [end, [end[0] - 8 * Math.cos(angle) + 4 * Math.sin(angle), end[1] - 8 * Math.sin(angle) - 4 * Math.cos(angle)],
                       [end[0] - 8 * Math.cos(angle) - 4 * Math.sin(angle), end[1] - 8 * Math.sin(angle) + 4 * Math.cos(angle)]];
-    items.push({ id: row.id + "-head", type: "polygon", silent: true, z: 1, shape: { points: tip }, style: { fill: color } });
+    items.push({ id: row.id + "-head", type: "polygon", silent: true, z: 1, shape: { points: tip }, style: { fill: color, opacity: active ? 1 : .65 } });
   }
 }
 for (const row of cards.values()) {

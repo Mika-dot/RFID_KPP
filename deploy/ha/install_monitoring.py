@@ -157,6 +157,7 @@ def probe(pair):
             result["controller"] = full.get("controller", {})
             result["update"] = full.get("update", {})
             result["repair"] = full.get("repair", {})
+            result["operator_maintenance"] = full.get("operator_maintenance") is True
             result["recovery_timing"] = full.get("recovery_timing")
             result["correlation"] = full.get("correlation", {})
     except Exception as exc:
@@ -328,7 +329,7 @@ def diagram_rows(data):
     rows = []
     nodes = data["nodes"]
     active = [node for node in NODES if nodes.get(node, {}).get("reachable") and nodes[node].get("active")]
-    owner = active[0] if len(active) == 1 and nodes[active[0]].get("severity") == 0 and not data.get("stale") else None
+    owner = active[0] if len(active) == 1 and nodes[active[0]].get("severity") == 0 and nodes[active[0]].get("snapshot_fresh") and not data.get("stale") else None
     def card(key, label, detail, state, x, y, w=350, h=42, kind="card"):
         rows.append(dict(id=key, kind=kind, label=label, detail=detail, state=state, x=x, y=y, w=w, h=h))
     def edge(key, source, target, enabled=False, control=False):
@@ -345,9 +346,16 @@ def diagram_rows(data):
     for index, node in enumerate(NODES):
         value = nodes.get(node, {})
         x = 60 + index * 465
-        state = "unknown" if data.get("stale") or "reachable" not in value else "critical" if not value.get("reachable") else "active" if node == owner else "critical" if value.get("faulted") or value.get("active") else "ready" if value.get("prepared") else "warning"
+        if data.get("stale") or "reachable" not in value or (value.get("reachable") and not value.get("snapshot_fresh")):
+            state = "unknown"
+        elif not value.get("reachable") or value.get("faulted") or (value.get("active") and node != owner):
+            state = "critical"
+        elif value.get("operator_maintenance"):
+            state = "warning"
+        else:
+            state = "active" if node == owner else "ready" if value.get("prepared") else "warning"
         card(node, LABELS[node] + " • " + ("1" if index == 0 else "2" if index == 1 else "3"),
-             value.get("role", "НЕИЗВЕСТНО") + "  |  " + NODES[node] + "  |  " + value.get("release", "—")[:8], state, x, 80, h=48, kind="header")
+             ("НЕИЗВЕСТНО" if state == "unknown" else "ОБСЛУЖИВАНИЕ" if value.get("operator_maintenance") else value.get("role", "НЕИЗВЕСТНО")) + "  |  " + NODES[node] + "  |  " + value.get("release", "—")[:8], state, x, 80, h=48, kind="header")
         for name, label, offset in (("RfidReader", "RFID", 0), ("Yolo", "YOLO", 120), ("RusGuardSync", "СКУД", 240)):
             service = value.get("services", {}).get(name, {})
             observed = value.get("snapshot_fresh") and service.get("observed") and not data.get("stale")
@@ -399,13 +407,13 @@ def diagram_rows(data):
     trials = sum(bool(v.get("update", {}).get("pending")) for v in observed_repair)
     quarantined = sum(v.get("update", {}).get("quarantined", 0) for v in observed_repair
                       if type(v.get("update", {}).get("quarantined")) is int)
-    repair_state = "unknown" if data.get("stale") or len(observed_repair) != 3 else "warning" if pending_repairs or trials or quarantined else "ready"
+    repair_state = "unknown" if data.get("stale") or len(observed_repair) != 3 else "warning" if pending_repairs or trials else "ready"
     repair_detail = "нет свежей телеметрии" if repair_state == "unknown" else (
-        "ремонт " + str(pending_repairs) + " • trial " + str(trials) + " • quarantine " + str(quarantined))
+        "ремонт " + str(pending_repairs) + " • trial " + str(trials) + " • история quarantine " + str(quarantined))
     card("repair", "Ремонт + проверка обновлений", repair_detail, repair_state, 990, 430)
     gateway = data.get("gateway", {})
     gateway_state = "active" if gateway.get("ready") and owner and not data.get("stale") else "warning" if gateway.get("observed") else "unknown"
-    card("gateway", "WEB • постоянный адрес", "Comparator :5051 • независимый сервис", gateway_state, 525, 572, h=44)
+    card("gateway", "WEB • постоянный адрес", "ub22 • 172.31.0.97:5051", gateway_state, 525, 572, h=44)
     edge("warehouse-sql", "warehouse", "sql-input", wh_state == "active" and database == "active")
     edge("lease-sql", "lease", "sql-input", bool(control_owner), control=True)
     for node in NODES:

@@ -239,6 +239,7 @@ def candidate_config(cfg, env, runtime_root=None):
         if location and not Path(location).is_absolute():
             overrides[key] = str((Path(runtime_root or cfg["root"]) / location).resolve())
     value = prepare_config(original, env)
+    value["auto_failback"] = False  # Keep a healthy owner through reserve recovery.
     value["auto_update"] = False  # main is changed only after this rollout is accepted.
     value["env"].update(KPP_ADAPTIVE_WINDOWS_ENABLED="1", KPP_ADAPTIVE_WINDOWS_MODE="shadow")
     # Guardian itself, not only workers, needs the separately provisioned read-only sources.

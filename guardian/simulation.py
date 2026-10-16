@@ -47,6 +47,14 @@ def simulate(root):
         scenarios.append("executor_loss_to_first_reserve")
         if store.write("physical",10):raise RuntimeError("ModelStaleEpochWritable")
         scenarios.append("old_owner_epoch_is_fenced")
+        current={n["id"]:healthy(n["id"]) for n in nodes}
+        with patch("guardian.controller.time.monotonic", return_value=0):
+            controller.tick()
+        with patch("guardian.controller.time.monotonic", return_value=1000):
+            controller.tick()
+        if store.value["owner"]!="perimetr":raise RuntimeError("ModelRecoveredReserveDisplacesHealthyOwner")
+        scenarios.append("recovered_reserve_preserves_healthy_owner")
+        current["physical"]={}
         current["perimetr"]={};current["comparator"]=dict(prepared=True)
         controller.tick()
         if store.value["owner"]!="comparator":raise RuntimeError("ModelSecondReserveFailed")

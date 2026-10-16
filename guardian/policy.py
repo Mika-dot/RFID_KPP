@@ -14,10 +14,11 @@ class Observation:
 class Policy:
     """No LLM input is accepted by the election state machine."""
 
-    def __init__(self, nodes, recovery_seconds=120, startup_seconds=120):
+    def __init__(self, nodes, recovery_seconds=120, startup_seconds=120, auto_failback=False):
         self.nodes = sorted(nodes, key=lambda n: n["priority"])
         self.recovery_seconds = recovery_seconds
         self.startup_seconds = startup_seconds
+        self.auto_failback = auto_failback
         self.stable = {}
         self.proven = set()
         self.lease_identity = None
@@ -53,6 +54,10 @@ class Policy:
             if not lease.get("valid"):
                 candidates = [n["id"] for n in self.nodes if n["id"] in self.stable]
             return candidates[0] if candidates else None
+        # Recovery makes a node eligible for the next failure, not a reason
+        # to interrupt a healthy owner. Explicit operator handoffs stay separate.
+        if not self.auto_failback:
+            return current
         rank = {n["id"]: n["priority"] for n in self.nodes}
         for nid in candidates:
             if rank[nid] < rank[current] and now - self.stable[nid] >= self.recovery_seconds:

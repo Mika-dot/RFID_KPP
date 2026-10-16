@@ -7,6 +7,7 @@
   "port": 18200,
   "controller_enabled": true,
   "startup_sec": 120,
+  "auto_failback": false,
   "failback_stable_sec": 120,
   "verify_sec": 60,
   "min_free_bytes": 2147483648,

@@ -11,7 +11,8 @@ from guardian.probes import get_json
 class Controller:
     def __init__(self, cfg, store, telemetry, stop):
         self.cfg, self.store, self.telemetry, self.stop = cfg, store, telemetry, stop
-        self.policy = Policy(cfg["nodes"], cfg.get("failback_stable_sec", 120), cfg.get("startup_sec", 120))
+        self.policy = Policy(cfg["nodes"], cfg.get("failback_stable_sec", 120), cfg.get("startup_sec", 120),
+                             auto_failback=cfg.get("auto_failback", False))
         self.is_owner = False
         self.handoff = None
 

@@ -98,6 +98,7 @@ class Node:
                 "operator_pinned": self.updates.operator_pinned()}
             result["resources"] = dict(getattr(self, "resources", {}))
             result["fencing_protocol"] = FENCING_PROTOCOL
+            result["auto_failback"] = getattr(self, "cfg", {}).get("auto_failback", False)
             result["operator_maintenance"] = getattr(self, "operator_maintenance", False)
             verified_since = getattr(self, "verified_since", None)
             result["repair"] = {"verification_required": bool(getattr(self, "repair_attempted", False)),

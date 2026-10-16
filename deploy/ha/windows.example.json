@@ -8,6 +8,7 @@
   "port": 18200,
   "controller_enabled": false,
   "startup_sec": 120,
+  "auto_failback": false,
   "failback_stable_sec": 120,
   "verify_sec": 60,
   "auto_update": true,
