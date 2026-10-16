@@ -227,7 +227,7 @@ ORDER BY ABS(DATEDIFF(SECOND,COALESCE(SourceReaderTime,RecordTime),?)),Id;
             "outside_legacy_window": sum(not legacy_start <= row[1] <= legacy_end for row in rows),
             "raw_candidates": [{"id": int(row[0]), "at": row[1].isoformat(),
                                 "antenna": int(row[2]) if row[2] is not None else None,
-                                 "rssi": float(row[3]) if row[3] is not None else None} for row in rows],
+                                "rssi": float(row[3]) if row[3] is not None else None} for row in rows],
             "session_candidates": candidates,
             "association_status": "REVIEW_REQUIRED" if candidates else "NO_SESSION_CANDIDATE",
             "identity_basis": "exact_epc_tid",
