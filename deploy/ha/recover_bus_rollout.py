@@ -116,7 +116,9 @@ def acceptance(rows, release):
         good = good and (update.fresh_node(row, key)
             and row.get('release_sha') == release and row.get('prepared') is True
             and row.get('faulted') is False and row.get('operator_maintenance') is False
-            and row.get('update', {}).get('operator_pinned') is True
+            and (row.get('update', {}).get('operator_pinned') is True
+                or (row.get('auto_update') is True
+                    and row.get('update', {}).get('qualification') == 'passed'))
             and row.get('auto_failback') is False)
     if owner:
         row = rows[owner]
