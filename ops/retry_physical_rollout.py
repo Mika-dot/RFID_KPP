@@ -9,14 +9,13 @@ import argparse
 import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
-RELEASE = "06e32f72b88834fc113c21a637599cad12ce7981"
-OLD = "62d0caa2863765419f98251372d7d376944fe004"
 CONFIG = Path("D:/PerimeterHA/node.json")
 ENVIRONMENT = Path("D:/PerimeterHA/transfer-private/environment.local.json")
 RETRYABLE_APPLY = ("HealthySingleOwnerRequired", "PreparedDeploymentInputsChanged",
@@ -50,7 +49,12 @@ def execute(argv):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--release", required=True)
+    parser.add_argument("--current", required=True)
     args = parser.parse_args()
+    RELEASE, OLD = args.release, args.current
+    if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (RELEASE, OLD)) or RELEASE == OLD:
+        raise ValueError("TwoDistinctExactCommitSHAsRequired")
     if os.name != "nt" or not ctypes.windll.shell32.IsUserAnAdmin():
         raise RuntimeError("AdministratorPowerShellRequired")
     if args.timeout < 30 or args.timeout > 3600:
