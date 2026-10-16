@@ -60,7 +60,7 @@ def evaluate(rows, width=1800, height=850):
 const context={panel:{data:{series:[input.frame]},chart:{getWidth:()=>input.width,getHeight:()=>input.height}}};
 const result=new Function('context',input.script)(context);process.stdout.write(JSON.stringify(result));"""
     result = subprocess.run([node, "-e", wrapper], input=json.dumps({"script": script, "frame": frame, "width": width, "height": height}),
-                            text=True, capture_output=True, check=True, timeout=10)
+                            text=True, encoding="utf-8", capture_output=True, check=True, timeout=10)
     return json.loads(result.stdout)
 
 

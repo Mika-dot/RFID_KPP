@@ -85,3 +85,8 @@ real failures is neither a goal nor a guarantee.
   stale scenarios. Synthetic normal/stale previews were rendered and inspected.
 - Native Windows and Ubuntu CI must pass on the actual published SHA before
   issuing it as the install target. Host acceptance remains a separate step.
+
+The first cross-platform run exposed a Windows-only decoding failure in the
+development SVG preview: Node emits UTF-8 while Python's pipe reader used the
+Windows locale. The preview now explicitly decodes UTF-8. The renderer tests
+remain enabled on Windows; no failing test or readiness gate was removed.
