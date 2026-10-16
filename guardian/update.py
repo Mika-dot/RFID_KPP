@@ -56,6 +56,19 @@ class Updates:
             raise RuntimeError("GitUpdateFailed")
         return result.stdout
 
+    def _qualified_pinned_replacement(self):
+        """A pinned pending baseline may be replaced, never silently confirmed.
+
+        Activation remains restricted to Node.tick's passive/demoted branch.
+        No trial status, SQL lease, or business-readiness claim is forged.
+        """
+        current = self.state.get("current", {}).get("sha")
+        qualification = self.state.get("qualification") or {}
+        return (self.state.get("pending") is True
+                and self.operator_pinned()
+                and qualification.get("status") == "passed"
+                and qualification.get("sha") == current)
+
     def stage(self):
         if not self.cfg.get("auto_update", True) or not self.cfg.get("update_source"):
             return
@@ -65,8 +78,8 @@ class Updates:
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise ValueError("Invalid main commit")
         with self.lock:
-            if self.state.get("pending"):
-                return  # A trial is not an accepted baseline for another candidate.
+            if self.state.get("pending") and not self._qualified_pinned_replacement():
+                return  # Ordinary unconfirmed trial cannot be superseded.
             current = self.state["current"]["sha"]
             if sha == current:
                 self.main_sha = sha
@@ -206,7 +219,13 @@ class Updates:
         with self.lock:
             if not self.staged:
                 return False
-            if self.state.get("pending"):
+            replacing_pinned = self._qualified_pinned_replacement()
+            if self.state.get("pending") and not replacing_pinned:
+                return False
+            # Staging must have passed the independent qualifier for this
+            # exact candidate; a pinned pending baseline is not carte blanche.
+            if (replacing_pinned and
+                    (self.state.get("qualification") or {}).get("sha") != self.staged["sha"]):
                 return False
             self.state["previous"] = self.state["current"]
             self.state["current"] = self.staged
