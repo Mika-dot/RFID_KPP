@@ -61,9 +61,9 @@ def fixture(auto_update=True):
 
 class AutomaticRollingUpdateTests(unittest.TestCase):
     def run_tick(self, controller):
-        with patch.dict("os.environ", {"PERIMETER_HA_TOKEN": "test"}), \\
-             patch("guardian.controller.get_json", return_value=(200, {})):
-            controller.tick()
+        with patch.dict("os.environ", {"PERIMETER_HA_TOKEN": "test"}):
+            with patch("guardian.controller.get_json", return_value=(200, {})):
+                controller.tick()
 
     def test_switches_only_when_both_exact_receivers_are_prepared(self):
         ctrl, store, _ = fixture()
