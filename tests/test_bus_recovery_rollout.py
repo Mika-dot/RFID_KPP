@@ -41,6 +41,17 @@ class RecoveryRolloutTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertFalse(rollout.acceptance(rows,self.args.release)[0])
 
+    def test_auto_main_release_accepts_qualified_unpinned_nodes(self):
+        rows = copy.deepcopy(self.rows)
+        for row in rows.values():
+            row["auto_update"] = True
+            row["update"]["operator_pinned"] = False
+            row["update"]["qualification"] = "passed"
+        self.assertEqual((True, "physical", True),
+                         rollout.acceptance(rows, self.args.release))
+        rows["comparator"]["update"]["qualification"] = "failed"
+        self.assertFalse(rollout.acceptance(rows, self.args.release)[0])
+
     def test_verify_requires_two_minutes_continuous_health_after_any_bad_sample(self):
         clock = [0]
         response = Mock(status=200)
