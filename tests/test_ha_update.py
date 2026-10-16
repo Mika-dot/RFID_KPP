@@ -25,6 +25,42 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(self.updates.activate())
         self.assertEqual("b"*40,self.updates.state["current"]["sha"])
 
+    def test_qualified_pinned_pending_baseline_can_be_replaced_offline(self):
+        old = "a" * 40
+        new = "b" * 40
+        self.updates.state.update(
+            pending=True,
+            trial_started=False,
+            operator_pinned_release=old,
+            qualification={"status": "passed", "sha": old},
+        )
+        self.assertTrue(self.updates._qualified_pinned_replacement())
+        # Stage's independent qualification changes the recorded candidate
+        # SHA, but does not confirm the old candidate's trial.
+        self.updates.state["qualification"] = {"status": "passed", "sha": new}
+        self.updates.staged = {"root": "/new", "sha": new, "python": "python"}
+        self.assertTrue(self.updates.activate())
+        self.assertEqual(self.updates.state["current"]["sha"], new)
+        self.assertEqual(self.updates.state["previous"]["sha"], old)
+        self.assertTrue(self.updates.state["pending"])
+        self.assertFalse(self.updates.state["trial_started"])
+
+    def test_unqualified_or_unpinned_pending_baseline_cannot_be_replaced(self):
+        old = "a" * 40
+        new = "b" * 40
+        self.updates.state.update(
+            pending=True,
+            trial_started=True,
+            operator_pinned_release=old,
+            qualification={"status": "failed", "sha": new},
+        )
+        self.updates.staged = {"root": "/new", "sha": new, "python": "python"}
+        self.assertFalse(self.updates.activate())
+        self.assertEqual(self.updates.state["current"]["sha"], old)
+        self.updates.state["qualification"] = {"status": "passed", "sha": new}
+        self.updates.state["operator_pinned_release"] = "f" * 40
+        self.assertFalse(self.updates.activate())
+
     def test_operator_pin_blocks_code_rollback_without_accepting_trial(self):
         self.updates.staged={"root":"/new","sha":"b"*40}
         self.updates.activate()
