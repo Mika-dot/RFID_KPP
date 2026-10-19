@@ -1,3 +1,5 @@
+> Historical recovery design. Current operator instructions: [OPERATIONS.md](OPERATIONS.md), [RECOVERY.md](RECOVERY.md), [installed status, 19 October](STATUS_2026-10-19.md). Old deployment statements and disabled auto-update assumptions below are historical.
+
 # Stable-owner recovery, 16 October 2026
 
 ## Scope and observed state
