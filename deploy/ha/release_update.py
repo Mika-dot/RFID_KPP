@@ -249,8 +249,28 @@ def candidate_config(cfg, env, runtime_root=None):
     return value
 
 
+# Exact bootstrap-only insertion published in 93dbe1b. It cannot authorize
+# arbitrary edits to the supervisor or to any replay/business source.
+LEGACY_PIN_GUARD = '            # An operator-pinned release may be unhealthy, but its code identity\n            # is not rollback-eligible. This bootstrap guard must agree with\n            # Updates.rollback() even when the Guardian process never imports.\n            pin = state.get("operator_pinned_release")\n            if (isinstance(pin, str) and len(pin) == 40\n                    and all(c in "0123456789abcdef" for c in pin)\n                    and pin == launched.get("sha")):\n                print(json.dumps({"event":"bootstrap_pinned_failure", "sha":pin}), flush=True)\n                return False\n'
+
+
+def known_legacy_pin_patch(cfg, source, sha, status):
+    if status.split() != ["M", "guardian/boot.py"]:
+        return False
+    original = git(cfg, "-C", str(source), "show", sha + ":guardian/boot.py")
+    anchor = '            rejected = set(state.get("rejected", []))'
+    if original.count(anchor) != 1 or "operator_pinned_release" in original:
+        return False
+    expected = original.replace(anchor, LEGACY_PIN_GUARD + anchor, 1)
+    try:
+        actual = (Path(source) / "guardian/boot.py").read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return False
+    return actual.rstrip("\r\n") == expected.rstrip("\r\n")
+
+
 def transition_allowlist(cfg, record, source):
-    """Only the two screenshot baselines admit three known warehouse fixes.
+    """Only two exact baselines, optionally with the exact pin guard, admit known fixes.
 
     Unknown/modified installed trees retain zero-difference qualification.
     Candidate Golden outputs must still match every expected field.
@@ -259,8 +279,10 @@ def transition_allowlist(cfg, record, source):
     if sha not in LEGACY_BASELINES:
         return []
     if (git(cfg, "-C", str(source), "rev-parse", "HEAD") != sha
-            or git(cfg, "-C", str(source), "rev-parse", "HEAD^{tree}") != LEGACY_BASELINES[sha]
-            or git(cfg, "-C", str(source), "status", "--porcelain", "--untracked-files=no")):
+            or git(cfg, "-C", str(source), "rev-parse", "HEAD^{tree}") != LEGACY_BASELINES[sha]):
+        raise RuntimeError("InstalledLegacyBaselineChanged")
+    status = git(cfg, "-C", str(source), "status", "--porcelain", "--untracked-files=no")
+    if status and not known_legacy_pin_patch(cfg, source, sha, status):
         raise RuntimeError("InstalledLegacyBaselineChanged")
     return ["--allowlist", ROOT / "guardian/legacy_shadow_allowlist.json"]
 

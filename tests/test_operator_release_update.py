@@ -337,6 +337,36 @@ class OperatorUpdateTests(unittest.TestCase):
             self.assertEqual([],update.transition_allowlist(self.cfg,self.record,Path(self.cfg["root"])))
             git.assert_not_called()
 
+    def test_only_exact_bootstrap_pin_insertion_preserves_legacy_admission(self):
+        sha, tree = next(iter(update.LEGACY_BASELINES.items()))
+        self.record['current']['sha'] = sha
+        source = Path(self.cfg['root'])
+        (source/'guardian').mkdir(parents=True)
+        original = ('def rollback():\n            rejected = set(state.get("rejected", []))\n'
+                    '            return False\n')
+        anchor = '            rejected = set(state.get("rejected", []))'
+        expected = original.replace(anchor, update.LEGACY_PIN_GUARD+anchor)
+        status = [' M guardian/boot.py']
+        def git(cfg, *args):
+            if 'HEAD' in args: return sha
+            if 'HEAD^{tree}' in args: return tree
+            if 'show' in args: return original
+            return status[0]
+        path = source/'guardian/boot.py'
+        path.write_text(expected, encoding='utf-8')
+        with patch.object(update, 'git', side_effect=git):
+            self.assertEqual('--allowlist', update.transition_allowlist(self.cfg,self.record,source)[0])
+            for changed in (expected+'\nreturn False', expected.replace('pin == launched', 'pin != launched'), ' '+expected):
+                path.write_text(changed, encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, 'BaselineChanged'):
+                    update.transition_allowlist(self.cfg,self.record,source)
+            path.write_text(expected, encoding='utf-8')
+            for changed_status in (' M guardian/boot.py\n M KPP/kpp_aggregator_v3.py',
+                                   ' M KPP/kpp_aggregator_v3.py', 'MM guardian/boot.py'):
+                status[0] = changed_status
+                with self.assertRaisesRegex(RuntimeError, 'BaselineChanged'):
+                    update.transition_allowlist(self.cfg,self.record,source)
+
     def test_recovery_flag_never_updates_physical_or_active_reserve(self):
         self.args.recover_reserve = True
         for own, owner in (("physical","physical"),("physical",None),("comparator","comparator")):
