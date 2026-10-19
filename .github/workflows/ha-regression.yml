@@ -42,6 +42,14 @@ jobs:
           }
       - name: Failover, repair boundary, bridge, updates and existing regressions
         run: python -m unittest discover -s tests -v
+      - name: Explicit privileged systemd environment integration
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -d /run/systemd/system
+          command -v systemd-run
+          TASK_PYTHON=$(python -c 'import sys; print(sys.executable)')
+          sudo "$TASK_PYTHON" -B -m unittest discover -s tests -p test_ha_environment_import.py -v
       - name: Installed release qualifier and HA model without equipment
         run: python guardian/qualification.py --candidate . --stable . --report qualification.json
       - name: Qualification leaves tracked release files unchanged
