@@ -20,6 +20,17 @@ tool = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tool)
 
 
+def systemd_test_command():
+    """Privileged integration is explicit; unattended tests never invoke sudo."""
+    if not sys.platform.startswith("linux") or not Path("/run/systemd/system").is_dir():
+        raise unittest.SkipTest("Requires a running native systemd")
+    if os.geteuid() != 0:
+        raise unittest.SkipTest("Run systemd integration explicitly as root; no service-account sudo")
+    if not shutil.which("systemd-run"):
+        raise unittest.SkipTest("Requires systemd-run")
+    return ["systemd-run"]
+
+
 def bundle():
     env = {key: "fixture" for key in tool.REQUIRED}
     for key in ("RFID_DB_CONNECTION", "KPP_CONN_STR", "KPP_WEB_DB_CONNECTION", "KPP_TASK_CONN_STR"):
@@ -164,16 +175,36 @@ class EnvironmentImportTests(unittest.TestCase):
             self.assertNotIn("fixture-private", " ".join(run.call_args.args[0]))
             self.assertEqual("fixture-private", run.call_args.kwargs["env"]["SRC_PASSWORD"])
 
-    @unittest.skipUnless(sys.platform.startswith("linux") and Path("/run/systemd/system").is_dir(),
-                         "Requires a running native systemd")
+    def test_systemd_integration_skips_unprivileged_account_without_subprocess(self):
+        with patch.object(sys, "platform", "linux"), \
+                patch.object(Path, "is_dir", return_value=True), \
+                patch.object(os, "geteuid", return_value=1001, create=True), \
+                patch.object(subprocess, "run") as run:
+            with self.assertRaisesRegex(unittest.SkipTest, "explicitly as root"):
+                systemd_test_command()
+        run.assert_not_called()
+
+    def test_systemd_integration_root_command_never_uses_sudo(self):
+        with patch.object(sys, "platform", "linux"), \
+                patch.object(Path, "is_dir", return_value=True), \
+                patch.object(os, "geteuid", return_value=0, create=True), \
+                patch.object(shutil, "which", return_value="/usr/bin/systemd-run"):
+            self.assertEqual(["systemd-run"], systemd_test_command())
+
+    def test_systemd_integration_requires_real_manager(self):
+        with patch.object(sys, "platform", "linux"), \
+                patch.object(Path, "is_dir", return_value=False):
+            with self.assertRaisesRegex(unittest.SkipTest, "running native systemd"):
+                systemd_test_command()
+
     def test_generated_file_is_parsed_by_real_systemd_without_expansion(self):
+        command = systemd_test_command()
         env = {"PERIMETER_TEST_VALUE": "!$HOME`false`\\\"#'пароль;%(name)s"}
-        sudo = [] if os.geteuid() == 0 else ["sudo", "-n"]
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "environment"
             path.write_text(tool.environment_text(env), encoding="utf-8")
             path.chmod(0o600)
-            result = subprocess.run(sudo + ["systemd-run", "--quiet", "--wait", "--pipe",
+            result = subprocess.run(command + ["--quiet", "--wait", "--pipe",
                 "--property=EnvironmentFile=" + str(path), sys.executable, "-c",
                 "import json,os; print(json.dumps({'PERIMETER_TEST_VALUE':os.environ['PERIMETER_TEST_VALUE']}))"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
