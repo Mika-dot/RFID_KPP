@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -56,11 +57,16 @@ def evaluate(rows, width=1800, height=850):
     script = Path(__file__).with_name("perimeter_topology.js").read_text(encoding="utf-8")
     names = ["id", "kind", "label", "detail", "state", "x", "y", "w", "h", "source", "target"]
     frame = {"length": len(rows), "fields": [{"name": name, "values": [row.get(name) for row in rows]} for name in names]}
-    wrapper = """const fs=require('fs');const input=JSON.parse(fs.readFileSync(0,'utf8'));
+    wrapper = """const fs=require('fs');const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));
 const context={panel:{data:{series:[input.frame]},chart:{getWidth:()=>input.width,getHeight:()=>input.height}}};
 const result=new Function('context',input.script)(context);process.stdout.write(JSON.stringify(result));"""
-    result = subprocess.run([node, "-e", wrapper], input=json.dumps({"script": script, "frame": frame, "width": width, "height": height}),
-                            text=True, encoding="utf-8", capture_output=True, check=True, timeout=10)
+    # Use a closed UTF-8 file: synchronous Node stdin reads can stall on the
+    # Windows anonymous pipe created by subprocess.communicate().
+    with tempfile.TemporaryDirectory(prefix="perimeter-preview-") as folder:
+        payload = Path(folder) / "input.json"
+        payload.write_text(json.dumps({"script": script, "frame": frame, "width": width, "height": height}), encoding="utf-8")
+        result = subprocess.run([node, "-e", wrapper, str(payload)], stdin=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", capture_output=True, check=True, timeout=30)
     return json.loads(result.stdout)
 
 
