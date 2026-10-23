@@ -15,7 +15,7 @@ import time
 
 from flask import Response, jsonify, request
 
-from common.efficiency_report import (build_efficiency_report, email_parts, methodology_text,
+from common.efficiency_report import (add_raw_evidence, build_efficiency_report, email_parts, local_time, methodology_text,
                                       preview_html, validate_period)
 from common.efficiency_xlsx import generate_efficiency_xlsx
 
@@ -99,7 +99,46 @@ def fetch_efficiency_report(base, date_from, date_to):
             by_id.update((row['EventId'], row) for row in linked)
             if len(by_id) > 200000:
                 raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
-    return build_efficiency_report(warehouse, registry, by_id.values(), date_from, date_to, window_hours=window)
+        report = build_efficiency_report(warehouse, registry, by_id.values(), date_from, date_to, window_hours=window)
+        raw_rows = fetch_raw_evidence(conn, report, sql_table(os.getenv('KPP_RFID_TABLE', 'dbo.RFID_Tags')))
+    return add_raw_evidence(report, raw_rows)
+
+
+def fetch_raw_evidence(connection, report, raw_table):
+    """Read actual Reader rows, never Warehouse.Tag or registry existence.
+
+    Exact per-receipt windows are evaluated in SQL and rechecked in the pure
+    projection. Aggregate there, so millions of inventory reads are not sent to
+    the Web process. A failed raw query aborts the report instead of counting 0.
+    """
+    candidates = []
+    delta = timedelta(hours=report['window_hours'])
+    for row in report['details']:
+        tags = set(row['registered_tags'])-set(row['ambiguous_tags'])
+        for receipt in row['warehouse_receipts']:
+            at = local_time(receipt['dt'])
+            for tag in sorted(tags):
+                if len(tag) > 512:
+                    raise ValueError('Некорректная длина полной RFID-метки в реестре')
+                candidates.append((int(receipt['id']), tag, at-delta, at+delta))
+    if len(candidates) > 100000:
+        raise ValueError('Слишком много RFID-привязок; сократите период. Неполный отчёт не выдаётся.')
+    rows = []
+    for offset in range(0, len(candidates), 200):
+        batch = candidates[offset:offset+200]
+        values = ','.join('(CONVERT(bigint,?),CONVERT(nvarchar(512),?),CONVERT(datetime2,?),CONVERT(datetime2,?))' for _ in batch)
+        sql = f'''SELECT v.WarehouseId,v.Tag,COUNT_BIG(*) AS ReadCount,
+            MIN(r.RecordTime) AS FirstRead,MAX(r.RecordTime) AS LastRead,
+            MIN(r.Id) AS FirstRawId,MAX(r.Id) AS LastRawId
+            FROM (VALUES {values}) AS v(WarehouseId,Tag,StartTime,EndTime)
+            INNER JOIN {raw_table} r
+              ON r.RecordTime>=v.StartTime AND r.RecordTime<=v.EndTime
+             AND UPPER(REPLACE(REPLACE(REPLACE(REPLACE(
+                 CONVERT(nvarchar(512),ISNULL(r.EPC,''))+CONVERT(nvarchar(512),ISNULL(r.TID,'')),
+                 N' ',N''),NCHAR(9),N''),NCHAR(10),N''),NCHAR(13),N''))=v.Tag
+            GROUP BY v.WarehouseId,v.Tag'''
+        rows.extend(read_rows(connection, sql, [value for candidate in batch for value in candidate], 200))
+    return rows
 
 
 class ReportJobs:
@@ -198,6 +237,7 @@ def install(base):
         return reply(dict(status='ready', html=job['html'], email={key: job['email'][key] for key in ('subject', 'text', 'html')},
                           methodology=methodology_text(report), generated_at=report['generated_at'],
                           totals=report['totals'], days=report['days'],
+                          source_checks=dict(reader=report['raw_checked']), diagnostics=report['diagnostics'],
                           download_url=f'/api/efficiency-report/{token}/download'))
 
     @base.app.route('/api/efficiency-report/<token>/download')

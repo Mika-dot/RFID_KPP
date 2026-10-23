@@ -14,7 +14,7 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import zipfile
 
-from common.efficiency_report import (build_efficiency_report, email_parts, percent, preview_html,
+from common.efficiency_report import (add_raw_evidence, build_efficiency_report, email_parts, percent, preview_html,
                                       validate_period)
 from common.efficiency_xlsx import generate_efficiency_xlsx
 
@@ -44,7 +44,7 @@ class EfficiencyReportTests(unittest.TestCase):
         self.start, self.end = date(2026, 10, 19), date(2026, 10, 22)
 
     def report(self):
-        return build_efficiency_report(self.w, self.r, self.e, self.start, self.end)
+        return build_efficiency_report(self.w, self.r, self.e, self.start, self.end, raw_rows=[])
 
     def test_reference_weighted_totals_and_old_registry(self):
         report = self.report()
@@ -118,7 +118,7 @@ class EfficiencyReportTests(unittest.TestCase):
         self.assertEqual(report['excluded_mk'], 1)
 
     def test_empty_report_is_not_one_hundred_percent(self):
-        report = build_efficiency_report([], [], [], self.start, self.end)
+        report = build_efficiency_report([], [], [], self.start, self.end, raw_rows=[])
         self.assertEqual(len(report['days']), 4)
         self.assertEqual(percent(0, 0), '—')
         self.assertNotIn('100%', email_parts(report)['text'])
@@ -133,7 +133,7 @@ class EfficiencyReportTests(unittest.TestCase):
     def test_letter_matches_summary_and_html_is_escaped(self):
         report = self.report()
         letter = email_parts(report)
-        for value in ['98,77%', '131/131 = 100%', '4265/26', 'Павел Валерьевич']:
+        for value in ['98,77%', '131/131 = 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
             self.assertIn(value, letter['text'])
         self.assertNotIn('будет проверена', letter['text'])
         report['details'][0]['series'] = '<img src=x onerror=alert(1)>'
@@ -150,12 +150,81 @@ class EfficiencyReportTests(unittest.TestCase):
                 self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 2 if details else 1)
                 sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
                 cells = {c.attrib['r']: c for c in sheet.findall('.//m:c', ns)}
-                self.assertEqual(cells['B9'].find('m:v', ns).text, '131')
-                self.assertEqual(cells['C9'].find('m:v', ns).text, '81')
-                self.assertEqual(cells['D9'].find('m:v', ns).text, '80')
-                self.assertEqual(cells['E9'].find('m:f', ns).text, 'IF(C9=0,"",D9/C9)')
-                self.assertAlmostEqual(float(cells['E9'].find('m:v', ns).text), 80/81)
+                self.assertEqual(cells['B11'].find('m:v', ns).text, '131')
+                self.assertEqual(cells['C11'].find('m:v', ns).text, '81')
+                self.assertEqual(cells['D11'].find('m:v', ns).text, '80')
+                self.assertEqual(cells['E11'].find('m:f', ns).text, 'IF(C11=0,"",D11/C11)')
+                self.assertAlmostEqual(float(cells['E11'].find('m:v', ns).text), 80/81)
                 self.assertIn('ТЕКСТ ПИСЬМА', archive.read('xl/worksheets/sheet1.xml').decode())
+
+    def raw(self, identity=1, **changes):
+        warehouse = next(row for row in self.w if row['Id'] == identity)
+        registry = next(row for row in self.r if row['SeriesNumber'] == warehouse['SeriesNumber'])
+        row = dict(WarehouseId=identity, Tag=registry['Tag'], ReadCount=20,
+                   FirstRead=warehouse['Dt']-timedelta(minutes=20), LastRead=warehouse['Dt']-timedelta(minutes=19),
+                   FirstRawId=100001, LastRawId=100020)
+        row.update(changes)
+        return row
+
+    def test_reader_read_without_aggregator_event_counts_as_detected(self):
+        report = add_raw_evidence(self.report(), [self.raw()])
+        self.assertEqual(report['totals']['detected'], 81)
+        self.assertEqual(report['totals']['missed'], 0)
+        self.assertEqual(report['diagnostics']['reader_only'], 1)
+        self.assertIn('RFID-блок: 81/81 — 100%', email_parts(report)['text'])
+
+    def test_low_aggregator_coverage_is_not_substituted_for_reader_kpi(self):
+        # Only 36 series have Aggregator events; Reader proves the other 44.
+        detected_ids = sorted({row['WarehouseId'] for row in self.e})
+        keep = set(detected_ids[:36])
+        self.e = [row for row in self.e if row['WarehouseId'] in keep]
+        report = add_raw_evidence(self.report(), [self.raw(identity) for identity in detected_ids[36:]])
+        self.assertEqual(report['diagnostics']['kpp_confirmed'], 36)
+        self.assertEqual(report['totals']['detected'], 80)
+        self.assertIn('RFID-блок: 80/81 — 98,77%', email_parts(report)['text'])
+
+    def test_genuinely_low_reader_and_aggregator_result_is_not_inflated(self):
+        keep = set(sorted({row['WarehouseId'] for row in self.e})[:36])
+        self.e = [row for row in self.e if row['WarehouseId'] in keep]
+        report = self.report()  # A completed Reader query returned no extra proof.
+        self.assertEqual(report['totals']['detected'], 36)
+        self.assertIn('44,44%', email_parts(report)['text'])
+        self.assertNotIn('98,77%', email_parts(report)['text'])
+
+    def test_unchecked_reader_cannot_be_exported_as_final_kpi(self):
+        report = build_efficiency_report(self.w, self.r, self.e, self.start, self.end)
+        self.assertIn('Не проверен', email_parts(report)['text'])
+        self.assertNotIn('98,77%', email_parts(report)['text'])
+        with self.assertRaisesRegex(ValueError, 'Reader'):
+            generate_efficiency_xlsx(report)
+
+    def test_raw_evidence_requires_exact_tag_receipt_and_time(self):
+        for changes in [dict(Tag='F'*48), dict(WarehouseId=99999), dict(ReadCount=0),
+                        dict(FirstRead=self.w[0]['Dt']-timedelta(days=10)),
+                        dict(LastRead=self.w[0]['Dt']+timedelta(days=10))]:
+            with self.subTest(changes=changes):
+                report = add_raw_evidence(self.report(), [self.raw(**changes)])
+                self.assertEqual(report['totals']['detected'], 80)
+
+    def test_duplicate_raw_proofs_and_multiple_tags_do_not_inflate_drums(self):
+        proof = self.raw()
+        other = self.raw(Tag=self.r[1]['Tag'])
+        report = add_raw_evidence(self.report(), [proof, proof, other])
+        self.assertEqual(report['totals']['detected'], 81)
+        self.assertEqual(report['totals']['tagged'], 81)
+
+    def test_series_terminal_period_is_normalized_without_blacklisting(self):
+        self.w.append(dict(self.w[0], Id=999, SeriesNumber='4265/26.'))
+        report = self.report()
+        self.assertEqual(report['totals']['total'], 131)
+        self.assertEqual(report['duplicate_warehouse_rows'], 1)
+
+    def test_long_series_text_export_terminates_and_preserves_characters(self):
+        report = self.report()
+        report['details'][0]['series'] = 'X'*4000
+        # Series lists live in diagnostics; the management letter has a count.
+        self.assertNotIn('X'*4000, email_parts(report)['text'])
+        self.assertTrue(generate_efficiency_xlsx(report, True).startswith(b'PK'))
 
 
 class EfficiencyHttpTests(unittest.TestCase):
@@ -183,7 +252,7 @@ class EfficiencyHttpTests(unittest.TestCase):
         self.fail('Report worker did not finish')
 
     def test_full_async_http_flow_uses_one_snapshot(self):
-        report = build_efficiency_report(*reference_population(), date(2026, 10, 19), date(2026, 10, 22))
+        report = build_efficiency_report(*reference_population(), date(2026, 10, 19), date(2026, 10, 22), raw_rows=[])
         with patch.object(self.web.efficiency_jobs, 'loader', return_value=report) as loader:
             start = self.client.post('/api/efficiency-report', json=dict(date_from='2026-10-19', date_to='2026-10-22'))
             self.assertEqual(start.status_code, 202)
@@ -224,7 +293,7 @@ class EfficiencyHttpTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         def loader(*args):
             entered.set(); release.wait(3)
-            return build_efficiency_report([], [], [], *args)
+            return build_efficiency_report([], [], [], *args, raw_rows=[])
         jobs = self.api.ReportJobs(loader)
         token = jobs.start(date(2026, 10, 19), date(2026, 10, 22))
         try:
@@ -248,6 +317,10 @@ class EfficiencyHttpTests(unittest.TestCase):
             def execute(self, query, *params):
                 self.connection.queries.append((query, params))
                 if query.startswith('SET '): return self
+                if 'dbo.RFID_Tags' in query:
+                    self.description = [('WarehouseId',), ('Tag',), ('ReadCount',), ('FirstRead',), ('LastRead',), ('FirstRawId',), ('LastRawId',)]
+                    self.batch = []
+                    return self
                 data = w if 'dbo.Warehouse' in query else r if 'dbo.RfidTags' in query else e
                 columns = list(data[0])
                 self.description = [(key,) for key in columns]
@@ -271,6 +344,8 @@ class EfficiencyHttpTests(unittest.TestCase):
         with patch.dict('os.environ', {'KPP_TASK_CONN_STR': 'task-source'}, clear=True):
             report = self.api.fetch_efficiency_report(base, date(2026, 10, 19), date(2026, 10, 22))
         self.assertEqual(report['totals']['detected'], 80)
+        self.assertTrue(report['raw_checked'])
+        self.assertTrue(any('dbo.RFID_Tags' in q for q, _ in events.queries))
         self.assertEqual([call[0] for call in calls], ['task-source', 'event-source'])
         for _, options in calls:
             self.assertTrue(options['readonly'])
@@ -293,6 +368,23 @@ class EfficiencyHttpTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Неполный'):
             self.api.read_rows(types.SimpleNamespace(cursor=lambda: cursor), 'SELECT Id', (), 1)
         self.assertTrue(cursor.closed)
+
+    def test_raw_query_is_bounded_parameterized_and_failure_is_not_zero(self):
+        report = build_efficiency_report(*reference_population(), date(2026, 10, 19), date(2026, 10, 22))
+        with patch.object(self.api, 'read_rows', return_value=[]) as read:
+            self.assertEqual(self.api.fetch_raw_evidence(object(), report, 'dbo.RFID_Tags'), [])
+            self.assertTrue(read.called)
+            for call in read.call_args_list:
+                query, parameters = call.args[1:3]
+                self.assertEqual(query.count('?'), len(parameters))
+                self.assertLess(len(parameters), 2100)
+                self.assertIn('r.RecordTime>=v.StartTime', query)
+                self.assertIn('r.RecordTime<=v.EndTime', query)
+                self.assertIn('FirstRawId', query)
+                self.assertNotIn('WAREHOUSE_ONLY', query)
+        with patch.object(self.api, 'read_rows', side_effect=RuntimeError('SQL unavailable')):
+            with self.assertRaises(RuntimeError):
+                self.api.fetch_raw_evidence(object(), report, 'dbo.RFID_Tags')
 
 
 if __name__ == '__main__':
