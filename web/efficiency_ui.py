@@ -16,7 +16,7 @@ STYLE = r"""
   #efficiencyModal .eff-table td { white-space:normal; overflow-wrap:anywhere; }
   #efficiencyModal .eff-table tbody tr:last-child { font-weight:600; }
   #efficiencyModal .eff-scroll { overflow-x:auto; }
-  #efficiencyModal textarea { box-sizing:border-box; width:100%; min-height:280px; font:14px/1.6 inherit; padding:14px; border:1px solid #cbd5e1; border-radius:8px; }
+  #efficiencyModal textarea { box-sizing:border-box; width:100%; min-height:280px; font-family:inherit; font-size:14px; line-height:1.6; padding:14px; border:1px solid #cbd5e1; border-radius:8px; }
   #efficiencyModal [hidden] { display:none!important; }
   #efficiencyModal button:disabled { opacity:.55; cursor:wait; }
   #efficiencyStatus { margin:12px 0; color:#475569; }
@@ -97,6 +97,7 @@ document.getElementById('efficiencyForm').addEventListener('submit', async event
   const run = ++efficiencyRun;
   const button = document.getElementById('efficiencyBuild');
   button.disabled = true;
+  document.querySelectorAll('#efficiencyForm input').forEach(input=>input.disabled=true);
   document.getElementById('efficiencyOutput').hidden = true;
   status.textContent='Формируется отчёт: чтение адресного склада, истории меток 1С и событий КПП…';
   try {
@@ -126,7 +127,14 @@ document.getElementById('efficiencyForm').addEventListener('submit', async event
   } finally {
     efficiencyBusy=false;
     button.disabled=false;
+    document.querySelectorAll('#efficiencyForm input').forEach(input=>input.disabled=false);
   }
+});
+document.getElementById('efficiencyForm').addEventListener('change',()=>{
+  if (efficiencyBusy) return;
+  efficiencyJob=null;
+  document.getElementById('efficiencyOutput').hidden=true;
+  document.getElementById('efficiencyStatus').textContent='Параметры изменены. Нажмите «Сформировать отчёт», чтобы получить новый результат.';
 });
 async function copyEfficiencyEmail() {
   const text=document.getElementById('efficiencyEmail').value;
