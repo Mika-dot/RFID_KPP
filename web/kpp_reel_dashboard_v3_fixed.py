@@ -20,6 +20,8 @@ from typing import Any, Dict, List
 import kpp_reel_dashboard_v3_ru as base
 from common.warehouse_report import build_report_records
 from common.warehouse_direction import project_warehouse_direction
+from efficiency_api import install as install_efficiency_report
+from efficiency_ui import add_efficiency_dialog
 
 
 # WEB is read-only. Avoid SELECT/RECHECK deadlocks while the aggregator repairs a
@@ -119,6 +121,11 @@ def fetch_report_records(date_from: date, date_to: date) -> List[Dict[str, Any]]
 
 
 base.fetch_report_records = fetch_report_records
+
+# Separate read-only report projection: does not change aggregation, fencing,
+# Warehouse identity or the existing passage export.
+efficiency_jobs = install_efficiency_report(base)
+base.PAGE = add_efficiency_dialog(base.PAGE)
 
 
 if __name__ == "__main__":
