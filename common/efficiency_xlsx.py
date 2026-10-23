@@ -12,7 +12,7 @@ from datetime import date
 from xml.sax.saxutils import escape
 
 from common.efficiency_report import (HEADERS, effectiveness_rows, email_parts, exceptions_text,
-                                      explanatory_text, methodology_text, period_text, summary_rows)
+                                      executive_rows, explanatory_text, methodology_text, period_text, summary_rows)
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -61,6 +61,8 @@ class Sheet:
         for paragraph in text.split('\n'):
             while len(paragraph) > 850:
                 split = paragraph.rfind(' ', 0, 850)
+                if split <= 0:
+                    split = 850
                 self.text(paragraph[:split], style)
                 paragraph = paragraph[split+1:]
             number = self.row([paragraph], style, max(25, 16*math.ceil(len(paragraph)/115)+8))
@@ -69,7 +71,7 @@ class Sheet:
     def xml(self, frozen=False):
         columns = ''.join(f'<col min="{i}" max="{i}" width="{width}" customWidth="1"/>' for i, width in enumerate(self.widths, 1))
         merges = ('<mergeCells count="'+str(len(self.merges))+'">'+''.join(f'<mergeCell ref="{m}"/>' for m in self.merges)+'</mergeCells>') if self.merges else ''
-        pane = '<pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/>' if frozen else ''
+        pane = '<pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/>' if frozen else ''
         return (f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{NS}">'
                 '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
                 f'<dimension ref="A1:{col(len(self.widths))}{len(self.rows)}"/>'
@@ -97,9 +99,13 @@ def styles_xml():
 
 
 def generate_efficiency_xlsx(report, include_details=False):
+    if not report.get('raw_checked'):
+        raise ValueError('Проверка исходного журнала RFID Reader не завершена; окончательный отчёт не сформирован.')
     sheet = Sheet([20, 23, 18, 22, 18, 32])
-    sheet.text('ЭФФЕКТИВНОСТЬ RFID КПП «ПЕРИМЕТР»', 1)
+    sheet.text('РАБОТА КПП «ПЕРИМЕТР»', 1)
     sheet.text('Период: '+period_text(report)+' • МСК')
+    for name, ratio, rate in executive_rows(report):
+        sheet.text(f'{name}: {rate}  ({ratio})', 1)
     sheet.row()
     sheet.row(HEADERS, 2, 36)
     for day, display in zip(report['days'], summary_rows(report)):
@@ -110,9 +116,9 @@ def generate_efficiency_xlsx(report, include_details=False):
                                   'value': day['detected']/day['tagged'] if day['tagged'] else ''}, 3), display[5]])
     n, last = len(sheet.rows)+1, len(sheet.rows)
     t = report['totals']
-    sheet.row(['Итого', ({'formula': f'SUM(B5:B{last})', 'value': t['total']}, 8),
-               ({'formula': f'SUM(C5:C{last})', 'value': t['tagged']}, 8),
-               ({'formula': f'SUM(D5:D{last})', 'value': t['detected']}, 8),
+    sheet.row(['Итого', ({'formula': f'SUM(B7:B{last})', 'value': t['total']}, 8),
+               ({'formula': f'SUM(C7:C{last})', 'value': t['tagged']}, 8),
+               ({'formula': f'SUM(D7:D{last})', 'value': t['detected']}, 8),
                ({'formula': f'IF(C{n}=0,"",D{n}/C{n})', 'value': t['detected']/t['tagged'] if t['tagged'] else ''}, 4),
                summary_rows(report)[-1][-1]], 2)
     sheet.row()
@@ -124,7 +130,7 @@ def generate_efficiency_xlsx(report, include_details=False):
     for values in effectiveness_rows(report):
         row = sheet.row([values[0], '', values[1], values[2], '', values[3]], height=38)
         sheet.merges.extend([f'A{row}:B{row}', f'D{row}:E{row}'])
-    sheet.text(exceptions_text(report))
+    sheet.text(exceptions_text(report, include_series=False))
     if any(row['ambiguous_tags'] for row in report['details']):
         sheet.text('Обнаружены метки, связанные с несколькими сериями. Они не засчитываются как подтверждённое RFID-считывание.')
     sheet.row()
@@ -148,14 +154,17 @@ def generate_efficiency_xlsx(report, include_details=False):
     sheet.text(f'Исключено записей МК/MK: {report["excluded_mk"]}; повторных записей серий: {report["duplicate_warehouse_rows"]}.')
     sheets = [('Отчёт', sheet)]
     if include_details:
-        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45])
+        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75])
         detail.row(['Серия', 'Дата склада (МСК)', 'ID склада', 'С RFID', 'Считано', 'Периметр',
-                    'Полные метки 1С', 'Совпавшие полные метки', 'ID событий КПП', 'Неоднозначные метки'], 2, 40)
+                    'Полные метки 1С', 'Совпавшие полные метки', 'ID событий КПП', 'Неоднозначные метки',
+                    'Reader подтвердил', 'Aggregator подтвердил', 'Доказательства Reader (ID, время, полная метка)'], 2, 40)
         for row in report['details']:
             tags = max(len(row['registered_tags']), len(row['matched_tags']), 1)
             detail.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']), int(row['has_rfid']),
                         int(row['detected']), int(row['in_perimeter']), '\n'.join(row['registered_tags']),
-                        '\n'.join(row['matched_tags']), '; '.join(row['event_ids']), '\n'.join(row['ambiguous_tags'])],
+                        '\n'.join(row['matched_tags']), '; '.join(row['event_ids']), '\n'.join(row['ambiguous_tags']),
+                        int(row['raw_detected']), int(row['kpp_detected']),
+                        '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in row['raw_evidence'])],
                        height=min(400, max(30, 30*tags)))
         sheets.append(('Сверка', detail))
     content_types = (f'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'

@@ -29,7 +29,7 @@ DIALOG = r"""
   <div class="modal-card">
     <div class="modal-head">
       <div><h3 class="modal-title" id="efficiencyTitle">Отчёт эффективности «Периметра»</h3>
-      <div class="modal-sub">Адресный склад, RFID-метки 1С и фактические считывания КПП за выбранный период.</div></div>
+      <div class="modal-sub">Два показателя: Периметр целиком и RFID-блок. Проверка по складу, 1С, журналу Reader и событиям КПП.</div></div>
       <button class="btn-light" onclick="closeEfficiencyModal()">Закрыть</button>
     </div>
     <div class="modal-body">
@@ -99,7 +99,7 @@ document.getElementById('efficiencyForm').addEventListener('submit', async event
   button.disabled = true;
   document.querySelectorAll('#efficiencyForm input').forEach(input=>input.disabled=true);
   document.getElementById('efficiencyOutput').hidden = true;
-  status.textContent='Формируется отчёт: чтение адресного склада, истории меток 1С и событий КПП…';
+  status.textContent='Формируется отчёт: сверка склада, меток 1С, исходных чтений RFID Reader и событий КПП…';
   try {
     const started = await efficiencyRequest('/api/efficiency-report', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({date_from:from,date_to:to,include_details:document.getElementById('efficiencyDetails').checked})});
     efficiencyJob = started.job_id;
