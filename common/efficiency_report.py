@@ -12,7 +12,7 @@ from html import escape
 import re
 
 MOSCOW = timezone(timedelta(hours=3))
-VERSION = "1.1"
+VERSION = "1.2"
 HEADERS = ("Дата", "Всего барабанов", "С RFID", "RFID считано", "RFID KPI", "Периметр целиком")
 
 
@@ -154,41 +154,47 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
 
 
 def add_raw_evidence(report, raw_rows):
-    """A real Reader read may exist before/without a linked Aggregator event.
+    """Compare the 1C cohort with raw antenna reads in the selected period.
 
-    The SQL adapter supplies per-receipt, per-full-tag bounded aggregates. Keep
-    their timestamps and raw row IDs for independent verification. Never turn
-    registry/warehouse metadata into a physical read or assume missing SQL is 0.
+    Receipt timing, session direction and Aggregator linkage are diagnostics,
+    not conditions for antenna detection. Each full tag and drum counts once.
     """
     report = dict(report)
     report['raw_checked'] = raw_rows is not None
-    by_receipt = defaultdict(list)
+    start = datetime.fromisoformat(report['date_from'])
+    end = datetime.fromisoformat(report['date_to']) + timedelta(days=1)
+    by_tag = defaultdict(list)
+    seen = set()
     for raw in raw_rows or ():
         if int(raw.get('ReadCount') or 0) <= 0:
             continue
-        by_receipt[str(raw['WarehouseId'])].append(raw)
+        tag = tag_key(raw.get('Tag'))
+        first, last = local_time(raw['FirstRead']), local_time(raw['LastRead'])
+        if not tag or not start <= first <= last < end:
+            continue
+        key = (tag, str(raw['FirstRawId']), str(raw['LastRawId']), first, last)
+        if key in seen:
+            continue
+        seen.add(key)
+        by_tag[tag].append(raw)
     details = []
-    delta = timedelta(hours=report['window_hours'])
     for original in report['details']:
         row = dict(original)
         kpp_tags = set(row.get('kpp_matched_tags', row['matched_tags']))
         eligible = set(row['registered_tags']) - set(row['ambiguous_tags'])
         raw_tags, proofs = set(), []
-        for receipt in row['warehouse_receipts']:
-            dt = local_time(receipt['dt'])
-            for raw in by_receipt.get(receipt['id'], ()):
-                tag = tag_key(raw.get('Tag'))
+        for tag in sorted(eligible):
+            for raw in by_tag.get(tag, ()):
                 first, last = local_time(raw['FirstRead']), local_time(raw['LastRead'])
-                if tag not in eligible or not dt-delta <= first <= last <= dt+delta:
-                    continue
                 raw_tags.add(tag)
-                proofs.append(dict(warehouse_id=receipt['id'], tag=tag,
+                proofs.append(dict(tag=tag,
                                    first_read=first.isoformat(), last_read=last.isoformat(),
                                    read_count=int(raw['ReadCount']),
                                    first_id=str(raw['FirstRawId']), last_id=str(raw['LastRawId'])))
         row.update(kpp_matched_tags=sorted(kpp_tags), raw_matched_tags=sorted(raw_tags),
                    raw_evidence=proofs, kpp_detected=bool(kpp_tags), raw_detected=bool(raw_tags),
-                   matched_tags=sorted(kpp_tags | raw_tags), detected=bool(kpp_tags | raw_tags))
+                   matched_tags=sorted(raw_tags), detected=bool(raw_tags),
+                   unread_tags=sorted(set(row['registered_tags'])-raw_tags))
         details.append(row)
     report['details'] = details
     days = [dict(day) for day in report['days']]
@@ -204,7 +210,24 @@ def add_raw_evidence(report, raw_rows):
     report['diagnostics'] = dict(kpp_confirmed=sum(row['kpp_detected'] for row in details),
                                raw_confirmed=sum(row['raw_detected'] for row in details),
                                reader_only=sum(row['raw_detected'] and not row['kpp_detected'] for row in details))
+    registered = {tag for row in details for tag in row['registered_tags']}
+    matched = {tag for row in details for tag in row['raw_matched_tags']}
+    report['raw_stats'] = dict(registered_tags=len(registered), read_tags=len(matched),
+                              unread_tags=len(registered-matched),
+                              matched_reads=sum(int(raw['ReadCount']) for tag in matched for raw in by_tag[tag]))
     return report
+
+
+def raw_summary_text(report):
+    if not report.get('raw_checked'):
+        return 'Исходный журнал антенны не проверен.'
+    s = report['raw_stats']
+    total = report.get('raw_source', {}).get('raw_reads')
+    prefix = f'Сырых чтений антенны за период — {total}; ' if total is not None else ''
+    return (prefix+f'чтений меток отчётных барабанов — {s["matched_reads"]}. '
+            f'Уникальных меток 1С — {s["registered_tags"]}, найдено в сырых чтениях — {s["read_tags"]}, '
+            f'не подтверждено — {s["unread_tags"]}. '
+            'RFID KPI считается по барабанам: достаточно одной прочитанной зарегистрированной метки; повторы не увеличивают процент.')
 
 
 def rfid_kpi(report):
@@ -266,9 +289,10 @@ def methodology_text(report):
             "по дате первой приёмки. Серии с суффиксом МК/MK исключены. Источник Warehouse не содержит вида тары; "
             "прочие серии относятся к барабанам по принятой номенклатуре учёта. "
             "С RFID: полный Tag зарегистрирован в 1С не позже первой приёмки. RFID считано: хотя бы один такой Tag "
-            "совпадает с исходным чтением Reader в dbo.RFID_Tags либо с физическим событием КПП (RfidReadCount > 0); "
-            "складская запись сама по себе не является считыванием. Журнал Reader проверяется по точному EPC+TID в окне приёмки; "
-            f'Связь: сохранённый WarehouseId, иначе полный Tag в пределах ±{report["window_hours"]} ч без возврата IN. '
+            "совпадает с сырым чтением антенны в dbo.RFID_Tags за весь выбранный период от 00:00 первого дня "
+            "до 00:00 дня после последнего. Время чтения — SourceReaderTime, иначе RecordTime. "
+            "Проверяется точный полный EPC+TID. Окно ±24 ч от приёмки, направление и наличие события Aggregator "
+            "не ограничивают KPI антенны; Aggregator показан только в сверке. "
             "Метка, связанная с несколькими сериями, не доказывает обнаружение. Регистрация в 1С не гарантирует сохранность "
             "физической метки. Периметр целиком включает прямые записи адресного склада. "
             "Время — МСК. Источники читаются последовательно, без общей транзакционной точки снимка.")
@@ -287,7 +311,7 @@ def email_parts(report):
               f'RFID-блок — {rfid_kpi(report)}.')
     blocks = ["Добрый день, Павел Валерьевич!", intro,
               '\n'.join('\t'.join(map(str, row)) for row in [HEADERS, *summary_rows(report)]),
-              explanatory_text(report), exceptions_text(report, include_series=False), "Итоговая эффективность:",
+              explanatory_text(report)+'\n\n'+raw_summary_text(report), exceptions_text(report, include_series=False), "Итоговая эффективность:",
               '\n'.join('\t'.join(map(str, row)) for row in [["Показатель", "Склад / 1С", "Периметр", "Эффективность"], *effectiveness_rows(report)]), footer]
     html = ''.join('<p>'+escape(text).replace('\n', '<br>')+'</p>' if i not in {2, 6} else
                    table_html(HEADERS, summary_rows(report)) if i == 2 else
@@ -304,4 +328,5 @@ def preview_html(report):
             +table_html(['Показатель', 'Учтено / всего', 'Результат'], executive_rows(report))
             + table_html(HEADERS, summary_rows(report)) + '<p>'+escape(explanatory_text(report)).replace('\n', '<br>')+'</p>'
             + table_html(["Показатель", "Склад / 1С", "Периметр", "Эффективность"], effectiveness_rows(report))
+            + '<p>'+escape(raw_summary_text(report))+'</p>'
             + '<p>'+escape(exceptions_text(report, include_series=False))+'</p>'+warning)

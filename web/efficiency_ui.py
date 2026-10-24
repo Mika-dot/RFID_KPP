@@ -29,7 +29,7 @@ DIALOG = r"""
   <div class="modal-card">
     <div class="modal-head">
       <div><h3 class="modal-title" id="efficiencyTitle">Отчёт эффективности «Периметра»</h3>
-      <div class="modal-sub">Два показателя: Периметр целиком и RFID-блок. Проверка по складу, 1С, журналу Reader и событиям КПП.</div></div>
+      <div class="modal-sub">Периметр целиком и RFID-блок: метки 1С против сырых чтений антенны за весь выбранный период.</div></div>
       <button class="btn-light" onclick="closeEfficiencyModal()">Закрыть</button>
     </div>
     <div class="modal-body">

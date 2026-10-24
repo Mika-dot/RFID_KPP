@@ -100,45 +100,69 @@ def fetch_efficiency_report(base, date_from, date_to):
             if len(by_id) > 200000:
                 raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
         report = build_efficiency_report(warehouse, registry, by_id.values(), date_from, date_to, window_hours=window)
-        raw_rows = fetch_raw_evidence(conn, report, sql_table(os.getenv('KPP_RFID_TABLE', 'dbo.RFID_Tags')))
+    # The antenna writer can use a different DB from the Web/Aggregator.
+    raw_destination = os.getenv('RFID_DB_CONNECTION') or base.Config.DB_CONN_STR
+    raw_table = sql_table(os.getenv('KPP_RFID_TABLE', 'dbo.RFID_Tags'))
+    with closing(connect(raw_destination)) as conn:
+        report['raw_source'] = fetch_raw_summary(conn, report, raw_table)
+        raw_rows = fetch_raw_evidence(conn, report, raw_table)
     return add_raw_evidence(report, raw_rows)
 
 
 def fetch_raw_evidence(connection, report, raw_table):
     """Read actual Reader rows, never Warehouse.Tag or registry existence.
 
-    Exact per-receipt windows are evaluated in SQL and rechecked in the pure
+    The whole selected reporting period is evaluated in SQL and rechecked in the pure
     projection. Aggregate there, so millions of inventory reads are not sent to
     the Web process. A failed raw query aborts the report instead of counting 0.
     """
-    candidates = []
-    delta = timedelta(hours=report['window_hours'])
+    candidates = set()
+    start, end = raw_period(report)
     for row in report['details']:
         tags = set(row['registered_tags'])-set(row['ambiguous_tags'])
-        for receipt in row['warehouse_receipts']:
-            at = local_time(receipt['dt'])
-            for tag in sorted(tags):
-                if len(tag) > 512:
-                    raise ValueError('Некорректная длина полной RFID-метки в реестре')
-                candidates.append((int(receipt['id']), tag, at-delta, at+delta))
+        for tag in tags:
+            if len(tag) > 512:
+                raise ValueError('Некорректная длина полной RFID-метки в реестре')
+            candidates.add(tag)
     if len(candidates) > 100000:
-        raise ValueError('Слишком много RFID-привязок; сократите период. Неполный отчёт не выдаётся.')
+        raise ValueError('Слишком много RFID-меток; сократите период. Неполный отчёт не выдаётся.')
+    candidates = sorted(candidates)
     rows = []
     for offset in range(0, len(candidates), 200):
         batch = candidates[offset:offset+200]
-        values = ','.join('(CONVERT(bigint,?),CONVERT(nvarchar(512),?),CONVERT(datetime2,?),CONVERT(datetime2,?))' for _ in batch)
-        sql = f'''SELECT v.WarehouseId,v.Tag,COUNT_BIG(*) AS ReadCount,
-            MIN(r.RecordTime) AS FirstRead,MAX(r.RecordTime) AS LastRead,
+        values = ','.join('(CONVERT(nvarchar(512),?))' for _ in batch)
+        at = 'COALESCE(r.SourceReaderTime,r.RecordTime)'
+        sql = f'''SELECT v.Tag,COUNT_BIG(*) AS ReadCount,
+            MIN({at}) AS FirstRead,MAX({at}) AS LastRead,
             MIN(r.Id) AS FirstRawId,MAX(r.Id) AS LastRawId
-            FROM (VALUES {values}) AS v(WarehouseId,Tag,StartTime,EndTime)
+            FROM (VALUES {values}) AS v(Tag)
             INNER JOIN {raw_table} r
-              ON r.RecordTime>=v.StartTime AND r.RecordTime<=v.EndTime
-             AND UPPER(REPLACE(REPLACE(REPLACE(REPLACE(
+              ON UPPER(REPLACE(REPLACE(REPLACE(REPLACE(
                  CONVERT(nvarchar(512),ISNULL(r.EPC,''))+CONVERT(nvarchar(512),ISNULL(r.TID,'')),
                  N' ',N''),NCHAR(9),N''),NCHAR(10),N''),NCHAR(13),N''))=v.Tag
-            GROUP BY v.WarehouseId,v.Tag'''
-        rows.extend(read_rows(connection, sql, [value for candidate in batch for value in candidate], 200))
+            WHERE {at}>=? AND {at}<?
+            GROUP BY v.Tag'''
+        rows.extend(read_rows(connection, sql, [*batch, start, end], 200))
     return rows
+
+
+def raw_period(report):
+    return (datetime.fromisoformat(report['date_from']),
+            datetime.fromisoformat(report['date_to'])+timedelta(days=1))
+
+
+def fetch_raw_summary(connection, report, raw_table):
+    start, end = raw_period(report)
+    at = 'COALESCE(r.SourceReaderTime,r.RecordTime)'
+    rows = read_rows(connection, f'''SELECT COUNT_BIG(*) AS raw_reads,
+        MIN({at}) AS first_read,MAX({at}) AS last_read
+        FROM {raw_table} r WHERE {at}>=? AND {at}<?''', (start, end), 1)
+    if len(rows) != 1:
+        raise ValueError('Не получена сводка исходного журнала антенны; отчёт не сформирован.')
+    row = rows[0]
+    return dict(raw_reads=int(row['raw_reads']),
+                first_read=local_time(row['first_read']).isoformat() if row['first_read'] is not None else None,
+                last_read=local_time(row['last_read']).isoformat() if row['last_read'] is not None else None)
 
 
 class ReportJobs:
@@ -238,6 +262,7 @@ def install(base):
                           methodology=methodology_text(report), generated_at=report['generated_at'],
                           totals=report['totals'], days=report['days'],
                           source_checks=dict(reader=report['raw_checked']), diagnostics=report['diagnostics'],
+                          raw_stats=report['raw_stats'], raw_source=report.get('raw_source'),
                           download_url=f'/api/efficiency-report/{token}/download'))
 
     @base.app.route('/api/efficiency-report/<token>/download')
