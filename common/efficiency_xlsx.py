@@ -12,7 +12,7 @@ from datetime import date
 from xml.sax.saxutils import escape
 
 from common.efficiency_report import (HEADERS, effectiveness_rows, email_parts, exceptions_text,
-                                      executive_rows, explanatory_text, methodology_text, period_text, summary_rows)
+                                      executive_rows, explanatory_text, methodology_text, period_text, raw_summary_text, summary_rows)
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -123,6 +123,7 @@ def generate_efficiency_xlsx(report, include_details=False):
                summary_rows(report)[-1][-1]], 2)
     sheet.row()
     sheet.text(explanatory_text(report))
+    sheet.text(raw_summary_text(report))
     sheet.row()
     sheet.row(['Показатель', '', 'Склад / 1С', 'Периметр', '', 'Эффективность'], 2, 34)
     header = len(sheet.rows)
@@ -154,17 +155,19 @@ def generate_efficiency_xlsx(report, include_details=False):
     sheet.text(f'Исключено записей МК/MK: {report["excluded_mk"]}; повторных записей серий: {report["duplicate_warehouse_rows"]}.')
     sheets = [('Отчёт', sheet)]
     if include_details:
-        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75])
+        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75, 18, 60])
         detail.row(['Серия', 'Дата склада (МСК)', 'ID склада', 'С RFID', 'Считано', 'Периметр',
                     'Полные метки 1С', 'Совпавшие полные метки', 'ID событий КПП', 'Неоднозначные метки',
-                    'Reader подтвердил', 'Aggregator подтвердил', 'Доказательства Reader (ID, время, полная метка)'], 2, 40)
+                    'Reader подтвердил', 'Aggregator подтвердил', 'Доказательства Reader (ID, время, полная метка)',
+                    'Сырых чтений меток', 'Метки 1С без подтверждения'], 2, 40)
         for row in report['details']:
             tags = max(len(row['registered_tags']), len(row['matched_tags']), 1)
             detail.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']), int(row['has_rfid']),
                         int(row['detected']), int(row['in_perimeter']), '\n'.join(row['registered_tags']),
                         '\n'.join(row['matched_tags']), '; '.join(row['event_ids']), '\n'.join(row['ambiguous_tags']),
                         int(row['raw_detected']), int(row['kpp_detected']),
-                        '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in row['raw_evidence'])],
+                        '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in row['raw_evidence']),
+                        sum(p['read_count'] for p in row['raw_evidence']), '\n'.join(row['unread_tags'])],
                        height=min(400, max(30, 30*tags)))
         sheets.append(('Сверка', detail))
     content_types = (f'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'

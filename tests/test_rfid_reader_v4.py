@@ -5,7 +5,9 @@ import tempfile
 import unittest
 import sys
 import sqlite3
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "RFID_reader_v4" / "rfid_to_sql_v4.py"
 spec = importlib.util.spec_from_file_location("rfid_reader_v4", MODULE_PATH)
@@ -16,6 +18,21 @@ spec.loader.exec_module(reader)
 
 
 class RfidSpoolTests(unittest.TestCase):
+    def test_delayed_delivery_keeps_capture_time_in_indexed_record_time(self):
+        captured = datetime(2026, 5, 1, 10)
+        spool, odbc = MagicMock(), MagicMock()
+        spool.next_pending.return_value = (
+            '22222222-2222-2222-2222-222222222222', captured.isoformat(), 1,
+            '11111111-1111-1111-1111-111111111111', 1, -45, 'A'*24, 'B'*24, 'HOST_CAPTURE_TIME', 0)
+        with patch('common.replicated_ingest.ReplicatedDelivery.from_env'), patch.dict(sys.modules, {'pyodbc': odbc}):
+            writer = reader.SQLWriter(spool)
+            spool.mark_sent.side_effect = lambda *_: setattr(writer, 'running', False)
+            writer.run()
+        args = odbc.connect.return_value.__enter__.return_value.cursor.return_value.execute.call_args.args[1:]
+        self.assertEqual(args[1], captured)  # RecordTime: used by the report's indexed period filter.
+        self.assertEqual(args[9], captured)  # SourceReaderTime: used by Aggregator.
+        self.assertGreater(args[8], captured)  # ReceivedAt must keep the later delivery time separately.
+
     def test_connection_closes_and_failed_transaction_rolls_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             spool = reader.Spool(str(Path(tmp) / "spool.sqlite"))
