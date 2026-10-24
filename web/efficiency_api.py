@@ -131,7 +131,10 @@ def fetch_raw_evidence(connection, report, raw_table):
     for offset in range(0, len(candidates), 200):
         batch = candidates[offset:offset+200]
         values = ','.join('(CONVERT(nvarchar(512),?))' for _ in batch)
-        at = 'COALESCE(r.SourceReaderTime,r.RecordTime)'
+        # SQLWriter stores the captured source_dt in both RecordTime and
+        # SourceReaderTime (also on delayed spool replay). RecordTime has the
+        # existing period index; wrapping it in COALESCE forces history scans.
+        at = 'r.RecordTime'
         sql = f'''SELECT v.Tag,COUNT_BIG(*) AS ReadCount,
             MIN({at}) AS FirstRead,MAX({at}) AS LastRead,
             MIN(r.Id) AS FirstRawId,MAX(r.Id) AS LastRawId
@@ -153,7 +156,7 @@ def raw_period(report):
 
 def fetch_raw_summary(connection, report, raw_table):
     start, end = raw_period(report)
-    at = 'COALESCE(r.SourceReaderTime,r.RecordTime)'
+    at = 'r.RecordTime'
     rows = read_rows(connection, f'''SELECT COUNT_BIG(*) AS raw_reads,
         MIN({at}) AS first_read,MAX({at}) AS last_read
         FROM {raw_table} r WHERE {at}>=? AND {at}<?''', (start, end), 1)

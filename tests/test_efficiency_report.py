@@ -428,8 +428,9 @@ class EfficiencyHttpTests(unittest.TestCase):
                 query, parameters = call.args[1:3]
                 self.assertEqual(query.count('?'), len(parameters))
                 self.assertLess(len(parameters), 2100)
-                self.assertIn('COALESCE(r.SourceReaderTime,r.RecordTime)>=?', query)
-                self.assertIn('COALESCE(r.SourceReaderTime,r.RecordTime)<?', query)
+                self.assertIn('r.RecordTime>=?', query)
+                self.assertIn('r.RecordTime<?', query)
+                self.assertNotIn('COALESCE(r.SourceReaderTime', query)
                 self.assertEqual(parameters[-2:], [datetime(2026, 10, 19), datetime(2026, 10, 23)])
                 self.assertNotIn('WarehouseId', query)
                 self.assertIn('FirstRawId', query)
