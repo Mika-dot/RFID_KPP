@@ -12,7 +12,7 @@ from html import escape
 import re
 
 MOSCOW = timezone(timedelta(hours=3))
-VERSION = "1.3"
+VERSION = "1.4"
 HEADERS = ("Дата", "Всего барабанов", "С RFID", "RFID считано", "RFID KPI", "Периметр целиком")
 
 
@@ -75,12 +75,15 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
         warehouse[series].append(row)
 
     registry = defaultdict(list)
+    registrations = defaultdict(list)
     owners = defaultdict(set)
     for source in registry_rows:
         series, tag = series_key(source.get("SeriesNumber")), tag_key(source.get("Tag"))
         if not tag or not series:
             continue
         dt = local_time(source.get("Dt"))
+        registrations[series].append(dict(id=str(source.get('Id') or ''), dt=dt.isoformat(),
+                                         tag=tag, document=str(source.get('Ids') or '')))
         if dt < end:
             registry[series].append((dt, tag))
             owners[tag].add(series)
@@ -135,6 +138,7 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
                             warehouse_ids=[str(row["Id"]) for row in rows],
                             warehouse_receipts=[dict(id=str(row['Id']), dt=row['Dt'].isoformat()) for row in rows],
                             registered_tags=sorted(registered), matched_tags=sorted(matched),
+                            registrations=sorted(registrations.get(series, ()), key=lambda r: (r['dt'], r['id'])),
                             registration_dates=sorted({dt.isoformat() for dt, tag in registry.get(series, ()) if tag in registered and dt <= first['Dt']}),
                             event_ids=sorted(event_ids), ambiguous_tags=sorted(ambiguous),
                             aggregator_tags=sorted(eligible & processed_by_tag.keys()),
@@ -350,19 +354,12 @@ def email_parts(report):
 
 
 def preview_html(report):
-    from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, operational_rows, delivery_text
+    from common.efficiency_diagnostics import reconcile
+    from common.efficiency_cases import short_scorecard, issue_counts, CATEGORY_NAMES
     if 'reconciliation' not in report:
         report = reconcile(report)
-    warning = ""
-    if any(row["ambiguous_tags"] for row in report["details"]):
-        warning = '<p role="alert">Есть метки, зарегистрированные за несколькими сериями. Их считывание не засчитано.</p>'
     return (f'<h3>Работа КПП «Периметр»</h3><p>Период: {period_text(report)}</p>'
-            +table_html(['Показатель', 'Учтено / всего', 'Результат'], executive_rows(report))
-            + table_html(HEADERS, summary_rows(report)) + '<p>'+escape(explanatory_text(report)).replace('\n', '<br>')+'</p>'
-            + table_html(["Показатель", "Склад / 1С", "Периметр", "Эффективность"], effectiveness_rows(report))
-            + '<p>'+escape(raw_summary_text(report))+'</p>'
-            + table_html(['Контроль системы', 'Подтверждение', 'Результат / граница проверки'], operational_rows(report))
-            + '<p>'+escape(delivery_text(report))+'</p>'
-            + '<p>'+escape(exceptions_text(report, include_series=False))+'</p>'+warning
-            + table_html(['Что установлено по данным', 'Барабанов'], reconciliation_rows(report))
-            + '<p>'+escape(verification_text(report))+'</p>')
+            + table_html(['Показатель', 'Учтено', 'База', 'Результат', 'Что измерено'], short_scorecard(report))
+            + table_html(['Расхождение', 'Катушек'],
+                         [[CATEGORY_NAMES[code], count] for code, count in issue_counts(report).items()])
+            + '<p>В Excel: сверка всех катушек, графики и индивидуальные карточки расхождений. Письмо доступно отдельно.</p>')

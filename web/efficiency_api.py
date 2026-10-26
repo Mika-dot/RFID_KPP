@@ -20,6 +20,7 @@ from common.efficiency_report import (add_raw_evidence, build_efficiency_report,
                                       preview_html, validate_period)
 from common.efficiency_xlsx import generate_efficiency_xlsx
 from common.efficiency_diagnostics import reconcile
+from common.efficiency_cases import attach_case_analysis, case_tags
 
 log = logging.getLogger('perimeter.efficiency-report')
 
@@ -85,10 +86,12 @@ def fetch_efficiency_report(base, date_from, date_to):
             WHERE Dt>=? AND Dt<? ORDER BY Dt,Id''', (start, end), 50000)
         # Historical registrations are essential (e.g. a May tag on an October
         # receipt). Never apply the aggregator's recent task cache window here.
+        # Keep later registrations for chronology. The pure projection still
+        # enforces the receipt cutoff for the RFID denominator.
         registry = read_rows(conn, f'''SELECT Id,Dt,Tag,Ids,SeriesNumber FROM {task_table}
-            WHERE Dt<? OR Dt IS NULL ORDER BY Id''', (end,), 500000)
+            ORDER BY Id''', (), 500000)
     with closing(connect(base.Config.DB_CONN_STR)) as conn:
-        fields = 'EventId,SourceTag,EPC,TID,FirstSeen,LastSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId,IsReel'
+        fields = EVENT_FIELDS
         condition = "ISNULL(RfidReadCount,0)>0 AND ISNULL(SessionCloseReason,'') NOT IN ('WAREHOUSE_ONLY','SUPERSEDED_BY_KPP')"
         events = read_rows(conn, f'''SELECT {fields} FROM {event_table}
             WHERE FirstSeen>=? AND FirstSeen<? AND {condition} ORDER BY EventId''',
@@ -142,7 +145,88 @@ def fetch_efficiency_report(base, date_from, date_to):
         except Exception as exc:
             report['delivery'] = dict(checked=False)
             log.warning('delivery_check_failed error_class=%s', type(exc).__name__)
-    return reconcile(report, history, processing=processing)
+        report = reconcile(report, history, processing=processing)
+        try:
+            case_raw = fetch_case_raw(conn, report, raw_table)
+        except Exception as exc:
+            case_raw = None
+            log.warning('case_raw_check_failed error_class=%s', type(exc).__name__)
+        try:
+            activity = fetch_reader_activity(conn, report, raw_table)
+        except Exception as exc:
+            activity = None
+            log.warning('reader_activity_check_failed error_class=%s', type(exc).__name__)
+    try:
+        with closing(connect(base.Config.DB_CONN_STR)) as conn:
+            case_events = fetch_case_events(conn, report, event_table, by_id.values())
+    except Exception as exc:
+        case_events = None
+        log.warning('case_events_check_failed error_class=%s', type(exc).__name__)
+    return attach_case_analysis(report, case_raw, activity, case_events)
+
+
+EVENT_FIELDS = ('EventId,SourceTag,EPC,TID,FirstSeen,LastSeen,FinalDirection,RfidReadCount,'
+                'SessionCloseReason,WarehouseId,IsReel,Task1CId,Task1CDt,TaskMatchType,'
+                'ReelClassification,ObjectType,CreatedAt,CompletedAt,RfidMinRawId,RfidMaxRawId')
+
+
+def fetch_case_raw(connection, report, raw_table):
+    """All available days/antennas for issue EPCs, including other/empty TIDs.
+
+    Existing EPC index bounds each lookup; no payload, names or images read.
+    MIN/MAX IDs and times describe groups and are not asserted to be paired.
+    """
+    epcs = sorted({tag[:24] for tag in case_tags(report) if re.fullmatch('[0-9A-F]{48}', tag)})
+    if len(epcs) > 10000:
+        raise ValueError('Слишком много меток для разбора катушек')
+    rows = []
+    for offset in range(0, len(epcs), 200):
+        batch = epcs[offset:offset+200]
+        values = ','.join('(CONVERT(varchar(100),?))' for _ in batch)
+        valid = "r.ReceivedAt IS NOT NULL AND r.SourceReaderTime IS NOT NULL AND r.ReceivedAt>=r.SourceReaderTime AND r.TimeQuality IN ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT')"
+        sql = f'''SELECT r.EPC,r.TID,r.Antenna,CONVERT(date,r.RecordTime) AS Day,
+            COUNT_BIG(*) AS ReadCount,MIN(r.RecordTime) AS FirstRead,MAX(r.RecordTime) AS LastRead,
+            MIN(r.Id) AS FirstRawId,MAX(r.Id) AS LastRawId,
+            MIN(r.ReceivedAt) AS FirstReceived,MAX(r.ReceivedAt) AS LastReceived,
+            SUM(CONVERT(bigint,CASE WHEN {valid} THEN 1 ELSE 0 END)) AS TimedRows,
+            SUM(CONVERT(bigint,CASE WHEN {valid} AND r.ReceivedAt>DATEADD(second,120,r.SourceReaderTime) THEN 1 ELSE 0 END)) AS LateRows
+            FROM (VALUES {values}) AS v(EPC) INNER JOIN {raw_table} r ON r.EPC=v.EPC
+            GROUP BY r.EPC,r.TID,r.Antenna,CONVERT(date,r.RecordTime)'''
+        rows.extend(read_rows(connection, sql, batch, 100000))
+        if len(rows) > 100000:
+            raise ValueError('Слишком много групп истории для разбора катушек')
+    # All fields returned to the report must remain JSON serializable.
+    for row in rows:
+        row['Day'] = str(row['Day'])
+    return rows
+
+
+def fetch_reader_activity(connection, report, raw_table):
+    start, end = raw_period(report)
+    rows = read_rows(connection, f'''SELECT CONVERT(char(13),RecordTime,126) AS Hour,Antenna,
+        COUNT_BIG(*) AS ReadCount FROM {raw_table}
+        WHERE RecordTime>=? AND RecordTime<?
+        GROUP BY CONVERT(char(13),RecordTime,126),Antenna''',
+        (start-timedelta(hours=12), end+timedelta(hours=12)), 100000)
+    for row in rows:
+        row['Hour'] = str(row['Hour'])+':00:00'
+    return rows
+
+
+def fetch_case_events(connection, report, event_table, known):
+    tags = sorted(case_tags(report))
+    if len(tags) > 10000:
+        raise ValueError('Слишком много меток для истории событий')
+    result = {str(row['EventId']): row for row in known}
+    for offset in range(0, len(tags), 200):
+        batch = tags[offset:offset+200]
+        rows = read_rows(connection, f'''SELECT {EVENT_FIELDS} FROM {event_table}
+            WHERE SourceTag IN ({','.join('?' for _ in batch)}) AND RfidReadCount>0
+            AND ISNULL(SessionCloseReason,'') NOT IN ('WAREHOUSE_ONLY','SUPERSEDED_BY_KPP')''', batch, 100000)
+        result.update((str(row['EventId']), row) for row in rows)
+        if len(result) > 200000:
+            raise ValueError('Слишком много событий для разбора катушек')
+    return list(result.values())
 
 
 def fetch_raw_evidence(connection, report, raw_table):
