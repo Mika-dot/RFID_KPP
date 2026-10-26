@@ -148,7 +148,7 @@ class EfficiencyReportTests(unittest.TestCase):
     def test_letter_matches_summary_and_html_is_escaped(self):
         report = self.report()
         letter = email_parts(report)
-        for value in ['98,77%', '131/131 = 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
+        for value in ['98,77%', '131/131 — 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
             self.assertIn(value, letter['text'])
         self.assertNotIn('будет проверена', letter['text'])
         report['details'][0]['series'] = '<img src=x onerror=alert(1)>'
@@ -162,7 +162,7 @@ class EfficiencyReportTests(unittest.TestCase):
                     ET.fromstring(archive.read(name))
                 ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                 workbook = ET.fromstring(archive.read('xl/workbook.xml'))
-                self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 2 if details else 1)
+                self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 3 if details else 1)
                 sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
                 cells = {c.attrib['r']: c for c in sheet.findall('.//m:c', ns)}
                 self.assertEqual(cells['B11'].find('m:v', ns).text, '131')
@@ -389,7 +389,8 @@ class EfficiencyHttpTests(unittest.TestCase):
             return {'task-source': tasks, 'event-source': events, 'reader-source': reader}[destination]
         base = types.SimpleNamespace(Config=types.SimpleNamespace(DB_CONN_STR='event-source', TASK_TABLE='dbo.RfidTags'),
                                      pyodbc=types.SimpleNamespace(connect=connect))
-        with patch.dict('os.environ', {'KPP_TASK_CONN_STR': 'task-source', 'RFID_DB_CONNECTION': 'reader-source'}, clear=True):
+        with patch.dict('os.environ', {'KPP_TASK_CONN_STR': 'task-source', 'RFID_DB_CONNECTION': 'reader-source',
+                                      'KPP_EVENT_TABLE':'audit.ReelEvents'}, clear=True):
             report = self.api.fetch_efficiency_report(base, date(2026, 10, 19), date(2026, 10, 22))
         self.assertEqual(report['totals']['detected'], 80)
         self.assertTrue(report['raw_checked'])
@@ -397,6 +398,8 @@ class EfficiencyHttpTests(unittest.TestCase):
         self.assertFalse(any('dbo.RFID_Tags' in q for q, _ in events.queries))
         self.assertEqual(report['raw_source']['raw_reads'], 1600)
         self.assertEqual([call[0] for call in calls], ['task-source', 'event-source', 'reader-source'])
+        self.assertTrue(any('FROM audit.ReelEvents' in q for q,_ in events.queries))
+        self.assertFalse(any('FROM dbo.KPP_ReelEvents' in q for q,_ in events.queries))
         for _, options in calls:
             self.assertTrue(options['readonly'])
             self.assertTrue(options['autocommit'])

@@ -13,6 +13,7 @@ from xml.sax.saxutils import escape
 
 from common.efficiency_report import (HEADERS, effectiveness_rows, email_parts, exceptions_text,
                                       executive_rows, explanatory_text, methodology_text, period_text, raw_summary_text, summary_rows)
+from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, history_text, operational_rows, delivery_text
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -101,6 +102,8 @@ def styles_xml():
 def generate_efficiency_xlsx(report, include_details=False):
     if not report.get('raw_checked'):
         raise ValueError('Проверка исходного журнала RFID Reader не завершена; окончательный отчёт не сформирован.')
+    if 'reconciliation' not in report:
+        report = reconcile(report)
     sheet = Sheet([20, 23, 18, 22, 18, 32])
     sheet.text('РАБОТА КПП «ПЕРИМЕТР»', 1)
     sheet.text('Период: '+period_text(report)+' • МСК')
@@ -124,6 +127,11 @@ def generate_efficiency_xlsx(report, include_details=False):
     sheet.row()
     sheet.text(explanatory_text(report))
     sheet.text(raw_summary_text(report))
+    sheet.text('КОНТРОЛЬ РАБОТЫ СИСТЕМЫ', 1)
+    for values in [['Показатель', 'Подтверждение', 'Результат / граница проверки'], *operational_rows(report)]:
+        row = sheet.row([values[0], '', values[1], '', values[2], ''], height=72)
+        sheet.merges.extend([f'A{row}:B{row}', f'C{row}:D{row}', f'E{row}:F{row}'])
+    sheet.text(delivery_text(report))
     sheet.row()
     sheet.row(['Показатель', '', 'Склад / 1С', 'Периметр', '', 'Эффективность'], 2, 34)
     header = len(sheet.rows)
@@ -132,44 +140,56 @@ def generate_efficiency_xlsx(report, include_details=False):
         row = sheet.row([values[0], '', values[1], values[2], '', values[3]], height=38)
         sheet.merges.extend([f'A{row}:B{row}', f'D{row}:E{row}'])
     sheet.text(exceptions_text(report, include_series=False))
+    if reconciliation_rows(report):
+        sheet.text('РАЗБОР РАСХОЖДЕНИЙ', 1)
+        for reason, count in reconciliation_rows(report):
+            sheet.text(f'{reason} — {count}.')
+    sheet.text(verification_text(report))
     if any(row['ambiguous_tags'] for row in report['details']):
         sheet.text('Обнаружены метки, связанные с несколькими сериями. Они не засчитываются как подтверждённое RFID-считывание.')
     sheet.row()
     sheet.text('ТЕКСТ ПИСЬМА', 1)
     email = email_parts(report)
     sheet.text('Тема: '+email['subject'], 5)
-    for i, block in enumerate(email['blocks']):
-        if i == 2:
-            sheet.row(HEADERS, 2, 36)
-            for values in summary_rows(report):
-                sheet.row(values)
-        elif i == 6:
-            for values in [['Показатель', 'Склад / 1С', 'Периметр', 'Эффективность'], *effectiveness_rows(report)]:
-                row = sheet.row([values[0], '', values[1], values[2], '', values[3]], height=38)
-                sheet.merges.extend([f'A{row}:B{row}', f'D{row}:E{row}'])
-        else:
-            sheet.text(block)
+    for block in email['blocks']:
+        sheet.text(block)
         sheet.row()
     sheet.text('Методика v'+report['version']+' • Сформировано: '+report['generated_at'])
     sheet.text(methodology_text(report))
     sheet.text(f'Исключено записей МК/MK: {report["excluded_mk"]}; повторных записей серий: {report["duplicate_warehouse_rows"]}.')
     sheets = [('Отчёт', sheet)]
     if include_details:
-        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75, 18, 60])
+        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75, 18, 60, 65, 95, 18, 30, 30, 32])
         detail.row(['Серия', 'Дата склада (МСК)', 'ID склада', 'С RFID', 'Считано', 'Периметр',
                     'Полные метки 1С', 'Совпавшие полные метки', 'ID событий КПП', 'Неоднозначные метки',
                     'Reader подтвердил', 'Aggregator подтвердил', 'Доказательства Reader (ID, время, полная метка)',
-                    'Сырых чтений меток', 'Метки 1С без подтверждения'], 2, 40)
+                    'Сырых чтений меток', 'Метки 1С без подтверждения', 'Результат сверки', 'История чтений вне периода',
+                    'Распознано Периметром', 'ID событий распознавания', 'ID всех физических RFID-событий', 'Даты регистрации меток 1С'], 2, 40)
         for row in report['details']:
             tags = max(len(row['registered_tags']), len(row['matched_tags']), 1)
             detail.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']), int(row['has_rfid']),
                         int(row['detected']), int(row['in_perimeter']), '\n'.join(row['registered_tags']),
                         '\n'.join(row['matched_tags']), '; '.join(row['event_ids']), '\n'.join(row['ambiguous_tags']),
-                        int(row['raw_detected']), int(row['kpp_detected']),
+                        int(row['raw_detected']), int(row['kpp_detected']) if report.get('events_checked', True) else 'Не проверен',
                         '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in row['raw_evidence']),
-                        sum(p['read_count'] for p in row['raw_evidence']), '\n'.join(row['unread_tags'])],
+                        sum(p['read_count'] for p in row['raw_evidence']), '\n'.join(row['unread_tags']), row['reason'], history_text(row),
+                        int(bool(set(row['raw_matched_tags']) & set(row.get('aggregator_tags', ())))) if report.get('events_checked', True) else 'Не проверен',
+                        '; '.join(row.get('aggregator_event_ids', ())), '; '.join(row.get('observed_event_ids', ())),
+                        '\n'.join(row.get('registration_dates', ()))],
                        height=min(400, max(30, 30*tags)))
         sheets.append(('Сверка', detail))
+        checks = Sheet([18, 24, 23, 20, 60, 35, 50, 25, 23, 65])
+        checks.row(['Серия', 'Дата склада', 'ID склада', 'Категория', 'Установлено по данным',
+                    'Причина (заполняется)', 'Документ / журнал / фото', 'Ответственный', 'Дата проверки', 'Комментарий'], 2, 55)
+        for row in report['details']:
+            if row['has_rfid'] and row['detected'] and row['reason_code']!='READ_UNCLASSIFIED':
+                continue
+            checks.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']),
+                        ('Нет метки в 1С' if not row['has_rfid'] else 'Проверка распознавания' if row['detected'] else 'Нет чтения в периоде'), row['reason'],
+                        'Не проверено', '', '', '', ''], height=60)
+        checks.text('Заполняется по фактической проверке. Отсутствие привязки в 1С не доказывает отсутствие физической метки '
+                    'или ошибку сотрудника. Сеть, оборудование, ПО и действия людей относятся к причинам только с подтверждением.')
+        sheets.append(('Проверка катушек', checks))
     content_types = (f'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                      '<Default Extension="xml" ContentType="application/xml"/>'

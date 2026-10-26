@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import closing
 from datetime import date, datetime, timedelta
 import os
+import logging
 import re
 import secrets
 import threading
@@ -18,6 +19,9 @@ from flask import Response, jsonify, request
 from common.efficiency_report import (add_raw_evidence, build_efficiency_report, email_parts, local_time, methodology_text,
                                       preview_html, validate_period)
 from common.efficiency_xlsx import generate_efficiency_xlsx
+from common.efficiency_diagnostics import reconcile
+
+log = logging.getLogger('perimeter.efficiency-report')
 
 
 def sql_table(value):
@@ -55,6 +59,7 @@ def fetch_efficiency_report(base, date_from, date_to):
     end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
     window = 24
     warehouse_table = sql_table(os.getenv('KPP_WAREHOUSE_TABLE', 'dbo.Warehouse'))
+    event_table = sql_table(os.getenv('KPP_EVENT_TABLE', 'dbo.KPP_ReelEvents'))
     task_table = sql_table(base.Config.TASK_TABLE)
     task_destination = os.getenv('KPP_TASK_CONN_STR') or base.Config.DB_CONN_STR
 
@@ -83,30 +88,61 @@ def fetch_efficiency_report(base, date_from, date_to):
         registry = read_rows(conn, f'''SELECT Id,Dt,Tag,Ids,SeriesNumber FROM {task_table}
             WHERE Dt<? OR Dt IS NULL ORDER BY Id''', (end,), 500000)
     with closing(connect(base.Config.DB_CONN_STR)) as conn:
-        fields = 'EventId,SourceTag,EPC,TID,FirstSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId'
+        fields = 'EventId,SourceTag,EPC,TID,FirstSeen,LastSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId,IsReel'
         condition = "ISNULL(RfidReadCount,0)>0 AND ISNULL(SessionCloseReason,'') NOT IN ('WAREHOUSE_ONLY','SUPERSEDED_BY_KPP')"
-        events = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+        events = read_rows(conn, f'''SELECT {fields} FROM {event_table}
             WHERE FirstSeen>=? AND FirstSeen<? AND {condition} ORDER BY EventId''',
             (start-timedelta(hours=window), end+timedelta(hours=window)), 200000)
         # No cross-database Warehouse join: saved links may be older than the
         # fallback window, and the warehouse can live in a different database.
         ids = list(dict.fromkeys(int(row['Id']) for row in warehouse))
         by_id = {row['EventId']: row for row in events}
+        # An older session may still overlap the selected period. The ordinary
+        # +/-24h receipt fallback is not a recognition-time limit.
+        spanning = read_rows(conn, f'''SELECT {fields} FROM {event_table}
+            WHERE FirstSeen<? AND LastSeen>=? AND {condition}''',
+            (start-timedelta(hours=window), start), 200000)
+        by_id.update((row['EventId'], row) for row in spanning)
+        if len(by_id) > 200000:
+            raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
         for offset in range(0, len(ids), 500):
             batch = ids[offset:offset+500]
-            linked = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+            linked = read_rows(conn, f'''SELECT {fields} FROM {event_table}
                 WHERE WarehouseId IN ({','.join('?' for _ in batch)}) AND {condition}''', batch, 200000)
             by_id.update((row['EventId'], row) for row in linked)
             if len(by_id) > 200000:
                 raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
         report = build_efficiency_report(warehouse, registry, by_id.values(), date_from, date_to, window_hours=window)
+        report['events_checked'] = True
+        try:
+            processing = fetch_processing_summary(conn, start, end)
+        except Exception as exc:
+            processing = dict(checked=False)
+            log.warning('processing_log_check_failed error_class=%s', type(exc).__name__)
     # The antenna writer can use a different DB from the Web/Aggregator.
     raw_destination = os.getenv('RFID_DB_CONNECTION') or base.Config.DB_CONN_STR
     raw_table = sql_table(os.getenv('KPP_RFID_TABLE', 'dbo.RFID_Tags'))
     with closing(connect(raw_destination)) as conn:
         report['raw_source'] = fetch_raw_summary(conn, report, raw_table)
         raw_rows = fetch_raw_evidence(conn, report, raw_table)
-    return add_raw_evidence(report, raw_rows)
+        report = add_raw_evidence(report, raw_rows)
+        if processing.get('cursor') is not None:
+            try:
+                processing.update(fetch_raw_progress(conn, report, raw_table, processing['cursor']))
+            except Exception as exc:
+                processing['pipeline_checked'] = False
+                log.warning('raw_progress_check_failed error_class=%s', type(exc).__name__)
+        try:
+            history = fetch_raw_history(conn, report, raw_table)
+        except Exception as exc:
+            history = None
+            log.warning('raw_history_check_failed error_class=%s', type(exc).__name__)
+        try:
+            report['delivery'] = fetch_delivery_summary(conn, report, raw_table)
+        except Exception as exc:
+            report['delivery'] = dict(checked=False)
+            log.warning('delivery_check_failed error_class=%s', type(exc).__name__)
+    return reconcile(report, history, processing=processing)
 
 
 def fetch_raw_evidence(connection, report, raw_table):
@@ -168,6 +204,89 @@ def fetch_raw_summary(connection, report, raw_table):
                 last_read=local_time(row['last_read']).isoformat() if row['last_read'] is not None else None)
 
 
+def fetch_raw_history(connection, report, raw_table):
+    """Seek the existing EPC index for missing 24-byte EPC+TID identities.
+
+    Other tag formats remain explicitly unchecked. No SQL functions wrap EPC,
+    no journal-wide scan per tag, no prefix match counted as a physical read.
+    """
+    tags = sorted({tag for row in report['details'] if row['has_rfid'] and not row['detected']
+                   for tag in set(row['registered_tags'])-set(row['ambiguous_tags'])
+                   if re.fullmatch('[0-9A-F]{48}', tag)})
+    if len(tags) > 10000:
+        raise ValueError('Слишком много меток для проверки истории')
+    start, end = raw_period(report)
+    rows = []
+    for offset in range(0, len(tags), 200):
+        batch = tags[offset:offset+200]
+        values = ','.join('(CONVERT(varchar(48),?),CONVERT(varchar(100),?),CONVERT(varchar(200),?))' for _ in batch)
+        sql = f'''SELECT v.Tag,
+            SUM(CONVERT(bigint,CASE WHEN r.TID=v.TID THEN 1 ELSE 0 END)) AS ReadCount,
+            SUM(CONVERT(bigint,CASE WHEN r.TID=v.TID AND r.RecordTime>=p.DateFrom AND r.RecordTime<p.DateTo THEN 1 ELSE 0 END)) AS PeriodReads,
+            MIN(CASE WHEN r.TID=v.TID THEN r.RecordTime END) AS FirstRead,
+            MAX(CASE WHEN r.TID=v.TID THEN r.RecordTime END) AS LastRead,
+            MIN(CASE WHEN r.TID=v.TID THEN r.Id END) AS FirstRawId,
+            MAX(CASE WHEN r.TID=v.TID THEN r.Id END) AS LastRawId,
+            SUM(CONVERT(bigint,CASE WHEN r.RecordTime>=p.DateFrom AND r.RecordTime<p.DateTo THEN 1 ELSE 0 END)) AS EpcPeriodReads
+            FROM (VALUES {values}) AS v(Tag,EPC,TID)
+            CROSS JOIN (SELECT CONVERT(datetime2,?) AS DateFrom,CONVERT(datetime2,?) AS DateTo) p
+            LEFT JOIN {raw_table} r ON r.EPC=v.EPC
+            GROUP BY v.Tag'''
+        params = [part for tag in batch for part in (tag, tag[:24], tag[24:])]
+        rows.extend(read_rows(connection, sql, [*params, start, end], 200))
+    return rows
+
+
+def fetch_processing_summary(connection, start, end):
+    rows = read_rows(connection, '''SELECT COUNT_BIG(*) AS total,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN ResolvedAt IS NULL THEN 1 ELSE 0 END)),0) AS unresolved
+        FROM dbo.KPP_ProcessingErrors WHERE CreatedAt>=? AND CreatedAt<?''', (start, end), 1)
+    if len(rows) != 1:
+        raise ValueError('Не прочитан журнал ошибок обработки')
+    result = dict(checked=True, total=int(rows[0]['total']), unresolved=int(rows[0]['unresolved']))
+    try:
+        state_table=sql_table(os.getenv('KPP_STATE_TABLE','dbo.KPP_RuntimeState'))
+        state = read_rows(connection, f"SELECT StateValue FROM {state_table} WHERE StateKey='LAST_RFID_ID_V3'", (), 1)
+    except Exception as exc:
+        state = []
+        log.warning('raw_cursor_check_failed error_class=%s', type(exc).__name__)
+    if state and str(state[0].get('StateValue', '')).isdigit():
+        result['cursor'] = int(state[0]['StateValue'])
+    return result
+
+
+def fetch_raw_progress(connection, report, raw_table, cursor):
+    start, end = raw_period(report)
+    rows = read_rows(connection, f'''SELECT COUNT_BIG(*) AS read_total,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN Id<=? THEN 1 ELSE 0 END)),0) AS consumed
+        FROM {raw_table} WHERE RecordTime>=? AND RecordTime<?''', (int(cursor), start, end), 1)
+    if len(rows) != 1:
+        raise ValueError('Не подтверждено прохождение потока')
+    total, consumed = int(rows[0]['read_total']), int(rows[0]['consumed'])
+    if not 0 <= consumed <= total:
+        raise ValueError('Некорректный счётчик обработки')
+    return dict(pipeline_checked=True, read_total=total, consumed=consumed)
+
+
+def fetch_delivery_summary(connection, report, raw_table):
+    start, end = raw_period(report)
+    valid = "ReceivedAt IS NOT NULL AND SourceReaderTime IS NOT NULL AND ReceivedAt>=SourceReaderTime AND TimeQuality IN ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT')"
+    rows = read_rows(connection, f'''SELECT COUNT_BIG(*) AS total,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN {valid} THEN 1 ELSE 0 END)),0) AS timed_rows,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN {valid} AND ReceivedAt>DATEADD(second,120,SourceReaderTime) THEN 1 ELSE 0 END)),0) AS late_rows,
+        MAX(CASE WHEN {valid} THEN DATEDIFF(second,SourceReaderTime,ReceivedAt) END) AS max_delay_sec,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN TimeQuality='APPROXIMATE_AFTER_RECONNECT' THEN 1 ELSE 0 END)),0) AS after_reconnect
+        FROM {raw_table} WHERE RecordTime>=? AND RecordTime<?''',(start,end),1)
+    if len(rows)!=1:
+        raise ValueError('Не прочитаны сведения о доставке RFID')
+    row=rows[0]
+    result=dict(checked=True,threshold_sec=120,**{key:int(row[key]) for key in ('total','timed_rows','late_rows','after_reconnect')})
+    if not 0<=result['late_rows']<=result['timed_rows']<=result['total']:
+        raise ValueError('Некорректные счётчики доставки RFID')
+    result['max_delay_sec']=int(row['max_delay_sec']) if row['max_delay_sec'] is not None else None
+    return result
+
+
 class ReportJobs:
     def __init__(self, loader, *, ttl=900, max_jobs=8):
         self.loader, self.ttl, self.max_jobs = loader, ttl, max_jobs
@@ -175,7 +294,7 @@ class ReportJobs:
         self.slot = threading.BoundedSemaphore(1)
         self.jobs = {}
 
-    def start(self, date_from, date_to, details=False):
+    def start(self, date_from, date_to, details=True):
         if not self.slot.acquire(blocking=False):
             return None
         token = secrets.token_urlsafe(24)
@@ -192,12 +311,17 @@ class ReportJobs:
                 email = email_parts(report)
                 result = dict(status='ready', report=report, email=email,
                               xlsx=generate_efficiency_xlsx(report, details), html=preview_html(report))
+                log.info('report_ready from=%s to=%s total=%s tagged=%s detected=%s history_checked=%s duration_sec=%.3f',
+                         date_from, date_to, report['totals']['total'], report['totals']['tagged'],
+                         report['totals']['detected'], report.get('reconciliation', {}).get('history_checked'), time.monotonic()-now)
             except ValueError as exc:
                 result = dict(status='error', error=str(exc))
-            except Exception:
+                log.warning('report_validation_failed from=%s to=%s error_class=%s', date_from, date_to, type(exc).__name__)
+            except Exception as exc:
                 # ODBC errors can include connection details. Never expose them
                 # in the browser, a letter, a workbook or public logs.
                 result = dict(status='error', error='Не удалось прочитать все источники БД. Повторите формирование или обратитесь к администратору; неполный отчёт не выдан.')
+                log.warning('report_failed from=%s to=%s error_class=%s', date_from, date_to, type(exc).__name__)
             finally:
                 with self.lock:
                     job = self.jobs.get(token)
@@ -243,7 +367,7 @@ def install(base):
                 raise ValueError('Укажите даты в формате ГГГГ-ММ-ДД')
             date_from, date_to = date.fromisoformat(raw_from), date.fromisoformat(raw_to)
             validate_period(date_from, date_to)
-            details = payload.get('include_details', False)
+            details = payload.get('include_details', True)
             if type(details) is not bool:
                 raise ValueError('Некорректный параметр подробной сверки')
         except (ValueError, TypeError) as exc:
@@ -266,6 +390,8 @@ def install(base):
                           totals=report['totals'], days=report['days'],
                           source_checks=dict(reader=report['raw_checked']), diagnostics=report['diagnostics'],
                           raw_stats=report['raw_stats'], raw_source=report.get('raw_source'),
+                          reconciliation=report.get('reconciliation'),
+                          delivery=report.get('delivery'),
                           download_url=f'/api/efficiency-report/{token}/download'))
 
     @base.app.route('/api/efficiency-report/<token>/download')
