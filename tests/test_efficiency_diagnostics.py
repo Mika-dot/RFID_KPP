@@ -48,6 +48,16 @@ class ReconciliationTests(unittest.TestCase):
             self.assertEqual(result['details'][0]['reason_code'],'READ_UNCLASSIFIED')
             self.assertEqual(result['reconciliation']['unrecognized_series'],['X'])
 
+    def test_recognized_session_can_span_midnight_or_start_days_before_period(self):
+        w=[dict(Id=1,Dt=datetime(2026,10,20),SeriesNumber='X')]
+        r=[dict(Dt=datetime(2026,5,1),SeriesNumber='X',Tag='A'*48)]
+        raw=[dict(Tag='A'*48,ReadCount=1,FirstRead=datetime(2026,10,19),LastRead=datetime(2026,10,19),FirstRawId=1,LastRawId=1)]
+        for first in (datetime(2026,10,18,23,59),datetime(2026,10,15)):
+            for last,expected in ((datetime(2026,10,19,0,1),1),(datetime(2026,10,18,23,59),0)):
+                event=dict(EventId=1,SourceTag='A'*48,FirstSeen=first,LastSeen=last,RfidReadCount=1,IsReel=1)
+                result=build_efficiency_report(w,r,[event],date(2026,10,19),date(2026,10,23),raw_rows=raw)
+                self.assertEqual(result['processing_coverage']['recognized'],expected)
+
     def test_history_reasons_are_evidence_not_assigned_blame(self):
         history = [self.history(2, ReadCount=2, FirstRead='2026-05-01T10:00:00',LastRead='2026-05-01T11:00:00',FirstRawId=1,LastRawId=2),
                    self.history(3,EpcPeriodReads=4),self.history(4)]

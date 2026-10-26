@@ -99,7 +99,10 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
             continue
         event["tag"] = tag
         event["FirstSeen"] = local_time(event.get("FirstSeen"))
-        if start <= event['FirstSeen'] < end:
+        event['LastSeen'] = local_time(event.get('LastSeen') or event['FirstSeen'])
+        if event['LastSeen'] < event['FirstSeen']:
+            raise ValueError('Некорректный временной интервал события RFID')
+        if event['FirstSeen'] < end and event['LastSeen'] >= start:
             observed_by_tag[tag].append(str(event['EventId']))
             if str(event.get('IsReel', 1)).lower() in {'1', 'true'}:
                 processed_by_tag[tag].append(str(event['EventId']))

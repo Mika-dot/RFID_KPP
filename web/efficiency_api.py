@@ -87,7 +87,7 @@ def fetch_efficiency_report(base, date_from, date_to):
         registry = read_rows(conn, f'''SELECT Id,Dt,Tag,Ids,SeriesNumber FROM {task_table}
             WHERE Dt<? OR Dt IS NULL ORDER BY Id''', (end,), 500000)
     with closing(connect(base.Config.DB_CONN_STR)) as conn:
-        fields = 'EventId,SourceTag,EPC,TID,FirstSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId,IsReel'
+        fields = 'EventId,SourceTag,EPC,TID,FirstSeen,LastSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId,IsReel'
         condition = "ISNULL(RfidReadCount,0)>0 AND ISNULL(SessionCloseReason,'') NOT IN ('WAREHOUSE_ONLY','SUPERSEDED_BY_KPP')"
         events = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
             WHERE FirstSeen>=? AND FirstSeen<? AND {condition} ORDER BY EventId''',
@@ -96,6 +96,14 @@ def fetch_efficiency_report(base, date_from, date_to):
         # fallback window, and the warehouse can live in a different database.
         ids = list(dict.fromkeys(int(row['Id']) for row in warehouse))
         by_id = {row['EventId']: row for row in events}
+        # An older session may still overlap the selected period. The ordinary
+        # +/-24h receipt fallback is not a recognition-time limit.
+        spanning = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+            WHERE FirstSeen<? AND LastSeen>=? AND {condition}''',
+            (start-timedelta(hours=window), start), 200000)
+        by_id.update((row['EventId'], row) for row in spanning)
+        if len(by_id) > 200000:
+            raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
         for offset in range(0, len(ids), 500):
             batch = ids[offset:offset+500]
             linked = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
