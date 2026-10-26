@@ -59,6 +59,7 @@ def fetch_efficiency_report(base, date_from, date_to):
     end = datetime.combine(date_to + timedelta(days=1), datetime.min.time())
     window = 24
     warehouse_table = sql_table(os.getenv('KPP_WAREHOUSE_TABLE', 'dbo.Warehouse'))
+    event_table = sql_table(os.getenv('KPP_EVENT_TABLE', 'dbo.KPP_ReelEvents'))
     task_table = sql_table(base.Config.TASK_TABLE)
     task_destination = os.getenv('KPP_TASK_CONN_STR') or base.Config.DB_CONN_STR
 
@@ -89,7 +90,7 @@ def fetch_efficiency_report(base, date_from, date_to):
     with closing(connect(base.Config.DB_CONN_STR)) as conn:
         fields = 'EventId,SourceTag,EPC,TID,FirstSeen,LastSeen,FinalDirection,RfidReadCount,SessionCloseReason,WarehouseId,IsReel'
         condition = "ISNULL(RfidReadCount,0)>0 AND ISNULL(SessionCloseReason,'') NOT IN ('WAREHOUSE_ONLY','SUPERSEDED_BY_KPP')"
-        events = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+        events = read_rows(conn, f'''SELECT {fields} FROM {event_table}
             WHERE FirstSeen>=? AND FirstSeen<? AND {condition} ORDER BY EventId''',
             (start-timedelta(hours=window), end+timedelta(hours=window)), 200000)
         # No cross-database Warehouse join: saved links may be older than the
@@ -98,7 +99,7 @@ def fetch_efficiency_report(base, date_from, date_to):
         by_id = {row['EventId']: row for row in events}
         # An older session may still overlap the selected period. The ordinary
         # +/-24h receipt fallback is not a recognition-time limit.
-        spanning = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+        spanning = read_rows(conn, f'''SELECT {fields} FROM {event_table}
             WHERE FirstSeen<? AND LastSeen>=? AND {condition}''',
             (start-timedelta(hours=window), start), 200000)
         by_id.update((row['EventId'], row) for row in spanning)
@@ -106,7 +107,7 @@ def fetch_efficiency_report(base, date_from, date_to):
             raise ValueError('Слишком много событий; сократите период. Неполный отчёт не выдаётся.')
         for offset in range(0, len(ids), 500):
             batch = ids[offset:offset+500]
-            linked = read_rows(conn, f'''SELECT {fields} FROM dbo.KPP_ReelEvents
+            linked = read_rows(conn, f'''SELECT {fields} FROM {event_table}
                 WHERE WarehouseId IN ({','.join('?' for _ in batch)}) AND {condition}''', batch, 200000)
             by_id.update((row['EventId'], row) for row in linked)
             if len(by_id) > 200000:
@@ -244,7 +245,8 @@ def fetch_processing_summary(connection, start, end):
         raise ValueError('Не прочитан журнал ошибок обработки')
     result = dict(checked=True, total=int(rows[0]['total']), unresolved=int(rows[0]['unresolved']))
     try:
-        state = read_rows(connection, "SELECT StateValue FROM dbo.KPP_RuntimeState WHERE StateKey='LAST_RFID_ID_V3'", (), 1)
+        state_table=sql_table(os.getenv('KPP_STATE_TABLE','dbo.KPP_RuntimeState'))
+        state = read_rows(connection, f"SELECT StateValue FROM {state_table} WHERE StateKey='LAST_RFID_ID_V3'", (), 1)
     except Exception as exc:
         state = []
         log.warning('raw_cursor_check_failed error_class=%s', type(exc).__name__)

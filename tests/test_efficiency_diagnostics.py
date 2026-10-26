@@ -134,6 +134,18 @@ class DiagnosticSqlTests(unittest.TestCase):
             self.assertNotIn('cursor',result)
             self.assertNotIn('secret',str(logs.output))
 
+    def test_cursor_uses_configured_state_table_and_rejects_invalid_identifier(self):
+        values=[[dict(total=0,unresolved=0)],[dict(StateValue='123')]]
+        with patch.dict('os.environ',{'KPP_STATE_TABLE':'audit.ReaderState'}),patch.object(self.api,'read_rows',side_effect=values) as read:
+            result=self.api.fetch_processing_summary(object(),datetime(2026,10,19),datetime(2026,10,24))
+            self.assertEqual(result['cursor'],123)
+            self.assertIn('FROM audit.ReaderState ',read.call_args.args[1])
+        with patch.dict('os.environ',{'KPP_STATE_TABLE':'dbo.state;DROP TABLE X'}),patch.object(self.api,'read_rows',return_value=[dict(total=0,unresolved=0)]) as read:
+            with self.assertLogs('perimeter.efficiency-report',level='WARNING'):
+                result=self.api.fetch_processing_summary(object(),datetime(2026,10,19),datetime(2026,10,24))
+            self.assertNotIn('cursor',result)
+            self.assertEqual(read.call_count,1)
+
     def test_raw_progress_counts_actual_rows_not_id_distance(self):
         report=ReconciliationTests().report()
         with patch.object(self.api,'read_rows',return_value=[dict(read_total=10,consumed=7)]) as read:

@@ -389,7 +389,8 @@ class EfficiencyHttpTests(unittest.TestCase):
             return {'task-source': tasks, 'event-source': events, 'reader-source': reader}[destination]
         base = types.SimpleNamespace(Config=types.SimpleNamespace(DB_CONN_STR='event-source', TASK_TABLE='dbo.RfidTags'),
                                      pyodbc=types.SimpleNamespace(connect=connect))
-        with patch.dict('os.environ', {'KPP_TASK_CONN_STR': 'task-source', 'RFID_DB_CONNECTION': 'reader-source'}, clear=True):
+        with patch.dict('os.environ', {'KPP_TASK_CONN_STR': 'task-source', 'RFID_DB_CONNECTION': 'reader-source',
+                                      'KPP_EVENT_TABLE':'audit.ReelEvents'}, clear=True):
             report = self.api.fetch_efficiency_report(base, date(2026, 10, 19), date(2026, 10, 22))
         self.assertEqual(report['totals']['detected'], 80)
         self.assertTrue(report['raw_checked'])
@@ -397,6 +398,8 @@ class EfficiencyHttpTests(unittest.TestCase):
         self.assertFalse(any('dbo.RFID_Tags' in q for q, _ in events.queries))
         self.assertEqual(report['raw_source']['raw_reads'], 1600)
         self.assertEqual([call[0] for call in calls], ['task-source', 'event-source', 'reader-source'])
+        self.assertTrue(any('FROM audit.ReelEvents' in q for q,_ in events.queries))
+        self.assertFalse(any('FROM dbo.KPP_ReelEvents' in q for q,_ in events.queries))
         for _, options in calls:
             self.assertTrue(options['readonly'])
             self.assertTrue(options['autocommit'])
