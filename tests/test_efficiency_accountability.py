@@ -28,6 +28,22 @@ def report_one(*,request=datetime(2026,10,20,8),receipt=datetime(2026,10,20,12),
 
 
 class InstructionOrderTests(unittest.TestCase):
+    def test_new_read_after_post_warehouse_instruction_rejects_contradicted_snapshot(self):
+        report=report_one(request=datetime(2026,10,20,13),first=None)
+        self.assertEqual(report['details'][0]['registered_tags'],[])
+        later=[dict(EPC='A'*24,TID='B'*24,Antenna=2,ReadCount=1,FirstRead='2026-10-20T14:00:00',
+                    LastRead='2026-10-20T14:00:00',FirstRawId=1,LastRawId=1)]
+        with self.assertRaisesRegex(ValueError,'повторно'):
+            attach_case_analysis(report,later,[],[])
+
+    def test_new_read_for_later_tag_is_checked_even_with_an_old_other_tag_instruction(self):
+        report=report_one(request=datetime(2026,10,20,13),first=None,other_tag=True)
+        self.assertIn('C'*48,report['details'][0]['registered_tags'])
+        later=[dict(EPC='A'*24,TID='B'*24,Antenna=2,ReadCount=1,FirstRead='2026-10-20T14:00:00',
+                    LastRead='2026-10-20T14:00:00',FirstRawId=1,LastRawId=1)]
+        with self.assertRaisesRegex(ValueError,'повторно'):
+            attach_case_analysis(report,later,[],[])
+
     def test_later_owner_does_not_invalidate_a_verified_tag_in_the_report_period(self):
         w=[dict(Id=1,Dt=datetime(2026,10,20,12),SeriesNumber='A')]
         r=[dict(Id=11,Dt=datetime(2026,10,20,8),Tag=TAG,SeriesNumber='A'),
@@ -56,6 +72,8 @@ class InstructionOrderTests(unittest.TestCase):
         report['events_checked']=False
         report=attach_case_analysis(report,[],[],None)
         self.assertEqual(report['details'][0]['reason_code'],'PROCESSING_UNCHECKED')
+        self.assertFalse(report['details'][0]['case']['raw_checked'])
+        self.assertEqual(next(r[1] for r in report['details'][0]['case']['facts'] if r[0]=='Точное чтение в отчётном периоде'),1)
         self.assertEqual(short_scorecard(report)[1][3],'Не проверено')
         with zipfile.ZipFile(io.BytesIO(generate_efficiency_xlsx(report,True))) as z:
             self.assertIn('Обработка не проверена',z.read('xl/workbook.xml').decode())

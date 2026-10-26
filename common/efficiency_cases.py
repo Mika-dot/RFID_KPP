@@ -66,11 +66,32 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
     from common.efficiency_accountability import assess_accountability
     report = assess_accountability(report)
     bins = [normal_bin(row) for row in raw_bins or ()]
+    incomplete_period_tags=set()
     by_epc, events_by_tag = defaultdict(list), defaultdict(list)
     for row in bins:
         if row['ReadCount'] <= 0 or not row['FirstRead'] or not row['LastRead']:
             raise ValueError('Некорректная детализация журнала RFID')
         by_epc[row['EPC']].append(row)
+    if raw_bins is not None:
+        # Later optional evidence must not contradict the required period
+        # snapshot, including instructions that arrived after Warehouse.Dt.
+        # Such tags were absent from the legacy warehouse-cutoff set.
+        period_start=datetime.fromisoformat(report['date_from'])
+        period_end=datetime.fromisoformat(report['date_to'])+timedelta(days=1)
+        for d in report['details']:
+            if not needs_review(d):continue
+            tags=({r['tag'] for r in d.get('registrations',())}|set(d['registered_tags']))-set(d.get('known_ambiguous_tags',d['ambiguous_tags']))
+            initial=d.get('all_raw_evidence',d.get('raw_evidence',()))
+            for tag in tags:
+                if not re.fullmatch('[0-9A-F]{48}',tag):continue
+                later=[p for p in by_epc.get(tag[:24],()) if p['Tag']==tag and period_start<=local_time(p['FirstRead'])<period_end]
+                before=[p for p in initial if p['tag']==tag]
+                if sum(p['ReadCount'] for p in later)<sum(p['read_count'] for p in before):
+                    incomplete_period_tags.add(tag)
+                if (sum(p['ReadCount'] for p in later)>sum(p['read_count'] for p in before)
+                    or (later and before and (min(p['FirstRead'] for p in later)<min(p['first_read'] for p in before)
+                                             or max(p['LastRead'] for p in later)>max(p['last_read'] for p in before)))):
+                    raise ValueError('Данные RFID изменились во время формирования. Сформируйте отчёт повторно.')
     if raw_bins is not None:
         # This later, more detailed all-history query can complete an earlier
         # optional history check. Never leave "unchecked" beside verified bins.
@@ -124,7 +145,7 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
         regs = row.get('registrations', ())
         tags = set(row['registered_tags']) | {item['tag'] for item in regs}
         epcs = {tag[:24] for tag in tags if len(tag) == 48}
-        checked = raw_bins is not None and bool(tags) and all(re.fullmatch('[0-9A-F]{48}', tag) for tag in tags)
+        checked = raw_bins is not None and bool(tags) and not (tags & incomplete_period_tags) and all(re.fullmatch('[0-9A-F]{48}', tag) for tag in tags)
         relevant = [p for epc in sorted(epcs) for p in by_epc.get(epc, ())]
         exact = [p for p in relevant if p['Tag'] in tags]
         variants = [p for p in relevant if p['Tag'] not in tags]
@@ -180,9 +201,9 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
             ['Первое чтение отчётного периода', control['first_read'] or 'Исходное чтение не поступило', 'RFID_Tags.RecordTime'],
             ['Складская запись (последующий этап)', row['warehouse_dt'], 'Warehouse.Dt; не условие доступности заявки КПП'],
             ['Точное чтение в отчётном периоде',
-             str(sum(p['ReadCount'] for p in exact if per(p))) if checked else
-             str(sum(p['read_count'] for p in row['raw_evidence'])) if row['has_rfid'] else 'Нет идентификатора для проверки',
-             'Полный EPC+TID'],
+             sum(p['read_count'] for p in row.get('all_raw_evidence',row['raw_evidence'])) if report.get('raw_checked') and regs
+             else 'Нет идентификатора для проверки' if not regs else 'Не проверено',
+             'Основная проверка журнала периода; полный EPC+TID'],
             ['Точное чтение до / после периода', f'{sum(p["ReadCount"] for p in before)} / {sum(p["ReadCount"] for p in after)}'
              if checked else 'Не проверено полностью', 'История RFID_Tags'],
             ['Тот же EPC, TID отсутствует', empty_tid if checked else 'Не проверено', 'Число строк периода'],
