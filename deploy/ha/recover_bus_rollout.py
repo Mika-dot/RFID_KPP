@@ -23,6 +23,7 @@ def options(args):
     args.recover_reserve = False
     args.pin_release = args.refresh_bootstrap = args.replace_pinned_trial = True
     args.handoff = args.hold_maintenance = False
+    args.replace_untried_reserve = False
     return args
 
 
@@ -56,6 +57,7 @@ def stage_held(args, cfg, env):
     try:
         maintenance(cfg, token, True, old_release)
         emit('PREPARING_HELD_NODE', node=own, active_owner=owner)
+        args.replace_untried_reserve = True
         update.prepare(args, cfg, env)
         args.hold_maintenance = True
         result = update.apply(args, cfg, env)

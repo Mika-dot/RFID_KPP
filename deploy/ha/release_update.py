@@ -265,6 +265,39 @@ def transition_allowlist(cfg, record, source):
     return ["--allowlist", ROOT / "guardian/legacy_shadow_allowlist.json"]
 
 
+def untried_held_reserve(args, cfg, env, record):
+    """Admit explicit replacement of a qualified trial that never became owner.
+
+    The existing SQL-checked maintenance hold must already be observed. This
+    admits preparation only; apply still verifies receipts, ownership, native
+    shutdown and the Guardian lock before installing a new pending trial.
+    """
+    if getattr(args, "replace_untried_reserve", False) is not True:
+        return False
+    current = record.get("current", {}).get("sha")
+    qualification = record.get("qualification") or {}
+    if (record.get("pending") is not True or record.get("trial_started") is not False
+            or not re.fullmatch(r"[0-9a-f]{40}", str(current))
+            or current == args.release or qualification.get("status") != "passed"
+            or qualification.get("sha") != current):
+        return False
+    rows, owner = inventory(cfg, env["PERIMETER_HA_TOKEN"])
+    row = rows[cfg["node_id"]]
+    update = row.get("update") or {}
+    preflight = row.get("preflight") or {}
+    age = row.get("preflight_sample_age")
+    return (owner != cfg["node_id"] and row.get("active") is False
+            and row.get("release_sha") == current
+            and row.get("operator_maintenance") is True
+            and row.get("faulted") is False
+            and preflight.get("ok") is True
+            and preflight.get("checks", {}).get("ports_free") is True
+            and preflight.get("checks", {}).get("sdk_load") is True
+            and type(age) in (int, float) and 0 <= age < 90
+            and update.get("pending") is True and update.get("trial_started") is False
+            and update.get("qualification") == "passed")
+
+
 def prepare(args, cfg, env):
     record_path = Path(cfg["state_dir"]) / "release.json"
     record = json.loads(record_path.read_text(encoding="utf-8-sig"))
@@ -274,11 +307,12 @@ def prepare(args, cfg, env):
         # A pinned broken trial cannot finish by repeatedly reinstalling itself.
         # Permit qualification of its replacement only by explicit operator
         # request. Do not clear pending, confirm a trial, or touch native services.
-        if not (getattr(args, "replace_pinned_trial", False)
+        pinned = (getattr(args, "replace_pinned_trial", False)
                 and re.fullmatch(r"[0-9a-f]{40}", str(current))
                 and record.get("operator_pinned_release") == current
                 and qualification.get("status") == "passed"
-                and qualification.get("sha") == current):
+                and qualification.get("sha") == current)
+        if not pinned and not untried_held_reserve(args, cfg, env, record):
             raise RuntimeError("ExistingTrialMustFinishOrExplicitPinnedReplacementRequired")
     source = Path(record["current"]["root"])
     if git(cfg, "remote", "get-url", "origin").removesuffix(".git") != "https://github.com/Mika-dot/RFID_KPP":
@@ -637,6 +671,8 @@ def main(argv=None):
                    help="Keep the qualified exact release installed on runtime faults; do not bypass fencing or preflight")
     p.add_argument("--replace-pinned-trial", action="store_true",
                    help="Prepare a replacement for a qualified operator-pinned pending trial without confirming it")
+    p.add_argument("--replace-untried-reserve", action="store_true",
+                   help="Prepare replacement of a qualified untried passive release already held in maintenance")
     p.add_argument("--recover-reserve", action="store_true",
                    help="Install a passive Linux reserve when no healthy owner exists; ordinary fencing/preflight remain required")
     p.add_argument("--hold-maintenance", action="store_true",
@@ -650,6 +686,7 @@ def main(argv=None):
             or (args.release_reserves and (args.handoff or args.recover_reserve))
             or (args.pin_release and not args.apply)
             or (args.replace_pinned_trial and not args.prepare)
+            or (args.replace_untried_reserve and not args.prepare)
             or (args.refresh_bootstrap and not args.apply)):
 
         raise ValueError("InvalidHeldReserveMode")
