@@ -17,7 +17,7 @@ class OperatorUpdateTests(unittest.TestCase):
         self.record.update(pending=True, trial_started=False,
             qualification={"status":"passed", "sha":self.old})
         self.args.replace_untried_reserve = True
-        self.rows["comparator"].update(prepared=False, operator_maintenance=True,
+        self.rows["comparator"].update(prepared=False, faulted=True, operator_maintenance=True,
             preflight={"ok":True, "checks":{"ports_free":True,"sdk_load":True}},
             preflight_sample_age=1,
             update={"pending":True,"trial_started":False,"qualification":"passed"})
@@ -38,7 +38,7 @@ class OperatorUpdateTests(unittest.TestCase):
         base_record, base_rows = copy.deepcopy(self.record), copy.deepcopy(self.rows)
         cases = ("no_opt_in", "trial_started", "trial_unknown", "qualification_failed",
                  "qualification_other_sha", "same_target", "active", "other_release",
-                 "not_held", "faulted", "preflight_failed", "sdk_failed", "ports_busy",
+                 "not_held", "fault_unknown", "preflight_failed", "sdk_failed", "ports_busy",
                  "stale_preflight", "unknown_preflight_age", "live_trial_started",
                  "live_trial_unknown", "not_pending", "live_not_qualified")
         for case in cases:
@@ -57,7 +57,7 @@ class OperatorUpdateTests(unittest.TestCase):
                 if case == "active": row["active"], owner = True, "comparator"
                 if case == "other_release": row["release_sha"] = self.release
                 if case == "not_held": row["operator_maintenance"] = False
-                if case == "faulted": row["faulted"] = True
+                if case == "fault_unknown": row.pop("faulted")
                 if case == "preflight_failed": row["preflight"]["ok"] = False
                 if case == "sdk_failed": row["preflight"]["checks"]["sdk_load"] = False
                 if case == "ports_busy": row["preflight"]["checks"]["ports_free"] = False

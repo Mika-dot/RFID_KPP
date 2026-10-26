@@ -419,7 +419,8 @@ sudo /opt/perimeter/venv/bin/python -B deploy/ha/recover_bus_rollout.py --phase 
 удерживает его в maintenance. Требуются совпадение локального и живого SHA,
 `trial_started=false` в обоих источниках, независимая квалификация текущего
 релиза, свежий успешный preflight с ports_free/sdk_load и здоровый другой
-ведущий. Поле `prepared` у удержанного узла штатно false.
+ведущий. Удержание штатно выставляет SQL Faulted=1 и `prepared=false`,
+исключая резерв из выборов; они не считаются отказом подготовки под hold.
 
 Опция `release_update.py --prepare --replace-untried-reserve` доступна
 только при уже установленном maintenance hold; она сама не останавливает

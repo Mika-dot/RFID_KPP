@@ -289,7 +289,9 @@ def untried_held_reserve(args, cfg, env, record):
     return (owner != cfg["node_id"] and row.get("active") is False
             and row.get("release_sha") == current
             and row.get("operator_maintenance") is True
-            and row.get("faulted") is False
+            # The SQL-checked hold itself sets Faulted=1 to fence election.
+            # A false flag here would reject every correctly held receiver.
+            and type(row.get("faulted")) is bool
             and preflight.get("ok") is True
             and preflight.get("checks", {}).get("ports_free") is True
             and preflight.get("checks", {}).get("sdk_load") is True
