@@ -162,15 +162,20 @@ class EfficiencyReportTests(unittest.TestCase):
                     ET.fromstring(archive.read(name))
                 ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                 workbook = ET.fromstring(archive.read('xl/workbook.xml'))
-                self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 3 if details else 1)
+                names = [s.attrib['name'] for s in workbook.findall('m:sheets/m:sheet', ns)]
+                self.assertEqual(names[0], 'Отчёт')
+                self.assertEqual(len(names), 58 if details else 1)
+                if details:
+                    self.assertIn('Сверка', names)
+                    self.assertIn('Проверка катушек', names)
                 sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
                 cells = {c.attrib['r']: c for c in sheet.findall('.//m:c', ns)}
-                self.assertEqual(cells['B11'].find('m:v', ns).text, '131')
-                self.assertEqual(cells['C11'].find('m:v', ns).text, '81')
-                self.assertEqual(cells['D11'].find('m:v', ns).text, '80')
-                self.assertEqual(cells['E11'].find('m:f', ns).text, 'IF(C11=0,"",D11/C11)')
-                self.assertAlmostEqual(float(cells['E11'].find('m:v', ns).text), 80/81)
-                self.assertIn('ТЕКСТ ПИСЬМА', archive.read('xl/worksheets/sheet1.xml').decode())
+                self.assertEqual(cells['C5'].find('m:v', ns).text, '131')
+                self.assertEqual(cells['D6'].find('m:v', ns).text, '81')
+                self.assertEqual(cells['C6'].find('m:v', ns).text, '80')
+                self.assertEqual(cells['E6'].find('m:f', ns).text, 'IF(D6=0,"",C6/D6)')
+                self.assertAlmostEqual(float(cells['E6'].find('m:v', ns).text), 80/81)
+                self.assertNotIn('ТЕКСТ ПИСЬМА', archive.read('xl/worksheets/sheet1.xml').decode())
 
     def raw(self, identity=1, **changes):
         warehouse = next(row for row in self.w if row['Id'] == identity)
@@ -397,7 +402,7 @@ class EfficiencyHttpTests(unittest.TestCase):
         self.assertTrue(any('dbo.RFID_Tags' in q for q, _ in reader.queries))
         self.assertFalse(any('dbo.RFID_Tags' in q for q, _ in events.queries))
         self.assertEqual(report['raw_source']['raw_reads'], 1600)
-        self.assertEqual([call[0] for call in calls], ['task-source', 'event-source', 'reader-source'])
+        self.assertEqual([call[0] for call in calls], ['task-source', 'event-source', 'reader-source', 'event-source'])
         self.assertTrue(any('FROM audit.ReelEvents' in q for q,_ in events.queries))
         self.assertFalse(any('FROM dbo.KPP_ReelEvents' in q for q,_ in events.queries))
         for _, options in calls:
@@ -405,7 +410,7 @@ class EfficiencyHttpTests(unittest.TestCase):
             self.assertTrue(options['autocommit'])
         registry_query = next((q, p) for q, p in tasks.queries if 'dbo.RfidTags' in q)
         self.assertNotIn('Dt>=', registry_query[0])
-        self.assertEqual(registry_query[1], (datetime(2026, 10, 23),))
+        self.assertEqual(registry_query[1], ())
         for connection in (tasks, events, reader):
             self.assertTrue(connection.closed)
             self.assertTrue(all(q.lstrip().startswith(('SET ', 'SELECT ')) for q, _ in connection.queries))

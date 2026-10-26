@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.efficiency_report import build_efficiency_report, tag_key, validate_period
 from common.efficiency_diagnostics import reconcile
 from common.efficiency_xlsx import generate_efficiency_xlsx
+from common.efficiency_cases import attach_case_analysis
 
 
 def rows(folder, table, required=True):
@@ -42,6 +43,12 @@ def audit(folder, first, last):
     cursor = next((int(row['StateValue']) for row in state or ()
                    if row['StateKey']=='LAST_RFID_ID_V3' and row['StateValue'].isdigit()),None)
     period, history, epc_counts = {}, {}, Counter()
+    cohort = build_efficiency_report(warehouse,registry,events or (),first,last,raw_rows=[])
+    cohort_tags = {r['tag'] for d in cohort['details'] for r in d.get('registrations', ())}
+    epcs = {tag[:24] for tag in cohort_tags if re.fullmatch('[0-9A-F]{48}', tag)}
+    bins, activity = {}, Counter()
+    context_start = (datetime.fromisoformat(start)-timedelta(hours=12)).isoformat()
+    context_end = (datetime.fromisoformat(end)+timedelta(hours=12)).isoformat()
     total = consumed = 0
     delivery=dict(checked=True,total=0,timed_rows=0,late_rows=0,after_reconnect=0,max_delay_sec=None,threshold_sec=120)
     paths = list(folder.glob('RFID_Tags_*.csv'))
@@ -51,6 +58,27 @@ def audit(folder, first, last):
         for row in csv.DictReader(source):
             tag=tag_key(row['EPC'])+tag_key(row['TID'])
             at=row['RecordTime']; identity=int(row['Id'])
+            if context_start<=at<context_end:
+                activity[(at[:13]+':00:00',row['Antenna'])]+=1
+            epc,tid=tag_key(row['EPC']),tag_key(row['TID'])
+            lag=None
+            quality=row.get('TimeQuality') or ''
+            if row.get('ReceivedAt') and row.get('SourceReaderTime') and quality in ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT'):
+                lag=(datetime.fromisoformat(row['ReceivedAt'])-datetime.fromisoformat(row['SourceReaderTime'])).total_seconds()
+            if epc in epcs:
+                key=(epc,tid,at[:10],row['Antenna'])
+                if key not in bins:
+                    bins[key]=dict(EPC=epc,TID=tid,Day=at[:10],Antenna=row['Antenna'],ReadCount=0,
+                                   FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity,
+                                   FirstReceived=None,LastReceived=None,TimedRows=0,LateRows=0)
+                b=bins[key];b['ReadCount']+=1
+                b['FirstRead']=min(b['FirstRead'],at);b['LastRead']=max(b['LastRead'],at)
+                b['FirstRawId']=min(b['FirstRawId'],identity);b['LastRawId']=max(b['LastRawId'],identity)
+                if row.get('ReceivedAt'):
+                    b['FirstReceived']=min(b['FirstReceived'] or row['ReceivedAt'],row['ReceivedAt'])
+                    b['LastReceived']=max(b['LastReceived'] or row['ReceivedAt'],row['ReceivedAt'])
+                b['TimedRows']+=int(lag is not None and lag>=0)
+                b['LateRows']+=int(lag is not None and lag>120)
             for collection in (history, period) if start<=at<end else (history,):
                 if tag not in collection:
                     collection[tag]=dict(Tag=tag,ReadCount=0,FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity)
@@ -87,7 +115,9 @@ def audit(folder, first, last):
         processing.update(total=len(selected),unresolved=sum(not row['ResolvedAt'] for row in selected))
     if cursor is not None:
         processing.update(cursor=cursor,pipeline_checked=True,read_total=total,consumed=consumed)
-    return reconcile(report,proofs,processing=processing)
+    report=reconcile(report,proofs,processing=processing)
+    return attach_case_analysis(report,list(bins.values()),
+                                [dict(Hour=hour,Antenna=antenna,ReadCount=count) for (hour,antenna),count in activity.items()],events)
 
 
 def main():

@@ -36,7 +36,7 @@ DIALOG = r"""
       <form id="efficiencyForm" class="eff-controls">
         <label>Дата от<input type="date" id="efficiencyFrom" required></label>
         <label>Дата до (включительно)<input type="date" id="efficiencyTo" required></label>
-        <label><span>Подробности Excel</span><span><input type="checkbox" id="efficiencyDetails" checked> Построчная сверка и история чтений</span></label>
+        <label><span>Подробности Excel</span><span><input type="checkbox" id="efficiencyDetails" checked> Все катушки, графики и разбор каждой проблемной серии</span></label>
         <button type="submit" class="btn-primary" id="efficiencyBuild">Сформировать отчёт</button>
       </form>
       <div id="efficiencyStatus" role="status" aria-live="polite">Выберите даты и нажмите «Сформировать отчёт».</div>

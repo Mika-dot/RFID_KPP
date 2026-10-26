@@ -8,12 +8,12 @@ from __future__ import annotations
 import io
 import math
 import zipfile
-from datetime import date
+from datetime import datetime
 from xml.sax.saxutils import escape
 
-from common.efficiency_report import (HEADERS, effectiveness_rows, email_parts, exceptions_text,
-                                      executive_rows, explanatory_text, methodology_text, period_text, raw_summary_text, summary_rows)
-from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, history_text, operational_rows, delivery_text
+from common.efficiency_diagnostics import reconcile
+from common.efficiency_cases import attach_case_analysis
+from common.efficiency_charts import chart_xml, drawing_xml
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -33,16 +33,32 @@ def col(index):
 
 class Sheet:
     def __init__(self, widths):
-        self.widths, self.rows, self.merges = widths, [], []
+        self.widths, self.rows, self.merges, self.values = widths, [], [], []
+        self.links, self.charts = [], []
+        self.freeze = 0
+        self.filter = None
+        self.one_page = False
+        self.validations = ''
 
     def row(self, values=(), style=0, height=24):
         number = len(self.rows)+1
         cells = []
+        raw_values = []
         for index, value in enumerate(values, 1):
             cell_style = style
             if isinstance(value, tuple):
                 value, cell_style = value
+            if value is None:
+                value = ''
             address = f'{col(index)}{number}'
+            if isinstance(value, dict):
+                if 'link' in value:
+                    self.links.append((address, value['link']))
+                    value = value['text']
+            raw_values.append(value.get('value') if isinstance(value, dict) else value)
+            if isinstance(value, datetime):
+                value = (value-datetime(1899, 12, 30)).total_seconds()/86400
+                cell_style = 9
             if isinstance(value, dict):
                 formula, cached = value['formula'], value.get('value')
                 # All formulas here are trusted application expressions.
@@ -51,10 +67,13 @@ class Sheet:
             elif isinstance(value, (int, float)) and not isinstance(value, bool):
                 cells.append(f'<c r="{address}" s="{cell_style}"><v>{value}</v></c>')
             else:
+                if len(clean(value or '')) > 32767:
+                    raise ValueError('Слишком много доказательств в одной ячейке Excel; выберите меньший период.')
                 # inlineStr deliberately prevents spreadsheet formula injection.
                 cells.append(f'<c r="{address}" s="{cell_style}" t="inlineStr"><is><t xml:space="preserve">'
                              +escape(clean(value))+ '</t></is></c>')
         self.rows.append(f'<row r="{number}" ht="{height}" customHeight="1">'+''.join(cells)+'</row>')
+        self.values.append(raw_values)
         return number
 
     def text(self, text, style=0):
@@ -69,17 +88,37 @@ class Sheet:
             number = self.row([paragraph], style, max(25, 16*math.ceil(len(paragraph)/115)+8))
             self.merges.append(f'A{number}:{col(len(self.widths))}{number}')
 
-    def xml(self, frozen=False):
+    def pairs(self, values, style=0, height=36):
+        """Four readable two-column fields in an eight-column case sheet."""
+        number = self.row([v for value in values for v in (value, '')], style, height)
+        self.merges.extend(f'{col(c)}{number}:{col(c+1)}{number}' for c in range(1, 9, 2))
+        return number
+
+    def chart(self, title, first, last, columns, row, *, category=1, kind='bar'):
+        if first <= last:
+            self.charts.append(dict(title=title,first=first,last=last,columns=columns,row=row,category=category,kind=kind))
+
+    def reserve_chart(self):
+        first = len(self.rows)+1
+        for _ in range(12):
+            self.row(height=18)
+        return first
+
+    def xml(self):
         columns = ''.join(f'<col min="{i}" max="{i}" width="{width}" customWidth="1"/>' for i, width in enumerate(self.widths, 1))
         merges = ('<mergeCells count="'+str(len(self.merges))+'">'+''.join(f'<mergeCell ref="{m}"/>' for m in self.merges)+'</mergeCells>') if self.merges else ''
-        pane = '<pane ySplit="6" topLeftCell="A7" activePane="bottomLeft" state="frozen"/>' if frozen else ''
-        return (f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{NS}">'
+        pane = f'<pane ySplit="{self.freeze}" topLeftCell="A{self.freeze+1}" activePane="bottomLeft" state="frozen"/>' if self.freeze else ''
+        hyperlinks = ('<hyperlinks>'+''.join('<hyperlink ref="'+ref+'" location="'+escape(location, {'"':'&quot;'})+'"/>' for ref,location in self.links)+'</hyperlinks>') if self.links else ''
+        return (f'<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="{NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
                 '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'
                 f'<dimension ref="A1:{col(len(self.widths))}{len(self.rows)}"/>'
                 f'<sheetViews><sheetView workbookViewId="0" showGridLines="0">{pane}</sheetView></sheetViews>'
-                '<sheetFormatPr defaultRowHeight="24"/>'+f'<cols>{columns}</cols><sheetData>'+''.join(self.rows)+'</sheetData>'+merges
+                '<sheetFormatPr defaultRowHeight="24"/>'+f'<cols>{columns}</cols><sheetData>'+''.join(self.rows)+'</sheetData>'
+                + (f'<autoFilter ref="{self.filter}"/>' if self.filter else '')+merges
+                +self.validations+hyperlinks
                 +'<pageMargins left="0.3" right="0.3" top="0.4" bottom="0.4" header="0.2" footer="0.2"/>'
-                '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>')
+                +f'<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="{1 if self.one_page else 0}"/>'
+                + ('<drawing r:id="rIdDrawing"/>' if self.charts else '')+'</worksheet>')
 
 
 def styles_xml():
@@ -87,15 +126,16 @@ def styles_xml():
         return (f'<xf numFmtId="{number}" fontId="{font}" fillId="{fill}" borderId="0" xfId="0" applyAlignment="1"'
                 + (' applyNumberFormat="1"' if number else '')+f'><alignment horizontal="{alignment}" vertical="center" wrapText="1"/></xf>')
     return (f'<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="{NS}">'
-            '<numFmts count="1"><numFmt numFmtId="164" formatCode="dd.mm"/></numFmts>'
+            '<numFmts count="2"><numFmt numFmtId="164" formatCode="dd.mm"/><numFmt numFmtId="165" formatCode="dd.mm.yyyy hh:mm:ss"/></numFmts>'
             '<fonts count="3"><font><sz val="11"/><color rgb="FF16364D"/><name val="Carlito"/></font>'
             '<font><b/><sz val="15"/><color rgb="FFFFFFFF"/><name val="Carlito"/></font>'
             '<font><b/><sz val="11"/><color rgb="FF16364D"/><name val="Carlito"/></font></fonts>'
-            '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
+            '<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
             '<fill><patternFill patternType="solid"><fgColor rgb="FF16364D"/><bgColor indexed="64"/></patternFill></fill>'
-            '<fill><patternFill patternType="solid"><fgColor rgb="FFDFE8EF"/><bgColor indexed="64"/></patternFill></fill></fills>'
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFDFE8EF"/><bgColor indexed="64"/></patternFill></fill>'
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF0CB"/><bgColor indexed="64"/></patternFill></fill></fills>'
             '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-            '<cellXfs count="9">'+xf()+xf(1, 2)+xf(2, 3)+xf(number=10, alignment='center')+xf(2, 3, 10, 'center')+xf(2)+xf(alignment='center')+xf(number=164, alignment='center')+xf(2, 3, alignment='center')+'</cellXfs>'
+            '<cellXfs count="11">'+xf()+xf(1, 2)+xf(2, 3)+xf(number=10, alignment='center')+xf(2, 3, 10, 'center')+xf(2)+xf(alignment='center')+xf(number=164, alignment='center')+xf(2, 3, alignment='center')+xf(number=165)+xf(fill=4)+'</cellXfs>'
             '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')
 
 
@@ -104,111 +144,60 @@ def generate_efficiency_xlsx(report, include_details=False):
         raise ValueError('Проверка исходного журнала RFID Reader не завершена; окончательный отчёт не сформирован.')
     if 'reconciliation' not in report:
         report = reconcile(report)
-    sheet = Sheet([20, 23, 18, 22, 18, 32])
-    sheet.text('РАБОТА КПП «ПЕРИМЕТР»', 1)
-    sheet.text('Период: '+period_text(report)+' • МСК')
-    for name, ratio, rate in executive_rows(report):
-        sheet.text(f'{name}: {rate}  ({ratio})', 1)
-    sheet.row()
-    sheet.row(HEADERS, 2, 36)
-    for day, display in zip(report['days'], summary_rows(report)):
-        n = len(sheet.rows)+1
-        dt = date.fromisoformat(day['date'])
-        serial = (dt-date(1899, 12, 30)).days-int(dt < date(1900, 3, 1))
-        sheet.row([(serial, 7), *[(value, 6) for value in display[1:4]], ({'formula': f'IF(C{n}=0,"",D{n}/C{n})',
-                                  'value': day['detected']/day['tagged'] if day['tagged'] else ''}, 3), display[5]])
-    n, last = len(sheet.rows)+1, len(sheet.rows)
-    t = report['totals']
-    sheet.row(['Итого', ({'formula': f'SUM(B7:B{last})', 'value': t['total']}, 8),
-               ({'formula': f'SUM(C7:C{last})', 'value': t['tagged']}, 8),
-               ({'formula': f'SUM(D7:D{last})', 'value': t['detected']}, 8),
-               ({'formula': f'IF(C{n}=0,"",D{n}/C{n})', 'value': t['detected']/t['tagged'] if t['tagged'] else ''}, 4),
-               summary_rows(report)[-1][-1]], 2)
-    sheet.row()
-    sheet.text(explanatory_text(report))
-    sheet.text(raw_summary_text(report))
-    sheet.text('КОНТРОЛЬ РАБОТЫ СИСТЕМЫ', 1)
-    for values in [['Показатель', 'Подтверждение', 'Результат / граница проверки'], *operational_rows(report)]:
-        row = sheet.row([values[0], '', values[1], '', values[2], ''], height=72)
-        sheet.merges.extend([f'A{row}:B{row}', f'C{row}:D{row}', f'E{row}:F{row}'])
-    sheet.text(delivery_text(report))
-    sheet.row()
-    sheet.row(['Показатель', '', 'Склад / 1С', 'Периметр', '', 'Эффективность'], 2, 34)
-    header = len(sheet.rows)
-    sheet.merges.extend([f'A{header}:B{header}', f'D{header}:E{header}'])
-    for values in effectiveness_rows(report):
-        row = sheet.row([values[0], '', values[1], values[2], '', values[3]], height=38)
-        sheet.merges.extend([f'A{row}:B{row}', f'D{row}:E{row}'])
-    sheet.text(exceptions_text(report, include_series=False))
-    if reconciliation_rows(report):
-        sheet.text('РАЗБОР РАСХОЖДЕНИЙ', 1)
-        for reason, count in reconciliation_rows(report):
-            sheet.text(f'{reason} — {count}.')
-    sheet.text(verification_text(report))
-    if any(row['ambiguous_tags'] for row in report['details']):
-        sheet.text('Обнаружены метки, связанные с несколькими сериями. Они не засчитываются как подтверждённое RFID-считывание.')
-    sheet.row()
-    sheet.text('ТЕКСТ ПИСЬМА', 1)
-    email = email_parts(report)
-    sheet.text('Тема: '+email['subject'], 5)
-    for block in email['blocks']:
-        sheet.text(block)
-        sheet.row()
-    sheet.text('Методика v'+report['version']+' • Сформировано: '+report['generated_at'])
-    sheet.text(methodology_text(report))
-    sheet.text(f'Исключено записей МК/MK: {report["excluded_mk"]}; повторных записей серий: {report["duplicate_warehouse_rows"]}.')
-    sheets = [('Отчёт', sheet)]
-    if include_details:
-        detail = Sheet([17, 23, 22, 14, 14, 16, 60, 60, 25, 45, 18, 18, 75, 18, 60, 65, 95, 18, 30, 30, 32])
-        detail.row(['Серия', 'Дата склада (МСК)', 'ID склада', 'С RFID', 'Считано', 'Периметр',
-                    'Полные метки 1С', 'Совпавшие полные метки', 'ID событий КПП', 'Неоднозначные метки',
-                    'Reader подтвердил', 'Aggregator подтвердил', 'Доказательства Reader (ID, время, полная метка)',
-                    'Сырых чтений меток', 'Метки 1С без подтверждения', 'Результат сверки', 'История чтений вне периода',
-                    'Распознано Периметром', 'ID событий распознавания', 'ID всех физических RFID-событий', 'Даты регистрации меток 1С'], 2, 40)
-        for row in report['details']:
-            tags = max(len(row['registered_tags']), len(row['matched_tags']), 1)
-            detail.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']), int(row['has_rfid']),
-                        int(row['detected']), int(row['in_perimeter']), '\n'.join(row['registered_tags']),
-                        '\n'.join(row['matched_tags']), '; '.join(row['event_ids']), '\n'.join(row['ambiguous_tags']),
-                        int(row['raw_detected']), int(row['kpp_detected']) if report.get('events_checked', True) else 'Не проверен',
-                        '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in row['raw_evidence']),
-                        sum(p['read_count'] for p in row['raw_evidence']), '\n'.join(row['unread_tags']), row['reason'], history_text(row),
-                        int(bool(set(row['raw_matched_tags']) & set(row.get('aggregator_tags', ())))) if report.get('events_checked', True) else 'Не проверен',
-                        '; '.join(row.get('aggregator_event_ids', ())), '; '.join(row.get('observed_event_ids', ())),
-                        '\n'.join(row.get('registration_dates', ()))],
-                       height=min(400, max(30, 30*tags)))
-        sheets.append(('Сверка', detail))
-        checks = Sheet([18, 24, 23, 20, 60, 35, 50, 25, 23, 65])
-        checks.row(['Серия', 'Дата склада', 'ID склада', 'Категория', 'Установлено по данным',
-                    'Причина (заполняется)', 'Документ / журнал / фото', 'Ответственный', 'Дата проверки', 'Комментарий'], 2, 55)
-        for row in report['details']:
-            if row['has_rfid'] and row['detected'] and row['reason_code']!='READ_UNCLASSIFIED':
-                continue
-            checks.row([row['series'], row['warehouse_dt'], '; '.join(row['warehouse_ids']),
-                        ('Нет метки в 1С' if not row['has_rfid'] else 'Проверка распознавания' if row['detected'] else 'Нет чтения в периоде'), row['reason'],
-                        'Не проверено', '', '', '', ''], height=60)
-        checks.text('Заполняется по фактической проверке. Отсутствие привязки в 1С не доказывает отсутствие физической метки '
-                    'или ошибку сотрудника. Сеть, оборудование, ПО и действия людей относятся к причинам только с подтверждением.')
-        sheets.append(('Проверка катушек', checks))
-    content_types = (f'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    if 'case_sources' not in report:
+        report = attach_case_analysis(report)
+    from common.efficiency_layout import report_sheets
+    sheets = report_sheets(report, Sheet, include_details)
+    overrides = [('workbook.xml', 'sheet.main'), ('styles.xml', 'styles')]
+    overrides += [(f'worksheets/sheet{i}.xml', 'worksheet') for i in range(1,len(sheets)+1)]
+    chart_count = 0
+    extra = {}
+    for i,(name,sheet) in enumerate(sheets,1):
+        if not sheet.charts:
+            continue
+        overrides.append((f'drawings/drawing{i}.xml', 'drawing'))
+        extra[f'xl/drawings/drawing{i}.xml'] = drawing_xml(sheet.charts)
+        extra[f'xl/worksheets/_rels/sheet{i}.xml.rels'] = (
+            f'<Relationships xmlns="{REL}"><Relationship Id="rIdDrawing" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" '
+            f'Target="../drawings/drawing{i}.xml"/></Relationships>')
+        relationships = []
+        for j,chart in enumerate(sheet.charts,1):
+            chart_count += 1
+            overrides.append((f'charts/chart{chart_count}.xml', 'chart'))
+            extra[f'xl/charts/chart{chart_count}.xml'] = chart_xml(name,chart,sheet.values)
+            relationships.append(f'<Relationship Id="rId{j}" '
+                                 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" '
+                                 f'Target="../charts/chart{chart_count}.xml"/>')
+        extra[f'xl/drawings/_rels/drawing{i}.xml.rels'] = f'<Relationships xmlns="{REL}">'+''.join(relationships)+'</Relationships>'
+    types = dict(drawing='application/vnd.openxmlformats-officedocument.drawing+xml',
+                 chart='application/vnd.openxmlformats-officedocument.drawingml.chart+xml')
+    prefix = 'application/vnd.openxmlformats-officedocument.spreadsheetml.'
+    content_types = ('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                      '<Default Extension="xml" ContentType="application/xml"/>'
-                     '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-                     '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-                     +''.join(f'<Override PartName="/xl/worksheets/sheet{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(1, len(sheets)+1))+'</Types>')
+                     + ''.join(f'<Override PartName="/xl/{path}" ContentType="{types.get(kind,prefix+kind+"+xml")}"/>'
+                               for path,kind in overrides)+'</Types>')
     workbook = (f'<workbook xmlns="{NS}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
-                +''.join(f'<sheet name="{name}" sheetId="{i}" r:id="rId{i}"/>' for i, (name, _) in enumerate(sheets, 1))
-                +'</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
+                +''.join('<sheet name="'+escape(name, {'"':'&quot;'})+f'" sheetId="{i}" r:id="rId{i}"/>'
+                         for i,(name,_) in enumerate(sheets,1))+'</sheets><definedNames>'
+                +''.join(f'<definedName name="_xlnm.Print_Area" localSheetId="{i}">'
+                         +escape("'"+name.replace("'","''")+f"'!$A$1:${col(len(sheet.widths))}${len(sheet.rows)}")
+                         +'</definedName>' for i,(name,sheet) in enumerate(sheets))
+                +'</definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>')
     relationships = (f'<Relationships xmlns="{REL}">'
-                     +''.join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i}.xml"/>' for i in range(1, len(sheets)+1))
+                     +''.join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+                              f'Target="worksheets/sheet{i}.xml"/>' for i in range(1,len(sheets)+1))
                      +f'<Relationship Id="rId{len(sheets)+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr('[Content_Types].xml', content_types)
-        archive.writestr('_rels/.rels', f'<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        archive.writestr('xl/workbook.xml', workbook)
-        archive.writestr('xl/_rels/workbook.xml.rels', relationships)
-        archive.writestr('xl/styles.xml', styles_xml())
-        for i, (_, item) in enumerate(sheets, 1):
-            archive.writestr(f'xl/worksheets/sheet{i}.xml', item.xml(frozen=i == 1))
+        archive.writestr('[Content_Types].xml',content_types)
+        archive.writestr('_rels/.rels',f'<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        archive.writestr('xl/workbook.xml',workbook)
+        archive.writestr('xl/_rels/workbook.xml.rels',relationships)
+        archive.writestr('xl/styles.xml',styles_xml())
+        for i,(_,sheet) in enumerate(sheets,1):
+            archive.writestr(f'xl/worksheets/sheet{i}.xml',sheet.xml())
+        for path,content in extra.items():
+            archive.writestr(path,content)
     return out.getvalue()
