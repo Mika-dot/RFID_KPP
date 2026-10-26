@@ -12,7 +12,7 @@ from html import escape
 import re
 
 MOSCOW = timezone(timedelta(hours=3))
-VERSION = "1.2"
+VERSION = "1.3"
 HEADERS = ("Дата", "Всего барабанов", "С RFID", "RFID считано", "RFID KPI", "Периметр целиком")
 
 
@@ -85,7 +85,7 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
             registry[series].append((dt, tag))
             owners[tag].add(series)
 
-    by_warehouse, by_tag = defaultdict(list), defaultdict(list)
+    by_warehouse, by_tag, processed_by_tag, observed_by_tag = (defaultdict(list) for _ in range(4))
     for source in event_rows:
         event = dict(source)
         if int(event.get("RfidReadCount") or 0) <= 0:
@@ -99,6 +99,10 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
             continue
         event["tag"] = tag
         event["FirstSeen"] = local_time(event.get("FirstSeen"))
+        if start <= event['FirstSeen'] < end:
+            observed_by_tag[tag].append(str(event['EventId']))
+            if str(event.get('IsReel', 1)).lower() in {'1', 'true'}:
+                processed_by_tag[tag].append(str(event['EventId']))
         if event.get("WarehouseId") is not None:
             by_warehouse[str(event["WarehouseId"])].append(event)
         else:
@@ -128,7 +132,11 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
                             warehouse_ids=[str(row["Id"]) for row in rows],
                             warehouse_receipts=[dict(id=str(row['Id']), dt=row['Dt'].isoformat()) for row in rows],
                             registered_tags=sorted(registered), matched_tags=sorted(matched),
+                            registration_dates=sorted({dt.isoformat() for dt, tag in registry.get(series, ()) if tag in registered and dt <= first['Dt']}),
                             event_ids=sorted(event_ids), ambiguous_tags=sorted(ambiguous),
+                            aggregator_tags=sorted(eligible & processed_by_tag.keys()),
+                            aggregator_event_ids=sorted({identity for tag in eligible for identity in processed_by_tag.get(tag, ())}),
+                            observed_event_ids=sorted({identity for tag in eligible for identity in observed_by_tag.get(tag, ())}),
                             has_rfid=bool(registered), detected=bool(matched), in_perimeter=True))
     details.sort(key=lambda row: (row["warehouse_dt"], row["series"]))
     days = []
@@ -215,6 +223,8 @@ def add_raw_evidence(report, raw_rows):
     report['raw_stats'] = dict(registered_tags=len(registered), read_tags=len(matched),
                               unread_tags=len(registered-matched),
                               matched_reads=sum(int(raw['ReadCount']) for tag in matched for raw in by_tag[tag]))
+    report['processing_coverage'] = dict(received=sum(row['raw_detected'] for row in details),
+        recognized=sum(bool(set(row['raw_matched_tags']) & set(row.get('aggregator_tags', ()))) for row in details))
     return report
 
 
@@ -307,21 +317,34 @@ def table_html(headers, rows):
 
 def email_parts(report):
     subject = f'Отчёт по эффективности RFID КПП «Периметр» за {period_text(report)}'
-    intro = f'Ниже представлен отчёт о работе КПП «Периметр» за период {period_text(report)}.\n\n'+executive_text(report)
-    footer = (f'Периметр целиком — {percent(report["totals"]["perimeter"], report["totals"]["total"])}; '
-              f'RFID-блок — {rfid_kpi(report)}.')
-    blocks = ["Добрый день, Павел Валерьевич!", intro,
-              '\n'.join('\t'.join(map(str, row)) for row in [HEADERS, *summary_rows(report)]),
-              explanatory_text(report)+'\n\n'+raw_summary_text(report), exceptions_text(report, include_series=False), "Итоговая эффективность:",
-              '\n'.join('\t'.join(map(str, row)) for row in [["Показатель", "Склад / 1С", "Периметр", "Эффективность"], *effectiveness_rows(report)]), footer]
-    html = ''.join('<p>'+escape(text).replace('\n', '<br>')+'</p>' if i not in {2, 6} else
-                   table_html(HEADERS, summary_rows(report)) if i == 2 else
-                   table_html(["Показатель", "Склад / 1С", "Периметр", "Эффективность"], effectiveness_rows(report))
+    t = report['totals']
+    intro = f'Итоги работы КПП «Периметр» за {period_text(report)}.'
+    if not report.get('raw_checked'):
+        conclusion = 'Исходный журнал антенны не проверен; окончательный RFID KPI не рассчитан.'
+    elif t['missed']:
+        conclusion = (f'Барабанов с метками 1С без подтверждённого считывания — {t["missed"]}. '
+                      'Физическая причина отсутствия чтений по данным SQL не установлена.')
+    else:
+        conclusion = ('Считывание подтверждено у всех барабанов с зарегистрированными метками.'
+                      if t['tagged'] else 'Барабанов с зарегистрированными метками в периоде нет; RFID KPI не рассчитывается.')
+    software = report.get('processing_coverage', {})
+    coverage = (f'Распознавание полученных RFID в Периметре: {software.get("recognized", 0)}/{software.get("received", 0)} '
+                f'— {percent(software.get("recognized", 0), software.get("received", 0))}.'
+                if report.get('events_checked', True) else 'Распознавание полученных RFID: события обработки не проверены.')
+    blocks = ['Добрый день, Павел Валерьевич!', intro, executive_text(report), coverage,
+              f'Без зарегистрированных RFID-меток в 1С — {t["without_rfid"]}; они учтены через адресный склад.',
+              conclusion, 'Распределение причин между коммуникациями, оборудованием и действиями сотрудников не подтверждено.',
+              'Подробная сверка и сведения о расхождениях — в Excel-отчёте.']
+    html = ''.join('<p>'+escape(text).replace('\n', '<br>')+'</p>' if i != 2 else
+                   table_html(['Показатель', 'Учтено / всего', 'Результат'], executive_rows(report))
                    for i, text in enumerate(blocks))
     return dict(subject=subject, text='\n\n'.join(blocks), html=html, blocks=blocks)
 
 
 def preview_html(report):
+    from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, operational_rows
+    if 'reconciliation' not in report:
+        report = reconcile(report)
     warning = ""
     if any(row["ambiguous_tags"] for row in report["details"]):
         warning = '<p role="alert">Есть метки, зарегистрированные за несколькими сериями. Их считывание не засчитано.</p>'
@@ -330,4 +353,7 @@ def preview_html(report):
             + table_html(HEADERS, summary_rows(report)) + '<p>'+escape(explanatory_text(report)).replace('\n', '<br>')+'</p>'
             + table_html(["Показатель", "Склад / 1С", "Периметр", "Эффективность"], effectiveness_rows(report))
             + '<p>'+escape(raw_summary_text(report))+'</p>'
-            + '<p>'+escape(exceptions_text(report, include_series=False))+'</p>'+warning)
+            + table_html(['Контроль системы', 'Подтверждение', 'Результат / граница проверки'], operational_rows(report))
+            + '<p>'+escape(exceptions_text(report, include_series=False))+'</p>'+warning
+            + table_html(['Что установлено по данным', 'Барабанов'], reconciliation_rows(report))
+            + '<p>'+escape(verification_text(report))+'</p>')

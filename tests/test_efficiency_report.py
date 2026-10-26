@@ -148,7 +148,7 @@ class EfficiencyReportTests(unittest.TestCase):
     def test_letter_matches_summary_and_html_is_escaped(self):
         report = self.report()
         letter = email_parts(report)
-        for value in ['98,77%', '131/131 = 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
+        for value in ['98,77%', '131/131 — 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
             self.assertIn(value, letter['text'])
         self.assertNotIn('будет проверена', letter['text'])
         report['details'][0]['series'] = '<img src=x onerror=alert(1)>'
@@ -162,7 +162,7 @@ class EfficiencyReportTests(unittest.TestCase):
                     ET.fromstring(archive.read(name))
                 ns = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                 workbook = ET.fromstring(archive.read('xl/workbook.xml'))
-                self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 2 if details else 1)
+                self.assertEqual(len(workbook.findall('m:sheets/m:sheet', ns)), 3 if details else 1)
                 sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
                 cells = {c.attrib['r']: c for c in sheet.findall('.//m:c', ns)}
                 self.assertEqual(cells['B11'].find('m:v', ns).text, '131')
