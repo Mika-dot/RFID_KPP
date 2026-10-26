@@ -3,9 +3,9 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 import re
 
-from common.efficiency_report import HEADERS, methodology_text, period_text, summary_rows
+from common.efficiency_report import HEADERS, methodology_text, period_text, summary_rows, percent
 from common.efficiency_diagnostics import history_text
-from common.efficiency_cases import CATEGORY_NAMES, issue_counts, needs_review, short_scorecard
+from common.efficiency_cases import CATEGORY_NAMES, issue_counts, needs_review, short_scorecard, activity_window
 
 
 def link(name, text='Открыть разбор'):
@@ -32,7 +32,10 @@ def main_sheet(report, Sheet):
     for index, (name, numerator, denominator, rate, scope) in enumerate(short_scorecard(report)):
         number = len(sheet.rows)+1
         rate_value = rate
-        if isinstance(numerator, int) and isinstance(denominator, int):
+        # Counts may exist even when an optional measurement was unavailable.
+        # Preserve that status instead of manufacturing a numeric percentage.
+        if (isinstance(numerator, int) and isinstance(denominator, int)
+                and rate == percent(numerator, denominator)):
             rate_value = ({'formula': f'IF(D{number}=0,"",C{number}/D{number})',
                            'value': numerator/denominator if denominator else ''}, 4 if index < 3 else 3)
         n = sheet.row([name, '', numerator, denominator, rate_value, scope], 2 if index < 3 else 0, 36)
@@ -185,11 +188,10 @@ def case_sheet(report, row, Sheet, review_row):
             sheet.row([datetime.fromisoformat(day['date']).strftime('%d.%m'),c['exact'],c['empty'],c['other']])
         sheet.chart('Чтения этой метки и совпадения EPC (строки)',header+1,len(sheet.rows),[2,3,4],anchor)
     sheet.text('РАБОТА АНТЕНН ВОКРУГ ДАТЫ СКЛАДА',2)
-    sheet.text('Число записей всех меток по антеннам (±12 ч). Это контекст; проезд этой катушки не установлен.')
+    sheet.text('25 часовых интервалов: час склада, 12 до него и 12 после. Общий поток меток; проезд этой катушки не установлен.')
     if report.get('case_sources',{}).get('activity_checked'):
         anchor=sheet.reserve_chart()
-        receipt=datetime.fromisoformat(row['warehouse_dt']).replace(minute=0,second=0,microsecond=0)
-        first_hour=receipt-timedelta(hours=12)
+        first_hour, context_end=activity_window(row['warehouse_dt'])
         activities=report.get('activity',())
         antennas=sorted({str(p['Antenna']) for p in activities})
         # Hardware has four ports. An unexpected additional source stays in the
@@ -203,7 +205,7 @@ def case_sheet(report, row, Sheet, review_row):
         if not antennas:
             sheet.text('В контекстном диапазоне записей нет; это не доказательство сетевого отказа.')
         else:
-            for i in range(25):
+            for i in range(int((context_end-first_hour).total_seconds()/3600)):
                 at=first_hour+timedelta(hours=i)
                 sheet.row([at.strftime('%d.%m %H:%M'),*[counts[(at.isoformat(),a)] for a in antennas]])
             sheet.chart('Весь поток по антеннам (строк в час)',header+1,len(sheet.rows),list(range(2,len(antennas)+2)),anchor,kind='line')

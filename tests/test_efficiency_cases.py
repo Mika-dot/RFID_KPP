@@ -11,7 +11,7 @@ import zipfile
 
 from common.efficiency_report import build_efficiency_report
 from common.efficiency_diagnostics import reconcile
-from common.efficiency_cases import attach_case_analysis, short_scorecard
+from common.efficiency_cases import attach_case_analysis, short_scorecard, activity_window
 from common.efficiency_xlsx import generate_efficiency_xlsx
 
 
@@ -36,6 +36,39 @@ def raw_group(*,tid='B'*24,at='2026-10-20T10:00:00',count=1,**changes):
 
 
 class CaseEvidenceTests(unittest.TestCase):
+    def test_unchecked_recognition_status_survives_xlsx_percentage_formulas(self):
+        report,events=population(read=datetime(2026,10,20,10),recognized=False)
+        report['events_checked']=False
+        report=attach_case_analysis(report,[raw_group()],[],None)
+        ns={'m':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        with zipfile.ZipFile(io.BytesIO(generate_efficiency_xlsx(report))) as z:
+            sheet=ET.fromstring(z.read('xl/worksheets/sheet1.xml'))
+            cells={c.attrib['r']:c for c in sheet.findall('.//m:c',ns)}
+            self.assertIsNone(cells['E7'].find('m:f',ns))
+            self.assertEqual(cells['E7'].find('m:is/m:t',ns).text,'Не проверено')
+            self.assertEqual(cells['C7'].find('m:is/m:t',ns).text,'—')
+            self.assertIsNotNone(cells['E6'].find('m:f',ns))
+
+    def test_fractional_receipt_uses_identical_fact_and_chart_activity_buckets(self):
+        report,events=population()
+        row=report['details'][0]
+        row['warehouse_dt']='2026-10-20T12:30:00'
+        activity=[dict(Hour='2026-10-20T00:00:00',Antenna=2,ReadCount=2),
+                  dict(Hour='2026-10-21T00:00:00',Antenna=2,ReadCount=3),
+                  dict(Hour='2026-10-21T01:00:00',Antenna=2,ReadCount=99)]
+        self.assertEqual(activity_window(row['warehouse_dt']),
+                         (datetime(2026,10,20),datetime(2026,10,21,1)))
+        report=attach_case_analysis(report,[],activity,events)
+        fact=next(r for r in report['details'][0]['case']['facts'] if r[0].startswith('Другие чтения:'))
+        self.assertEqual(fact[1],5)
+        ns={'c':'http://schemas.openxmlformats.org/drawingml/2006/chart'}
+        with zipfile.ZipFile(io.BytesIO(generate_efficiency_xlsx(report,True))) as z:
+            plots=[ET.fromstring(z.read(p)) for p in z.namelist() if re_chart(p)]
+            chart=next(p for p in plots if p.find('.//c:lineChart',ns) is not None)
+            values=[int(p.text) for p in chart.findall('.//c:val/c:numRef/c:numCache/c:pt/c:v',ns)]
+            self.assertEqual(len(values),25)
+            self.assertEqual(sum(values),fact[1])
+
     def test_other_tid_is_not_claimed_as_missing_tid_or_defective_tag(self):
         report,events=population()
         report=attach_case_analysis(report,[raw_group(tid='C'*24,count=4)],[],events)

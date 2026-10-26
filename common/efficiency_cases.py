@@ -22,6 +22,16 @@ CATEGORY_NAMES = {
 }
 
 
+def activity_window(warehouse_dt):
+    """The receipt's hour, 12 whole hours before it and 12 after it.
+
+    SQL evidence is hourly: use the same 25 buckets in facts and graphs.
+    The end is exclusive; a partial receipt hour never shifts one view alone.
+    """
+    anchor = local_time(warehouse_dt).replace(minute=0, second=0, microsecond=0)
+    return anchor-timedelta(hours=12), anchor+timedelta(hours=13)
+
+
 def needs_review(row):
     return not row['has_rfid'] or not row['detected'] or row.get('reason_code') == 'READ_UNCLASSIFIED'
 
@@ -159,8 +169,9 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
             reads = [p['FirstRead'] for p in exact if p['Tag'] == tag]
             if dates and reads and min(reads) < min(dates):
                 late_docs.append(dict(tag=tag, read=min(reads), document=min(dates)))
+        context_start, context_end = activity_window(receipt)
         hourly = [p for p in report['activity']
-                  if receipt-timedelta(hours=12) <= local_time(p['Hour']) < receipt+timedelta(hours=13)]
+                  if context_start <= local_time(p['Hour']) < context_end]
         facts = [
             ['Привязка 1С', row['binding_status'], 'RfidTags.Dt и Warehouse.Dt'],
             ['Точное чтение в отчётном периоде',
@@ -173,8 +184,9 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
             ['Тот же EPC, другой TID', other_tid if checked else 'Не проверено', 'Число строк периода; другая полная метка'],
             ['Дата документа 1С позже точного чтения', len(late_docs) if checked else 'Не проверено',
              'Сравнение дат; время доставки 1С неизвестно'],
-            ['Другие чтения возле даты склада (±12 ч)', sum(p['ReadCount'] for p in hourly)
-             if activity is not None else 'Не проверено', 'Контекст, не доказательство проезда этой катушки'],
+            ['Другие чтения: 25 часов вокруг часа склада', sum(p['ReadCount'] for p in hourly)
+             if activity is not None else 'Не проверено',
+             f'Контекст {context_start:%d.%m %H:%M}–{context_end:%d.%m %H:%M} (конец не включён); проезд не доказан'],
         ]
         checks = diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs, event_rows is not None)
         row['case'] = dict(facts=facts, checks=checks, timeline=sorted(timeline, key=lambda p: (p['at'], p['stage'], p['source'])),
@@ -237,7 +249,7 @@ def short_scorecard(report):
         ['Периметр целиком', t['perimeter'], t['total'], percent(t['perimeter'], t['total']), 'RFID КПП + адресный склад'],
         ['RFID-блок: считывание меток 1С', t['detected'], t['tagged'],
          percent(t['detected'], t['tagged']) if report.get('raw_checked') else 'Не проверено', 'Катушки с точным чтением / с меткой 1С к приёмке'],
-        ['Автоматическая обработка поступивших RFID', p.get('recognized', 0), p.get('received', 0),
+        ['Автоматическая обработка поступивших RFID', p.get('recognized', 0) if report.get('events_checked', True) else '—', p.get('received', 0),
          percent(p.get('recognized', 0), p.get('received', 0)) if report.get('events_checked', True) else 'Не проверено',
          'Распознано катушек / катушки с сырым чтением'],
         ['Отказы внешней инфраструктуры', '—', '—', 'Не установлено', 'Нет истории инцидентов с привязкой к проездам'],
