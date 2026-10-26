@@ -52,8 +52,10 @@ def assess_accountability(report):
                 continue
             if at <= p['last_read']:
                 actionable.add(tag)
-                # Both endpoints are actual reads. No invented read between them.
-                eligible_at.append(p['first_read'] if at <= p['first_read'] else p['last_read'])
+                eligible=p.get('first_eligible_read') or (p['first_read'] if at<=p['first_read'] else None)
+                if eligible is None:
+                    raise ValueError('Не проверено первое чтение после распорядки')
+                eligible_at.append(eligible)
             if p['first_read'] < at:
                 late.append(dict(tag=tag,read_at=p['first_read'],request_at=at,
                                  raw_id_from=p['first_id'],raw_id_to=p['last_id'],
@@ -91,6 +93,7 @@ def assess_accountability(report):
             bucket['received']+=1;bucket['recognized']+=int(success)
         row['control'] = dict(status=status,result=CONTROL_STATUS[status],
                               first_read=first_read,last_read=last_read,first_instruction=first_instruction,
+                              first_eligible_read=min(eligible_at) if eligible_at else None,
                               actionable_tags=sorted(actionable),recognized_tags=sorted(recognized_tags),
                               late_first_reads=late,request_after_warehouse=after_storage,
                               late_initial_passage=bool(late and not request_ready_at_first),

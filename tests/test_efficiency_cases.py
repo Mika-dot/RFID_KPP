@@ -187,6 +187,13 @@ class CaseSqlTests(unittest.TestCase):
             self.assertLess(len(params),2100)
             self.assertNotIn('UPPER(r.EPC)',query)
 
+    def test_raw_fetch_keeps_tags_required_by_legacy_history_even_if_control_is_ambiguous(self):
+        report,_=population()
+        report['details'][0]['known_ambiguous_tags']=[TAG]
+        with patch.object(self.api,'read_rows',return_value=[]) as read:
+            self.api.fetch_raw_evidence(object(),report,'dbo.RFID_Tags')
+            self.assertIn(TAG,read.call_args.args[2])
+
     def test_activity_is_bounded_counts_and_includes_receipt_context_outside_period(self):
         report,_=population()
         with patch.object(self.api,'read_rows',return_value=[]) as read:

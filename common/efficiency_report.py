@@ -145,7 +145,8 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
                             warehouse_receipts=[dict(id=str(row['Id']), dt=row['Dt'].isoformat(),document=str(row.get('Ids') or '')) for row in rows],
                             registered_tags=sorted(registered), matched_tags=sorted(matched),
                             registrations=sorted(registrations.get(series, ()), key=lambda r: (r['dt'], r['id'])),
-                            known_ambiguous_tags=sorted(tag for tag in known_tags if len(all_owners[tag]) > 1),
+                            known_ambiguous_tags=sorted(tag for tag in known_tags
+                                if len(owners.get(tag,all_owners[tag]))>1 or (tag in owners and series not in owners[tag])),
                             known_aggregator_tags=sorted(known_tags & processed_by_tag.keys()),
                             known_aggregator_evidence={tag:processed_evidence[tag] for tag in known_tags if tag in processed_evidence},
                             known_observed_event_ids=sorted({identity for tag in known_tags for identity in observed_by_tag.get(tag, ())}),
@@ -219,10 +220,24 @@ def add_raw_evidence(report, raw_rows):
         # Keep later 1C instructions for chronology and software eligibility.
         # Warehouse timing must not prevent proving a read/request sequence.
         all_tags = set(row['registered_tags']) | {r['tag'] for r in row.get('registrations', ())}
-        all_proofs = [dict(tag=tag,first_read=local_time(raw['FirstRead']).isoformat(),
-                           last_read=local_time(raw['LastRead']).isoformat(),read_count=int(raw['ReadCount']),
-                           first_id=str(raw['FirstRawId']),last_id=str(raw['LastRawId']))
-                      for tag in sorted(all_tags-set(row.get('known_ambiguous_tags', ()))) for raw in by_tag.get(tag, ())]
+        all_proofs=[]
+        for tag in sorted(all_tags-set(row.get('known_ambiguous_tags', ()))):
+            earliest=min((local_time(r['dt']) for r in row.get('registrations',()) if r['tag']==tag),default=None)
+            for raw in by_tag.get(tag,()):
+                first,last=local_time(raw['FirstRead']),local_time(raw['LastRead'])
+                valid=local_time(raw['FirstEligibleRead']) if raw.get('FirstEligibleRead') else None
+                if valid is None and earliest is not None:
+                    if earliest<=first:valid=first
+                    elif earliest<=last and int(raw['ReadCount'])<=2:
+                        # With only two real reads, the endpoints are the complete set.
+                        valid=last
+                if valid is not None and not (first<=valid<=last and earliest is not None and valid>=earliest):
+                    raise ValueError('Некорректное время первого чтения после распорядки')
+                if earliest is not None and earliest<=last and valid is None:
+                    raise ValueError('Не получено точное первое чтение после распорядки; повторите формирование.')
+                all_proofs.append(dict(tag=tag,first_read=first.isoformat(),last_read=last.isoformat(),
+                                       first_eligible_read=valid.isoformat() if valid else None,
+                                       read_count=int(raw['ReadCount']),first_id=str(raw['FirstRawId']),last_id=str(raw['LastRawId'])))
         row.update(kpp_matched_tags=sorted(kpp_tags), raw_matched_tags=sorted(raw_tags),
                    all_raw_evidence=all_proofs,
                    raw_evidence=proofs, kpp_detected=bool(kpp_tags), raw_detected=bool(raw_tags),

@@ -46,6 +46,11 @@ def audit(folder, first, last, reader_log_dir=None):
     period, history, epc_counts = {}, {}, Counter()
     cohort = build_efficiency_report(warehouse,registry,events or (),first,last,raw_rows=[])
     cohort_tags = {r['tag'] for d in cohort['details'] for r in d.get('registrations', ())}
+    received_at={}
+    for d in cohort['details']:
+        for r in d.get('registrations',()):
+            tag=r['tag'];at=datetime.fromisoformat(r['dt'])
+            received_at[tag]=min(received_at.get(tag,at),at)
     epcs = {tag[:24] for tag in cohort_tags if re.fullmatch('[0-9A-F]{48}', tag)}
     bins, activity = {}, Counter()
     context_start = (datetime.fromisoformat(start)-timedelta(hours=12)).isoformat()
@@ -82,10 +87,12 @@ def audit(folder, first, last, reader_log_dir=None):
                 b['LateRows']+=int(lag is not None and lag>120)
             for collection in (history, period) if start<=at<end else (history,):
                 if tag not in collection:
-                    collection[tag]=dict(Tag=tag,ReadCount=0,FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity)
+                    collection[tag]=dict(Tag=tag,ReadCount=0,FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity,FirstEligibleRead=None)
                 item=collection[tag];item['ReadCount']+=1
                 item['FirstRead']=min(item['FirstRead'],at);item['LastRead']=max(item['LastRead'],at)
                 item['FirstRawId']=min(item['FirstRawId'],identity);item['LastRawId']=max(item['LastRawId'],identity)
+                if tag in received_at and datetime.fromisoformat(at)>=received_at[tag]:
+                    item['FirstEligibleRead']=min(item['FirstEligibleRead'] or at,at)
             if start<=at<end:
                 total+=1;consumed+=int(cursor is not None and identity<=cursor)
                 epc_counts[tag_key(row['EPC'])]+=1

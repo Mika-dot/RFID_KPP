@@ -96,7 +96,7 @@ def reconciliation_sheet(report, Sheet, names):
         sheet.row([row['series'], datetime.fromisoformat(row['warehouse_dt']), '; '.join(row['warehouse_ids']),
                    int(bool(row['registrations'])),int(bool(all_proofs)),int(row['in_perimeter']),
                    '\n'.join(sorted({r['tag'] for r in row['registrations']})), '\n'.join(sorted({p['tag'] for p in all_proofs})), '; '.join(row['event_ids']),
-                   '\n'.join(row['ambiguous_tags']),int(row['raw_detected']),
+                   '\n'.join(row.get('known_ambiguous_tags',row['ambiguous_tags'])),int(bool(all_proofs)),
                    int(row['kpp_detected']) if report.get('events_checked',True) else 'Не проверено',
                    '\n'.join(f'{p["first_id"]}…{p["last_id"]}; {p["first_read"]}…{p["last_read"]}; {p["tag"]}' for p in all_proofs),
                    sum(p['read_count'] for p in all_proofs), '\n'.join(row['unread_tags']), row['reason'], history_text(row),

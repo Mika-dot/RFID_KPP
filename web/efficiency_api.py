@@ -239,9 +239,14 @@ def fetch_raw_evidence(connection, report, raw_table):
     the Web process. A failed raw query aborts the report instead of counting 0.
     """
     candidates = set()
+    available_at = {}
     start, end = raw_period(report)
     for row in report['details']:
-        tags = (set(row['registered_tags']) | {r['tag'] for r in row.get('registrations', ())})-set(row.get('known_ambiguous_tags', row['ambiguous_tags']))
+        legacy=set(row['registered_tags'])-set(row['ambiguous_tags'])
+        tags = legacy | ((set(row['registered_tags']) | {r['tag'] for r in row.get('registrations', ())})-set(row.get('known_ambiguous_tags', row['ambiguous_tags'])))
+        for registration in row.get('registrations', ()):
+            tag=registration['tag'];at=local_time(registration['dt'])
+            available_at[tag]=min(available_at.get(tag,at),at)
         for tag in tags:
             if len(tag) > 512:
                 raise ValueError('Некорректная длина полной RFID-метки в реестре')
@@ -252,22 +257,24 @@ def fetch_raw_evidence(connection, report, raw_table):
     rows = []
     for offset in range(0, len(candidates), 200):
         batch = candidates[offset:offset+200]
-        values = ','.join('(CONVERT(nvarchar(512),?))' for _ in batch)
+        values = ','.join('(CONVERT(nvarchar(512),?),CONVERT(datetime2,?))' for _ in batch)
         # SQLWriter stores the captured source_dt in both RecordTime and
         # SourceReaderTime (also on delayed spool replay). RecordTime has the
         # existing period index; wrapping it in COALESCE forces history scans.
         at = 'r.RecordTime'
         sql = f'''SELECT v.Tag,COUNT_BIG(*) AS ReadCount,
             MIN({at}) AS FirstRead,MAX({at}) AS LastRead,
+            MIN(CASE WHEN {at}>=v.AvailableAt THEN {at} END) AS FirstEligibleRead,
             MIN(r.Id) AS FirstRawId,MAX(r.Id) AS LastRawId
-            FROM (VALUES {values}) AS v(Tag)
+            FROM (VALUES {values}) AS v(Tag,AvailableAt)
             INNER JOIN {raw_table} r
               ON UPPER(REPLACE(REPLACE(REPLACE(REPLACE(
                  CONVERT(nvarchar(512),ISNULL(r.EPC,''))+CONVERT(nvarchar(512),ISNULL(r.TID,'')),
                  N' ',N''),NCHAR(9),N''),NCHAR(10),N''),NCHAR(13),N''))=v.Tag
             WHERE {at}>=? AND {at}<?
             GROUP BY v.Tag'''
-        rows.extend(read_rows(connection, sql, [*batch, start, end], 200))
+        params=[part for tag in batch for part in (tag,available_at.get(tag))]
+        rows.extend(read_rows(connection, sql, [*params, start, end], 200))
     return rows
 
 

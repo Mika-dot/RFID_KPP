@@ -444,6 +444,7 @@ class EfficiencyHttpTests(unittest.TestCase):
                 self.assertEqual(parameters[-2:], [datetime(2026, 10, 19), datetime(2026, 10, 23)])
                 self.assertNotIn('WarehouseId', query)
                 self.assertIn('FirstRawId', query)
+                self.assertIn('MIN(CASE WHEN r.RecordTime>=v.AvailableAt THEN r.RecordTime END) AS FirstEligibleRead',query)
                 self.assertNotIn('WAREHOUSE_ONLY', query)
         with patch.object(self.api, 'read_rows', side_effect=RuntimeError('SQL unavailable')):
             with self.assertRaises(RuntimeError):

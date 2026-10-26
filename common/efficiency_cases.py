@@ -192,6 +192,9 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
              if activity is not None else 'Не проверено',
              f'Контекст {context_start:%d.%m %H:%M}–{context_end:%d.%m %H:%M} (конец не включён); проезд не доказан'],
         ]
+        if control.get('first_eligible_read') and control['first_eligible_read']!=control['first_read']:
+            facts.insert(3,['Первое чтение после передачи распорядки',control['first_eligible_read'],
+                            'Точный MIN времени чтения при RecordTime >= RfidTags.Dt'])
         checks = diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs, event_rows is not None)
         for incident in report.get('communications',{}).get('events',()):
             at=local_time(incident['at'])

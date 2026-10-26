@@ -20,7 +20,7 @@ def report_one(*,request=datetime(2026,10,20,8),receipt=datetime(2026,10,20,12),
                first=datetime(2026,10,20,10),last=None,event_last=None,other_tag=False):
     registry=[dict(Id=11,Dt=request,Tag=TAG,SeriesNumber='S1',Ids='OUT-1')] if request else []
     if other_tag:registry.append(dict(Id=12,Dt=datetime(2022,1,1),Tag='C'*48,SeriesNumber='S1',Ids='OLD-OTHER-TAG'))
-    raw=[dict(Tag=TAG,ReadCount=1,FirstRead=first,LastRead=last or first,FirstRawId=21,LastRawId=22)] if first else []
+    raw=[dict(Tag=TAG,ReadCount=2 if last and last!=first else 1,FirstRead=first,LastRead=last or first,FirstRawId=21,LastRawId=22)] if first else []
     event=[dict(EventId=31,SourceTag=TAG,FirstSeen=first,LastSeen=event_last or last or first,
                 RfidReadCount=1,IsReel=1,Task1CId=11)] if first else []
     return build_efficiency_report([dict(Id=1,Dt=receipt,SeriesNumber='S1',Ids='STORE-1')],registry,event,
@@ -28,6 +28,29 @@ def report_one(*,request=datetime(2026,10,20,8),receipt=datetime(2026,10,20,12),
 
 
 class InstructionOrderTests(unittest.TestCase):
+    def test_later_owner_does_not_invalidate_a_verified_tag_in_the_report_period(self):
+        w=[dict(Id=1,Dt=datetime(2026,10,20,12),SeriesNumber='A')]
+        r=[dict(Id=11,Dt=datetime(2026,10,20,8),Tag=TAG,SeriesNumber='A'),
+           dict(Id=12,Dt=datetime(2026,10,26),Tag=TAG,SeriesNumber='B')]
+        raw=[dict(Tag=TAG,ReadCount=1,FirstRead=datetime(2026,10,20,10),LastRead=datetime(2026,10,20,10),FirstRawId=1,LastRawId=1)]
+        e=[dict(EventId=1,SourceTag=TAG,FirstSeen=datetime(2026,10,20,10),RfidReadCount=1,IsReel=1)]
+        report=build_efficiency_report(w,r,e,date(2026,10,19),date(2026,10,23),raw_rows=raw)
+        self.assertEqual(report['details'][0]['known_ambiguous_tags'],[])
+        self.assertEqual(report['processing_coverage'],dict(received=1,recognized=1))
+
+    def test_daily_bucket_uses_actual_first_post_instruction_read_not_final_period_read(self):
+        w=[dict(Id=1,Dt=datetime(2026,10,20,12),SeriesNumber='S')]
+        r=[dict(Id=11,Dt=datetime(2026,10,20,8),Tag=TAG,SeriesNumber='S')]
+        raw=[dict(Tag=TAG,ReadCount=3,FirstRead=datetime(2026,10,19,10),LastRead=datetime(2026,10,23,10),
+                  FirstEligibleRead=datetime(2026,10,20,10),FirstRawId=1,LastRawId=3)]
+        e=[dict(EventId=1,SourceTag=TAG,FirstSeen=datetime(2026,10,20,10),RfidReadCount=1,IsReel=1)]
+        report=build_efficiency_report(w,r,e,date(2026,10,19),date(2026,10,23),raw_rows=raw)
+        self.assertEqual(next(d for d in report['software_days'] if d['date']=='2026-10-20')['received'],1)
+        self.assertEqual(next(d for d in report['software_days'] if d['date']=='2026-10-23')['received'],0)
+        raw[0].pop('FirstEligibleRead')
+        with self.assertRaisesRegex(ValueError,'точное первое чтение'):
+            build_efficiency_report(w,r,e,date(2026,10,19),date(2026,10,23),raw_rows=raw)
+
     def test_unchecked_processing_has_an_explicit_review_category_in_full_export(self):
         report=report_one()
         report['events_checked']=False
