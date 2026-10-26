@@ -108,6 +108,29 @@ class RecoveryRolloutTests(unittest.TestCase):
                 rollout.stage_held(self.args,self.cfg,self.env)
         maintenance.assert_not_called(); prepare.assert_not_called(); apply.assert_not_called()
 
+    def test_untried_replacement_is_enabled_only_after_passive_hold_acknowledgement(self):
+        self.assertFalse(self.args.replace_untried_reserve)
+        def prepare(args, cfg, env):
+            maintenance.assert_called_once_with(self.cfg, self.env['PERIMETER_HA_TOKEN'], True, self.args.release)
+            self.assertTrue(args.replace_untried_reserve)
+        with patch.object(rollout.update, 'inventory', return_value=(self.rows, 'physical')), \
+                patch.object(rollout, 'maintenance') as maintenance, \
+                patch.object(rollout.update, 'prepare', side_effect=prepare), \
+                patch.object(rollout.update, 'apply', return_value={'installed':True}), \
+                patch.object(rollout, 'emit'):
+            rollout.stage_held(self.args, self.cfg, self.env)
+
+    def test_failed_maintenance_hold_does_not_enable_trial_replacement(self):
+        with patch.object(rollout.update, 'inventory', return_value=(self.rows, 'physical')), \
+                patch.object(rollout, 'maintenance', side_effect=RuntimeError('hold unavailable')), \
+                patch.object(rollout.update, 'prepare') as prepare, \
+                patch.object(rollout.update, 'apply') as apply:
+            with self.assertRaisesRegex(RuntimeError, 'hold unavailable'):
+                rollout.stage_held(self.args, self.cfg, self.env)
+        self.assertFalse(self.args.replace_untried_reserve)
+        prepare.assert_not_called()
+        apply.assert_not_called()
+
     def test_preparation_failure_unholds_local_node_without_installing(self):
         with patch.object(rollout.update,'inventory',return_value=(self.rows,'physical')), \
                 patch.object(rollout,'maintenance') as maintenance, \

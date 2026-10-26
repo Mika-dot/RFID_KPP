@@ -13,6 +13,68 @@ from guardian.release_contract import MANIFEST
 
 
 class OperatorUpdateTests(unittest.TestCase):
+    def untried_reserve_fixture(self):
+        self.record.update(pending=True, trial_started=False,
+            qualification={"status":"passed", "sha":self.old})
+        self.args.replace_untried_reserve = True
+        self.rows["comparator"].update(prepared=False, faulted=True, operator_maintenance=True,
+            preflight={"ok":True, "checks":{"ports_free":True,"sdk_load":True}},
+            preflight_sample_age=1,
+            update={"pending":True,"trial_started":False,"qualification":"passed"})
+
+    def test_held_untried_reserve_replacement_keeps_pending_record_and_services(self):
+        self.untried_reserve_fixture()
+        update.write_private(self.state / "release.json", self.record)
+        before = (self.state / "release.json").read_bytes()
+        with patch.object(update, "inventory", return_value=(self.rows, "physical")), \
+                patch.object(update, "git", side_effect=RuntimeError("fetch-marker")), \
+                patch.object(update, "native") as native:
+            with self.assertRaisesRegex(RuntimeError, "fetch-marker"):
+                update.prepare(self.args, self.cfg, self.env)
+        self.assertEqual(before, (self.state / "release.json").read_bytes())
+        native.assert_not_called()
+
+    def test_untried_replacement_refuses_unsafe_or_unproven_trial_and_live_state(self):
+        base_record, base_rows = copy.deepcopy(self.record), copy.deepcopy(self.rows)
+        cases = ("no_opt_in", "trial_started", "trial_unknown", "qualification_failed",
+                 "qualification_other_sha", "same_target", "active", "other_release",
+                 "not_held", "fault_unknown", "preflight_failed", "sdk_failed", "ports_busy",
+                 "stale_preflight", "unknown_preflight_age", "live_trial_started",
+                 "live_trial_unknown", "not_pending", "live_not_qualified")
+        for case in cases:
+            with self.subTest(case=case):
+                self.record, self.rows = copy.deepcopy(base_record), copy.deepcopy(base_rows)
+                self.args.release = self.release
+                self.untried_reserve_fixture()
+                row = self.rows["comparator"]
+                owner = "physical"
+                if case == "no_opt_in": self.args.replace_untried_reserve = False
+                if case == "trial_started": self.record["trial_started"] = True
+                if case == "trial_unknown": self.record.pop("trial_started")
+                if case == "qualification_failed": self.record["qualification"]["status"] = "failed"
+                if case == "qualification_other_sha": self.record["qualification"]["sha"] = self.release
+                if case == "same_target": self.args.release = self.old
+                if case == "active": row["active"], owner = True, "comparator"
+                if case == "other_release": row["release_sha"] = self.release
+                if case == "not_held": row["operator_maintenance"] = False
+                if case == "fault_unknown": row.pop("faulted")
+                if case == "preflight_failed": row["preflight"]["ok"] = False
+                if case == "sdk_failed": row["preflight"]["checks"]["sdk_load"] = False
+                if case == "ports_busy": row["preflight"]["checks"]["ports_free"] = False
+                if case == "stale_preflight": row["preflight_sample_age"] = 90
+                if case == "unknown_preflight_age": row.pop("preflight_sample_age")
+                if case == "live_trial_started": row["update"]["trial_started"] = True
+                if case == "live_trial_unknown": row["update"].pop("trial_started")
+                if case == "not_pending": row["update"]["pending"] = False
+                if case == "live_not_qualified": row["update"]["qualification"] = "failed"
+                update.write_private(self.state / "release.json", self.record)
+                with patch.object(update, "inventory", return_value=(self.rows, owner)), \
+                        patch.object(update, "git") as git, patch.object(update, "native") as native:
+                    with self.assertRaisesRegex(RuntimeError, "ExistingTrialMustFinish"):
+                        update.prepare(self.args, self.cfg, self.env)
+                git.assert_not_called()
+                native.assert_not_called()
+
     def test_preparing_pinned_trial_replacement_keeps_trial_state_and_native_services(self):
         self.record.update(pending=True, operator_pinned_release=self.record["current"]["sha"],
             qualification={"status":"passed", "sha":self.record["current"]["sha"]})
