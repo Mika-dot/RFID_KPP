@@ -6,7 +6,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from common.efficiency_report import build_efficiency_report, email_parts
-from common.efficiency_diagnostics import reconcile, operational_rows, verification_text
+from common.efficiency_diagnostics import reconcile, operational_rows, verification_text, delivery_text
 
 
 class ReconciliationTests(unittest.TestCase):
@@ -98,6 +98,15 @@ class ReconciliationTests(unittest.TestCase):
         self.assertNotIn('000000000000000000000000000000000000000000000001',text)
         self.assertLess(len(text.split()),150)
 
+    def test_delivery_percentage_is_not_network_availability(self):
+        report=reconcile(self.report())
+        report['delivery']=dict(checked=True,total=10,timed_rows=8,late_rows=2,after_reconnect=1,max_delay_sec=500,threshold_sec=120)
+        rows=operational_rows(report)
+        self.assertEqual(next(row for row in rows if row[0].startswith('Доставка'))[-1],'75%')
+        self.assertIn('не доказанная длительность сетевого сбоя',delivery_text(report))
+        self.assertIn('Доля потерь не установлена',str(rows))
+        self.assertIn('задержанных строк — 2',email_parts(report)['text'])
+
 
 class DiagnosticSqlTests(unittest.TestCase):
     @classmethod
@@ -131,6 +140,16 @@ class DiagnosticSqlTests(unittest.TestCase):
             result=self.api.fetch_raw_progress(object(),report,'dbo.RFID_Tags',1000)
             self.assertEqual(result,dict(pipeline_checked=True,read_total=10,consumed=7))
             self.assertEqual(read.call_args.args[2],(1000,datetime(2026,10,19),datetime(2026,10,24)))
+
+    def test_delivery_query_has_period_bounds_and_does_not_count_legacy_clock_as_network_proof(self):
+        report=ReconciliationTests().report()
+        data=dict(total=10,timed_rows=8,late_rows=2,max_delay_sec=500,after_reconnect=1)
+        with patch.object(self.api,'read_rows',return_value=[data]) as read:
+            result=self.api.fetch_delivery_summary(object(),report,'dbo.RFID_Tags')
+            self.assertEqual(result['timed_rows'],8)
+            query,params=read.call_args.args[1:3]
+            self.assertIn("TimeQuality IN ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT')",query)
+            self.assertEqual(params,(datetime(2026,10,19),datetime(2026,10,24)))
 
 
 if __name__=='__main__':unittest.main()

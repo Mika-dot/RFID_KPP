@@ -136,6 +136,11 @@ def fetch_efficiency_report(base, date_from, date_to):
         except Exception as exc:
             history = None
             log.warning('raw_history_check_failed error_class=%s', type(exc).__name__)
+        try:
+            report['delivery'] = fetch_delivery_summary(conn, report, raw_table)
+        except Exception as exc:
+            report['delivery'] = dict(checked=False)
+            log.warning('delivery_check_failed error_class=%s', type(exc).__name__)
     return reconcile(report, history, processing=processing)
 
 
@@ -261,6 +266,25 @@ def fetch_raw_progress(connection, report, raw_table, cursor):
     return dict(pipeline_checked=True, read_total=total, consumed=consumed)
 
 
+def fetch_delivery_summary(connection, report, raw_table):
+    start, end = raw_period(report)
+    valid = "ReceivedAt IS NOT NULL AND SourceReaderTime IS NOT NULL AND ReceivedAt>=SourceReaderTime AND TimeQuality IN ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT')"
+    rows = read_rows(connection, f'''SELECT COUNT_BIG(*) AS total,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN {valid} THEN 1 ELSE 0 END)),0) AS timed_rows,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN {valid} AND ReceivedAt>DATEADD(second,120,SourceReaderTime) THEN 1 ELSE 0 END)),0) AS late_rows,
+        MAX(CASE WHEN {valid} THEN DATEDIFF(second,SourceReaderTime,ReceivedAt) END) AS max_delay_sec,
+        COALESCE(SUM(CONVERT(bigint,CASE WHEN TimeQuality='APPROXIMATE_AFTER_RECONNECT' THEN 1 ELSE 0 END)),0) AS after_reconnect
+        FROM {raw_table} WHERE RecordTime>=? AND RecordTime<?''',(start,end),1)
+    if len(rows)!=1:
+        raise ValueError('Не прочитаны сведения о доставке RFID')
+    row=rows[0]
+    result=dict(checked=True,threshold_sec=120,**{key:int(row[key]) for key in ('total','timed_rows','late_rows','after_reconnect')})
+    if not 0<=result['late_rows']<=result['timed_rows']<=result['total']:
+        raise ValueError('Некорректные счётчики доставки RFID')
+    result['max_delay_sec']=int(row['max_delay_sec']) if row['max_delay_sec'] is not None else None
+    return result
+
+
 class ReportJobs:
     def __init__(self, loader, *, ttl=900, max_jobs=8):
         self.loader, self.ttl, self.max_jobs = loader, ttl, max_jobs
@@ -365,6 +389,7 @@ def install(base):
                           source_checks=dict(reader=report['raw_checked']), diagnostics=report['diagnostics'],
                           raw_stats=report['raw_stats'], raw_source=report.get('raw_source'),
                           reconciliation=report.get('reconciliation'),
+                          delivery=report.get('delivery'),
                           download_url=f'/api/efficiency-report/{token}/download'))
 
     @base.app.route('/api/efficiency-report/<token>/download')

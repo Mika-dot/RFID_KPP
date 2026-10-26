@@ -13,7 +13,7 @@ from xml.sax.saxutils import escape
 
 from common.efficiency_report import (HEADERS, effectiveness_rows, email_parts, exceptions_text,
                                       executive_rows, explanatory_text, methodology_text, period_text, raw_summary_text, summary_rows)
-from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, history_text, operational_rows
+from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, history_text, operational_rows, delivery_text
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -131,6 +131,7 @@ def generate_efficiency_xlsx(report, include_details=False):
     for values in [['Показатель', 'Подтверждение', 'Результат / граница проверки'], *operational_rows(report)]:
         row = sheet.row([values[0], '', values[1], '', values[2], ''], height=72)
         sheet.merges.extend([f'A{row}:B{row}', f'C{row}:D{row}', f'E{row}:F{row}'])
+    sheet.text(delivery_text(report))
     sheet.row()
     sheet.row(['Показатель', '', 'Склад / 1С', 'Периметр', '', 'Эффективность'], 2, 34)
     header = len(sheet.rows)

@@ -43,6 +43,7 @@ def audit(folder, first, last):
                    if row['StateKey']=='LAST_RFID_ID_V3' and row['StateValue'].isdigit()),None)
     period, history, epc_counts = {}, {}, Counter()
     total = consumed = 0
+    delivery=dict(checked=True,total=0,timed_rows=0,late_rows=0,after_reconnect=0,max_delay_sec=None,threshold_sec=120)
     paths = list(folder.glob('RFID_Tags_*.csv'))
     if len(paths) != 1:
         raise ValueError('Требуется одна полная выгрузка RFID_Tags')
@@ -59,9 +60,20 @@ def audit(folder, first, last):
             if start<=at<end:
                 total+=1;consumed+=int(cursor is not None and identity<=cursor)
                 epc_counts[tag_key(row['EPC'])]+=1
+                delivery['total']+=1
+                quality=row.get('TimeQuality') or ''
+                delivery['after_reconnect']+=int(quality=='APPROXIMATE_AFTER_RECONNECT')
+                if row.get('ReceivedAt') and row.get('SourceReaderTime') and quality in ('HOST_CAPTURE_TIME','APPROXIMATE_AFTER_RECONNECT'):
+                    received,source_time=datetime.fromisoformat(row['ReceivedAt']),datetime.fromisoformat(row['SourceReaderTime'])
+                    lag=(received-source_time).total_seconds()
+                    if lag>=0:
+                        delivery['timed_rows']+=1;delivery['late_rows']+=int(lag>120)
+                        seconds=int((received.replace(microsecond=0)-source_time.replace(microsecond=0)).total_seconds())
+                        delivery['max_delay_sec']=max(delivery['max_delay_sec'] or 0,seconds)
     report=build_efficiency_report(warehouse,registry,events or (),first,last,raw_rows=list(period.values()))
     report['events_checked']=events is not None
     report['raw_source']=dict(raw_reads=total)
+    report['delivery']=delivery
     proofs=[]
     for tag in sorted({tag for row in report['details'] if row['has_rfid'] and not row['detected']
                        for tag in set(row['registered_tags'])-set(row['ambiguous_tags'])}):

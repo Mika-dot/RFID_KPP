@@ -99,12 +99,28 @@ def operational_rows(report):
     cursor = ([f'{data["consumed"]}/{data["read_total"]} сырых строк', percent(data['consumed'], data['read_total'])]
               if data.get('pipeline_checked') else ['Нет подтверждённого курсора обработки', 'Не измерено'])
     errors = f'{data["total"]}; незакрытых {data["unresolved"]}' if data.get('checked') else 'Журнал не проверен'
+    delivery = report.get('delivery', {})
+    delivery_result = ([f'{delivery["timed_rows"]-delivery["late_rows"]}/{delivery["timed_rows"]} строк не позже {delivery["threshold_sec"]} с',
+                        percent(delivery['timed_rows']-delivery['late_rows'],delivery['timed_rows'])]
+                       if delivery.get('checked') else ['Метки времени доставки не проверены', 'Не измерено'])
     return [['Распознавание полученных RFID Периметром', *software],
             ['Прохождение входящего RFID-потока по курсору', *cursor],
             ['Зарегистрированные ошибки обработки', errors, 'Не является доказательством отсутствия всех багов'],
+            ['Доставка Reader → SQL по доступным меткам времени', *delivery_result],
             ['Коммуникации / сеть', 'История сетевой доступности и потерь не предоставлена', 'Доля потерь не установлена'],
             ['Данные 1С / человеческий фактор', f'{report["totals"]["without_rfid"]} катушек без привязки метки на дату приёмки',
              'Вина и физическое наличие метки требуют проверки']]
+
+
+def delivery_text(report):
+    d=report.get('delivery', {})
+    if not d.get('checked'):
+        return 'Поля времени доставки Reader → SQL не проверены.'
+    delay=f'около {d["max_delay_sec"]} с' if d['max_delay_sec'] is not None else 'не измерена'
+    return (f'Доставка Reader → SQL: {d["late_rows"]} строк позже контрольных {d["threshold_sec"]} с; '
+            f'максимальная задержка — {delay}; после переподключения помечено {d["after_reconnect"]} строк. '
+            f'Строк без пригодных меток времени — {d["total"]-d["timed_rows"]}. '
+            'Это задержка всей цепочки, а не доказанная длительность сетевого сбоя или доля физических потерь RFID.')
 
 
 def history_text(row):

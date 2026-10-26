@@ -334,7 +334,12 @@ def email_parts(report):
     coverage = (f'Распознавание полученных RFID в Периметре: {software.get("recognized", 0)}/{software.get("received", 0)} '
                 f'— {percent(software.get("recognized", 0), software.get("received", 0))}.'
                 if report.get('events_checked', True) else 'Распознавание полученных RFID: события обработки не проверены.')
+    delivery=report.get('delivery', {})
+    transfer=(f'Доставка Reader → SQL не позже {delivery["threshold_sec"]} с: '
+              f'{percent(delivery["timed_rows"]-delivery["late_rows"],delivery["timed_rows"])}; '
+              f'задержанных строк — {delivery["late_rows"]}.' if delivery.get('checked') else '')
     blocks = ['Добрый день, Павел Валерьевич!', intro, executive_text(report), coverage,
+              *([transfer] if transfer else []),
               f'Без зарегистрированных RFID-меток в 1С — {t["without_rfid"]}; они учтены через адресный склад.',
               conclusion, 'Распределение причин между коммуникациями, оборудованием и действиями сотрудников не подтверждено.',
               'Подробная сверка и сведения о расхождениях — в Excel-отчёте.']
@@ -345,7 +350,7 @@ def email_parts(report):
 
 
 def preview_html(report):
-    from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, operational_rows
+    from common.efficiency_diagnostics import reconcile, reconciliation_rows, verification_text, operational_rows, delivery_text
     if 'reconciliation' not in report:
         report = reconcile(report)
     warning = ""
@@ -357,6 +362,7 @@ def preview_html(report):
             + table_html(["Показатель", "Склад / 1С", "Периметр", "Эффективность"], effectiveness_rows(report))
             + '<p>'+escape(raw_summary_text(report))+'</p>'
             + table_html(['Контроль системы', 'Подтверждение', 'Результат / граница проверки'], operational_rows(report))
+            + '<p>'+escape(delivery_text(report))+'</p>'
             + '<p>'+escape(exceptions_text(report, include_series=False))+'</p>'+warning
             + table_html(['Что установлено по данным', 'Барабанов'], reconciliation_rows(report))
             + '<p>'+escape(verification_text(report))+'</p>')
