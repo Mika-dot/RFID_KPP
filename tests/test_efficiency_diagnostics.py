@@ -90,7 +90,7 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_director_letter_is_short_and_omits_diagnostic_dump(self):
         text=email_parts(reconcile(self.report()))['text']
-        self.assertIn('Распознавание полученных RFID',text)
+        self.assertIn('RFID КПП: обработка доступных данных',text)
         self.assertIn('1/1 — 100%',text)
         self.assertNotIn('FirstRawId',text)
         self.assertNotIn('Сырых чтений',text)
@@ -105,7 +105,8 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(next(row for row in rows if row[0].startswith('Доставка'))[-1],'75%')
         self.assertIn('не доказанная длительность сетевого сбоя',delivery_text(report))
         self.assertIn('Доля потерь не установлена',str(rows))
-        self.assertIn('задержанных строк — 2',email_parts(report)['text'])
+        self.assertNotIn('75%',email_parts(report)['text'])
+        self.assertIn('входных',email_parts(report)['text'])
 
 
 class DiagnosticSqlTests(unittest.TestCase):

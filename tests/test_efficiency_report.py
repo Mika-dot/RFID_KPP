@@ -148,7 +148,7 @@ class EfficiencyReportTests(unittest.TestCase):
     def test_letter_matches_summary_and_html_is_escaped(self):
         report = self.report()
         letter = email_parts(report)
-        for value in ['98,77%', '131/131 — 100%', 'RFID-блок', 'Периметр целиком', 'Павел Валерьевич']:
+        for value in ['80/80 — 100%', '131/131 — 100%', 'RFID КПП', 'Периметр целиком', 'Павел Валерьевич']:
             self.assertIn(value, letter['text'])
         self.assertNotIn('будет проверена', letter['text'])
         report['details'][0]['series'] = '<img src=x onerror=alert(1)>'
@@ -164,17 +164,17 @@ class EfficiencyReportTests(unittest.TestCase):
                 workbook = ET.fromstring(archive.read('xl/workbook.xml'))
                 names = [s.attrib['name'] for s in workbook.findall('m:sheets/m:sheet', ns)]
                 self.assertEqual(names[0], 'Отчёт')
-                self.assertEqual(len(names), 58 if details else 1)
+                self.assertEqual(len(names), 60 if details else 1)
                 if details:
                     self.assertIn('Сверка', names)
                     self.assertIn('Проверка катушек', names)
                 sheet = ET.fromstring(archive.read('xl/worksheets/sheet1.xml'))
                 cells = {c.attrib['r']: c for c in sheet.findall('.//m:c', ns)}
                 self.assertEqual(cells['C5'].find('m:v', ns).text, '131')
-                self.assertEqual(cells['D6'].find('m:v', ns).text, '81')
+                self.assertEqual(cells['D6'].find('m:v', ns).text, '80')
                 self.assertEqual(cells['C6'].find('m:v', ns).text, '80')
                 self.assertEqual(cells['E6'].find('m:f', ns).text, 'IF(D6=0,"",C6/D6)')
-                self.assertAlmostEqual(float(cells['E6'].find('m:v', ns).text), 80/81)
+                self.assertAlmostEqual(float(cells['E6'].find('m:v', ns).text), 1)
                 self.assertNotIn('ТЕКСТ ПИСЬМА', archive.read('xl/worksheets/sheet1.xml').decode())
 
     def raw(self, identity=1, **changes):
@@ -191,7 +191,7 @@ class EfficiencyReportTests(unittest.TestCase):
         self.assertEqual(report['totals']['detected'], 81)
         self.assertEqual(report['totals']['missed'], 0)
         self.assertEqual(report['diagnostics']['reader_only'], 1)
-        self.assertIn('RFID-блок: 81/81 — 100%', email_parts(report)['text'])
+        self.assertIn('RFID КПП: обработка доступных данных: 80/81 — 98,77%', email_parts(report)['text'])
 
     def test_low_aggregator_coverage_is_not_substituted_for_reader_kpi(self):
         # Only 36 series have Aggregator events; raw Reader proves 80.
@@ -201,14 +201,16 @@ class EfficiencyReportTests(unittest.TestCase):
         report = self.report()
         self.assertEqual(report['diagnostics']['kpp_confirmed'], 36)
         self.assertEqual(report['totals']['detected'], 80)
-        self.assertIn('RFID-блок: 80/81 — 98,77%', email_parts(report)['text'])
+        self.assertIn('RFID КПП: обработка доступных данных: 36/80 — 45%', email_parts(report)['text'])
 
     def test_genuinely_low_reader_and_aggregator_result_is_not_inflated(self):
         keep = set(sorted({row['WarehouseId'] for row in self.e})[:36])
         report = add_raw_evidence(self.report(), [self.raw(identity) for identity in keep])
         self.assertEqual(report['diagnostics']['kpp_confirmed'], 80)
         self.assertEqual(report['totals']['detected'], 36)
-        self.assertIn('44,44%', email_parts(report)['text'])
+        self.assertIn('36/36 — 100%', email_parts(report)['text'])
+        self.assertEqual(report['accountability']['unresolved_no_input'],45)
+        self.assertNotIn('44,44%', email_parts(report)['text'])
         self.assertNotIn('98,77%', email_parts(report)['text'])
 
     def test_aggregator_does_not_replace_empty_raw_journal(self):
@@ -309,7 +311,7 @@ class EfficiencyHttpTests(unittest.TestCase):
             token = start.get_json()['job_id']
             result = self.wait_job(token)
             self.assertEqual(result.get_json()['totals']['detected'], 80)
-            self.assertIn('98,77%', result.get_json()['email']['text'])
+            self.assertIn('80/80 — 100%', result.get_json()['email']['text'])
             download = self.client.get(result.get_json()['download_url'])
             self.assertEqual(download.status_code, 200)
             self.assertTrue(download.data.startswith(b'PK'))
@@ -442,6 +444,7 @@ class EfficiencyHttpTests(unittest.TestCase):
                 self.assertEqual(parameters[-2:], [datetime(2026, 10, 19), datetime(2026, 10, 23)])
                 self.assertNotIn('WarehouseId', query)
                 self.assertIn('FirstRawId', query)
+                self.assertIn('MIN(CASE WHEN r.RecordTime>=v.AvailableAt THEN r.RecordTime END) AS FirstEligibleRead',query)
                 self.assertNotIn('WAREHOUSE_ONLY', query)
         with patch.object(self.api, 'read_rows', side_effect=RuntimeError('SQL unavailable')):
             with self.assertRaises(RuntimeError):

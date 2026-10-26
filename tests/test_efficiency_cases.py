@@ -44,10 +44,10 @@ class CaseEvidenceTests(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(generate_efficiency_xlsx(report))) as z:
             sheet=ET.fromstring(z.read('xl/worksheets/sheet1.xml'))
             cells={c.attrib['r']:c for c in sheet.findall('.//m:c',ns)}
-            self.assertIsNone(cells['E7'].find('m:f',ns))
-            self.assertEqual(cells['E7'].find('m:is/m:t',ns).text,'Не проверено')
-            self.assertEqual(cells['C7'].find('m:is/m:t',ns).text,'—')
-            self.assertIsNotNone(cells['E6'].find('m:f',ns))
+            self.assertIsNone(cells['E6'].find('m:f',ns))
+            self.assertEqual(cells['E6'].find('m:is/m:t',ns).text,'Не проверено')
+            self.assertEqual(cells['C6'].find('m:is/m:t',ns).text,'—')
+            self.assertIsNotNone(cells['E5'].find('m:f',ns))
 
     def test_fractional_receipt_uses_identical_fact_and_chart_activity_buckets(self):
         report,events=population()
@@ -84,16 +84,18 @@ class CaseEvidenceTests(unittest.TestCase):
         facts=dict((r[0],r[1]) for r in report['details'][0]['case']['facts'])
         self.assertEqual((facts['Тот же EPC, TID отсутствует'],facts['Тот же EPC, другой TID']),(3,4))
 
-    def test_late_document_date_is_not_invented_as_arrival_time(self):
+    def test_late_incoming_request_is_proven_by_confirmed_timestamp_contract(self):
         report,events=population(registered=datetime(2026,10,26,9),read=datetime(2026,10,20,10))
         self.assertEqual(report['totals']['tagged'],0)
         report=attach_case_analysis(report,[raw_group()],[],events)
         self.assertEqual(report['one_c']['later_binding'],1)
         self.assertEqual(report['one_c']['document_after_read'],1)
-        self.assertFalse(report['one_c']['arrival_checked'])
+        self.assertTrue(report['one_c']['arrival_checked'])
         case=report['details'][0]['case']
         self.assertEqual(case['late_documents'][0]['document'],'2026-10-26T09:00:00')
-        self.assertIn('журнал получения',str(case['checks']))
+        self.assertIn('до передачи КПП не мог знать',str(case['checks']))
+        self.assertEqual(report['details'][0]['control']['status'],'AFTER_READ')
+        self.assertEqual(report['processing_coverage']['received'],0)
         self.assertEqual(report['totals']['detected'],0)
 
     def test_outside_reads_show_before_and_after_with_real_event_direction(self):
@@ -133,9 +135,9 @@ class CaseEvidenceTests(unittest.TestCase):
         report,events=population(read=datetime(2026,10,20,10),recognized=False)
         report=attach_case_analysis(report,[raw_group()],[],events)
         rows=short_scorecard(report)
-        self.assertEqual(rows[1][1:4],[1,1,'100%'])
-        self.assertEqual(rows[2][1:4],[0,1,'0%'])
-        self.assertEqual(rows[3][3],'Не установлено')
+        self.assertEqual(rows[1][1:4],[0,1,'0%'])
+        self.assertEqual(report['accountability']['processing_review'],1)
+        self.assertEqual(next(r for r in rows if r[0]=='Связь со считывателем')[3],'Доля отказа не измерена')
 
     def test_xlsx_all_series_cases_graph_sources_navigation_and_no_letter(self):
         report,events=population(read=datetime(2026,10,20,10))
@@ -184,6 +186,13 @@ class CaseSqlTests(unittest.TestCase):
             self.assertEqual(query.count('?'),len(params))
             self.assertLess(len(params),2100)
             self.assertNotIn('UPPER(r.EPC)',query)
+
+    def test_raw_fetch_keeps_tags_required_by_legacy_history_even_if_control_is_ambiguous(self):
+        report,_=population()
+        report['details'][0]['known_ambiguous_tags']=[TAG]
+        with patch.object(self.api,'read_rows',return_value=[]) as read:
+            self.api.fetch_raw_evidence(object(),report,'dbo.RFID_Tags')
+            self.assertIn(TAG,read.call_args.args[2])
 
     def test_activity_is_bounded_counts_and_includes_receipt_context_outside_period(self):
         report,_=population()

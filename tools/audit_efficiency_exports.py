@@ -13,6 +13,7 @@ from common.efficiency_report import build_efficiency_report, tag_key, validate_
 from common.efficiency_diagnostics import reconcile
 from common.efficiency_xlsx import generate_efficiency_xlsx
 from common.efficiency_cases import attach_case_analysis
+from common.efficiency_communications import read_reader_communications
 
 
 def rows(folder, table, required=True):
@@ -29,7 +30,7 @@ def rows(folder, table, required=True):
         return list(csv.DictReader(source))
 
 
-def audit(folder, first, last):
+def audit(folder, first, last, reader_log_dir=None):
     validate_period(first,last)
     start, end = first.isoformat(), (last+timedelta(days=1)).isoformat()
     warehouse, registry = rows(folder,'Warehouse'), rows(folder,'RfidTags')
@@ -45,6 +46,11 @@ def audit(folder, first, last):
     period, history, epc_counts = {}, {}, Counter()
     cohort = build_efficiency_report(warehouse,registry,events or (),first,last,raw_rows=[])
     cohort_tags = {r['tag'] for d in cohort['details'] for r in d.get('registrations', ())}
+    received_at={}
+    for d in cohort['details']:
+        for r in d.get('registrations',()):
+            tag=r['tag'];at=datetime.fromisoformat(r['dt'])
+            received_at[tag]=min(received_at.get(tag,at),at)
     epcs = {tag[:24] for tag in cohort_tags if re.fullmatch('[0-9A-F]{48}', tag)}
     bins, activity = {}, Counter()
     context_start = (datetime.fromisoformat(start)-timedelta(hours=12)).isoformat()
@@ -81,10 +87,12 @@ def audit(folder, first, last):
                 b['LateRows']+=int(lag is not None and lag>120)
             for collection in (history, period) if start<=at<end else (history,):
                 if tag not in collection:
-                    collection[tag]=dict(Tag=tag,ReadCount=0,FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity)
+                    collection[tag]=dict(Tag=tag,ReadCount=0,FirstRead=at,LastRead=at,FirstRawId=identity,LastRawId=identity,FirstEligibleRead=None)
                 item=collection[tag];item['ReadCount']+=1
                 item['FirstRead']=min(item['FirstRead'],at);item['LastRead']=max(item['LastRead'],at)
                 item['FirstRawId']=min(item['FirstRawId'],identity);item['LastRawId']=max(item['LastRawId'],identity)
+                if tag in received_at and datetime.fromisoformat(at)>=received_at[tag]:
+                    item['FirstEligibleRead']=min(item['FirstEligibleRead'] or at,at)
             if start<=at<end:
                 total+=1;consumed+=int(cursor is not None and identity<=cursor)
                 epc_counts[tag_key(row['EPC'])]+=1
@@ -116,6 +124,8 @@ def audit(folder, first, last):
     if cursor is not None:
         processing.update(cursor=cursor,pipeline_checked=True,read_total=total,consumed=consumed)
     report=reconcile(report,proofs,processing=processing)
+    report['communications']=(read_reader_communications(report,reader_log_dir) if reader_log_dir else
+                              dict(checked=False,complete=False,reason='С выгрузкой БД журналы Reader не переданы',events=[],intervals=[]))
     return attach_case_analysis(report,list(bins.values()),
                                 [dict(Hour=hour,Antenna=antenna,ReadCount=count) for (hour,antenna),count in activity.items()],events)
 
@@ -127,8 +137,9 @@ def main():
     parser.add_argument('--date-to',type=date.fromisoformat,required=True)
     parser.add_argument('--xlsx',type=Path)
     parser.add_argument('--json',type=Path)
+    parser.add_argument('--reader-log-dir',type=Path)
     args=parser.parse_args()
-    report=audit(args.data_dir,args.date_from,args.date_to)
+    report=audit(args.data_dir,args.date_from,args.date_to,args.reader_log_dir)
     if args.xlsx:
         args.xlsx.parent.mkdir(parents=True,exist_ok=True)
         args.xlsx.write_bytes(generate_efficiency_xlsx(report,True))
