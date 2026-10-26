@@ -13,6 +13,7 @@ from common.efficiency_report import build_efficiency_report, tag_key, validate_
 from common.efficiency_diagnostics import reconcile
 from common.efficiency_xlsx import generate_efficiency_xlsx
 from common.efficiency_cases import attach_case_analysis
+from common.efficiency_communications import read_reader_communications
 
 
 def rows(folder, table, required=True):
@@ -29,7 +30,7 @@ def rows(folder, table, required=True):
         return list(csv.DictReader(source))
 
 
-def audit(folder, first, last):
+def audit(folder, first, last, reader_log_dir=None):
     validate_period(first,last)
     start, end = first.isoformat(), (last+timedelta(days=1)).isoformat()
     warehouse, registry = rows(folder,'Warehouse'), rows(folder,'RfidTags')
@@ -116,6 +117,8 @@ def audit(folder, first, last):
     if cursor is not None:
         processing.update(cursor=cursor,pipeline_checked=True,read_total=total,consumed=consumed)
     report=reconcile(report,proofs,processing=processing)
+    report['communications']=(read_reader_communications(report,reader_log_dir) if reader_log_dir else
+                              dict(checked=False,complete=False,reason='С выгрузкой БД журналы Reader не переданы',events=[],intervals=[]))
     return attach_case_analysis(report,list(bins.values()),
                                 [dict(Hour=hour,Antenna=antenna,ReadCount=count) for (hour,antenna),count in activity.items()],events)
 
@@ -127,8 +130,9 @@ def main():
     parser.add_argument('--date-to',type=date.fromisoformat,required=True)
     parser.add_argument('--xlsx',type=Path)
     parser.add_argument('--json',type=Path)
+    parser.add_argument('--reader-log-dir',type=Path)
     args=parser.parse_args()
-    report=audit(args.data_dir,args.date_from,args.date_to)
+    report=audit(args.data_dir,args.date_from,args.date_to,args.reader_log_dir)
     if args.xlsx:
         args.xlsx.parent.mkdir(parents=True,exist_ok=True)
         args.xlsx.write_bytes(generate_efficiency_xlsx(report,True))

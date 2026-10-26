@@ -21,6 +21,7 @@ from common.efficiency_report import (add_raw_evidence, build_efficiency_report,
 from common.efficiency_xlsx import generate_efficiency_xlsx
 from common.efficiency_diagnostics import reconcile
 from common.efficiency_cases import attach_case_analysis, case_tags
+from common.efficiency_communications import read_reader_communications
 
 log = logging.getLogger('perimeter.efficiency-report')
 
@@ -162,6 +163,7 @@ def fetch_efficiency_report(base, date_from, date_to):
     except Exception as exc:
         case_events = None
         log.warning('case_events_check_failed error_class=%s', type(exc).__name__)
+    report['communications']=read_reader_communications(report)
     return attach_case_analysis(report, case_raw, activity, case_events)
 
 
@@ -239,7 +241,7 @@ def fetch_raw_evidence(connection, report, raw_table):
     candidates = set()
     start, end = raw_period(report)
     for row in report['details']:
-        tags = set(row['registered_tags'])-set(row['ambiguous_tags'])
+        tags = (set(row['registered_tags']) | {r['tag'] for r in row.get('registrations', ())})-set(row.get('known_ambiguous_tags', row['ambiguous_tags']))
         for tag in tags:
             if len(tag) > 512:
                 raise ValueError('Некорректная длина полной RFID-метки в реестре')
@@ -469,13 +471,15 @@ def install(base):
         if job['status'] != 'ready':
             return reply({key: job[key] for key in ('status', 'error') if key in job})
         report = job['report']
-        return reply(dict(status='ready', html=job['html'], email={key: job['email'][key] for key in ('subject', 'text', 'html')},
+        return reply(dict(status='ready',version=report['version'], html=job['html'], email={key: job['email'][key] for key in ('subject', 'text', 'html')},
                           methodology=methodology_text(report), generated_at=report['generated_at'],
                           totals=report['totals'], days=report['days'],
                           source_checks=dict(reader=report['raw_checked']), diagnostics=report['diagnostics'],
                           raw_stats=report['raw_stats'], raw_source=report.get('raw_source'),
                           reconciliation=report.get('reconciliation'),
                           delivery=report.get('delivery'),
+                          software_kpi=report.get('processing_coverage'),accountability=report.get('accountability'),
+                          communications=report.get('communications'),
                           download_url=f'/api/efficiency-report/{token}/download'))
 
     @base.app.route('/api/efficiency-report/<token>/download')

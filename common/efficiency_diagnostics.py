@@ -8,7 +8,9 @@ from common.efficiency_report import local_time, tag_key, percent
 REASONS = {
     'READ': 'Точная метка найдена в сырых чтениях периода',
     'READ_UNCLASSIFIED': 'Сырое чтение есть; распознавание события как катушки не подтверждено',
-    'NO_TAG': 'В 1С нет зарегистрированной метки на дату приёмки',
+    'NO_TAG': 'В доступном реестре нет распорядки 1С с полной меткой этой катушки',
+    'LATE_REQUEST': 'Распорядка 1С передана после чтения или складской записи; см. хронологию',
+    'PROCESSING_UNCHECKED': 'Чтение и распорядка есть, но источник событий обработки не проверен',
     'AMBIGUOUS': 'Метка зарегистрирована за несколькими сериями',
     'OUTSIDE_PERIOD': 'Точная метка встречается только вне выбранного периода',
     'EPC_ONLY': 'В периоде встречается EPC, но полный EPC+TID не подтверждён',
@@ -48,7 +50,15 @@ def reconcile(report, history_rows=None, *, processing=None):
         row = dict(original)
         tags = set(row['registered_tags'])-set(row['ambiguous_tags'])
         proofs = [history[tag] for tag in sorted(tags) if tag in history]
-        if row['detected']:
+        control=row.get('control')
+        if control and (control['status'] in {'AFTER_READ','AFTER_WAREHOUSE'}
+                        or control['late_initial_passage'] or control['request_after_warehouse']):
+            code='LATE_REQUEST'
+        elif control and control['status']=='AMBIGUOUS':
+            code='AMBIGUOUS'
+        elif control and control['received']:
+            code=('READ_UNCLASSIFIED' if not control['recognized'] else 'READ') if report.get('events_checked',True) else 'PROCESSING_UNCHECKED'
+        elif row['detected']:
             recognized = bool(set(row['raw_matched_tags']) & set(row.get('aggregator_tags', ())))
             code = 'READ_UNCLASSIFIED' if report.get('events_checked', True) and not recognized else 'READ'
         elif not row['has_rfid']:
@@ -70,7 +80,8 @@ def reconcile(report, history_rows=None, *, processing=None):
     report['details'] = details
     report['reconciliation'] = dict(counts=sorted(counts.items()), history_checked=history_rows is not None and wanted <= history.keys(),
                                     processing=processing or dict(checked=False),
-                                    unrecognized_series=[row['series'] for row in details if row['reason_code']=='READ_UNCLASSIFIED'])
+                                    unrecognized_series=[row['series'] for row in details if row.get('control',{}).get('status')=='PROCESSING_REVIEW'
+                                                         or row['reason_code']=='READ_UNCLASSIFIED'])
     return report
 
 

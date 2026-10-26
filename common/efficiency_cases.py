@@ -12,13 +12,15 @@ from common.efficiency_report import local_time, tag_key, percent
 
 
 CATEGORY_NAMES = {
-    'NO_TAG': 'Нет привязки 1С',
+    'NO_TAG': 'Нет распорядки 1С',
+    'LATE_REQUEST': 'Распорядка постфактум',
     'OUTSIDE_PERIOD': 'Чтения вне периода',
     'EPC_ONLY': 'Совпадает только EPC',
     'NOT_IN_HISTORY': 'Нет точного чтения',
     'NOT_CHECKED': 'История не проверена',
     'AMBIGUOUS': 'Неоднозначная метка',
     'READ_UNCLASSIFIED': 'Не распознана катушка',
+    'PROCESSING_UNCHECKED': 'Обработка не проверена',
 }
 
 
@@ -33,6 +35,9 @@ def activity_window(warehouse_dt):
 
 
 def needs_review(row):
+    if 'control' in row:
+        c=row['control']
+        return c['status']!='PROCESSED' or c['request_after_warehouse'] or c['late_initial_passage']
     return not row['has_rfid'] or not row['detected'] or row.get('reason_code') == 'READ_UNCLASSIFIED'
 
 
@@ -58,7 +63,8 @@ def normal_bin(source):
 
 def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
     """Attach inspectable facts; optional-source failure remains unmeasured."""
-    report = dict(report)
+    from common.efficiency_accountability import assess_accountability
+    report = assess_accountability(report)
     bins = [normal_bin(row) for row in raw_bins or ()]
     by_epc, events_by_tag = defaultdict(list), defaultdict(list)
     for row in bins:
@@ -128,8 +134,8 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
             raise ValueError('Данные RFID изменились во время формирования. Сформируйте отчёт повторно.')
         receipt = local_time(row['warehouse_dt'])
         later = [r for r in regs if local_time(r['dt']) > receipt]
-        row['binding_status'] = ('Есть к дате склада' if row['has_rfid'] else
-                                 'Дата привязки позже склада' if later else 'Привязка отсутствует в выгрузке')
+        control=row['control']
+        row['binding_status'] = control['result']
         row['later_registration_dates'] = sorted({r['dt'] for r in later})
         if not needs_review(row):
             details.append(row)
@@ -142,10 +148,11 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
         point(start.isoformat(), 'Начало отчёта', 'Выбранный период', '')
         point(end.isoformat(), 'Конец отчёта (не включён)', 'Выбранный период', '')
         for r in regs:
-            point(r['dt'], 'Дата регистрации / документа 1С', 'RfidTags.Id='+r['id'],
+            point(r['dt'], 'Передача распорядки 1С Периметру', 'RfidTags.Id='+r['id'],
                   r['tag'] + ('; документ '+r['document'] if r['document'] else ''))
         for w in row.get('warehouse_receipts', ()):
-            point(w['dt'], 'Запись адресного склада', 'Warehouse.Id='+w['id'], row['series'])
+            point(w['dt'], 'Последующая запись адресного склада', 'Warehouse.Id='+w['id'],
+                  row['series']+('; документ '+w['document'] if w.get('document') else ''))
         for p in exact:
             scope = 'в периоде' if per(p) else 'до периода' if local_time(p['LastRead']) < start else 'после периода'
             identity = f'RFID_Tags.Id {p["FirstRawId"]}…{p["LastRawId"]}'
@@ -163,17 +170,15 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
         after = [p for p in exact if local_time(p['FirstRead']) >= end]
         empty_tid = sum(p['ReadCount'] for p in variants if per(p) and not p['TID'])
         other_tid = sum(p['ReadCount'] for p in variants if per(p) and p['TID'])
-        late_docs = []
-        for tag in sorted(tags):
-            dates = [r['dt'] for r in regs if r['tag'] == tag]
-            reads = [p['FirstRead'] for p in exact if p['Tag'] == tag]
-            if dates and reads and min(reads) < min(dates):
-                late_docs.append(dict(tag=tag, read=min(reads), document=min(dates)))
-        context_start, context_end = activity_window(receipt)
+        late_docs = [dict(tag=p['tag'],read=p['read_at'],document=p['request_at']) for p in control['late_first_reads']]
+        context_start, context_end = activity_window(control['activity_anchor'])
         hourly = [p for p in report['activity']
                   if context_start <= local_time(p['Hour']) < context_end]
         facts = [
-            ['Привязка 1С', row['binding_status'], 'RfidTags.Dt и Warehouse.Dt'],
+            ['Результат контроля', control['result'], 'Входящая распорядка 1С и точный EPC+TID'],
+            ['Первая распорядка передана КПП', control['first_instruction'] or 'Заявки в реестре нет', 'RfidTags.Dt — момент передачи 1С'],
+            ['Первое чтение отчётного периода', control['first_read'] or 'Исходное чтение не поступило', 'RFID_Tags.RecordTime'],
+            ['Складская запись (последующий этап)', row['warehouse_dt'], 'Warehouse.Dt; не условие доступности заявки КПП'],
             ['Точное чтение в отчётном периоде',
              str(sum(p['ReadCount'] for p in exact if per(p))) if checked else
              str(sum(p['read_count'] for p in row['raw_evidence'])) if row['has_rfid'] else 'Нет идентификатора для проверки',
@@ -182,13 +187,16 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
              if checked else 'Не проверено полностью', 'История RFID_Tags'],
             ['Тот же EPC, TID отсутствует', empty_tid if checked else 'Не проверено', 'Число строк периода'],
             ['Тот же EPC, другой TID', other_tid if checked else 'Не проверено', 'Число строк периода; другая полная метка'],
-            ['Дата документа 1С позже точного чтения', len(late_docs) if checked else 'Не проверено',
-             'Сравнение дат; время доставки 1С неизвестно'],
-            ['Другие чтения: 25 часов вокруг часа склада', sum(p['ReadCount'] for p in hourly)
+            ['Распорядка передана после первого чтения', len(late_docs), 'RfidTags.Dt сопоставлен с исходным чтением периода'],
+            ['Другие чтения: 25 часовых интервалов', sum(p['ReadCount'] for p in hourly)
              if activity is not None else 'Не проверено',
              f'Контекст {context_start:%d.%m %H:%M}–{context_end:%d.%m %H:%M} (конец не включён); проезд не доказан'],
         ]
         checks = diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs, event_rows is not None)
+        for incident in report.get('communications',{}).get('events',()):
+            at=local_time(incident['at'])
+            if context_start<=at<context_end:
+                point(incident['at'],'Наблюдение Reader (локальный узел)',incident['source'],incident['detail'])
         row['case'] = dict(facts=facts, checks=checks, timeline=sorted(timeline, key=lambda p: (p['at'], p['stage'], p['source'])),
                            raw_history=sorted(relevant, key=lambda p: (p['FirstRead'], p['Tag'], str(p.get('Antenna')))),
                            late_documents=late_docs, raw_checked=checked,
@@ -199,7 +207,7 @@ def attach_case_analysis(report, raw_bins=None, activity=None, event_rows=None):
                            later_binding=sum(not r['has_rfid'] and bool(r['later_registration_dates']) for r in details),
                            no_binding_in_export=sum(not r['has_rfid'] and not r['later_registration_dates'] for r in details),
                            document_after_read=sum(bool(r.get('case', {}).get('late_documents')) for r in details),
-                           arrival_checked=False)
+                           arrival_checked=True,arrival_source='RfidTags.Dt')
     return report
 
 
@@ -208,8 +216,11 @@ def diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs,
     checks = []
     def add(topic, status, proof, required):
         checks.append([topic, status, proof, required])
-    if code == 'NO_TAG':
-        add('Данные 1С', 'Установлено', row['binding_status'], 'Проверить привязку и исходящий журнал 1С')
+    if code == 'LATE_REQUEST':
+        add('Порядок передачи распорядки 1С','Постфактум по временным меткам',row['control']['result'],
+            'Сопоставить ID распорядки, время чтения и последующую складскую запись')
+    elif code == 'NO_TAG':
+        add('Данные выходного отделения / 1С', 'Установлено по реестру', row['binding_status'], 'Сверить распорядку и полный EPC+TID')
     elif code == 'AMBIGUOUS':
         add('Данные 1С', 'Установлено', 'Одна полная метка связана с несколькими сериями', 'Сверить актуальную принадлежность метки')
     elif code == 'READ_UNCLASSIFIED':
@@ -226,9 +237,16 @@ def diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs,
     else:
         add('Исходное чтение', 'Нет подтверждения', row['reason'], 'Проверить физическую метку и маршрут перемещения')
     if late_docs:
-        add('Порядок дат 1С', 'Установлено по датам', 'Дата регистрации/документа позже точного чтения',
-            'Для вывода о поздней передаче нужен журнал получения 1С сервером')
-    add('Передача 1С', 'Не измерена', 'RfidTags не содержит времени поступления записи', 'Журнал обмена 1С с датой отправки и получения')
+        add('Передача распорядки 1С', 'После начала чтений', 'RfidTags.Dt позже первого точного чтения периода',
+            'Сверить ID распорядки и этап перемещения; до передачи КПП не мог знать эту полную метку')
+    if row['control']['request_after_warehouse']:
+        add('Порядок этапов', 'Распорядка после склада', 'Первая распорядка 1С поступила позже складской записи',
+            'Выходное отделение: проверить своевременность направления на контроль')
+    if code!='READ_UNCLASSIFIED' and row['control']['status']=='PROCESSING_REVIEW':
+        add('Обработка КПП','Требуется разбор','После передачи распорядки есть чтение, но распознавание не подтверждено',
+            'Проверить классификацию и связь с точной полной меткой')
+    add('Действительность заявки', 'До исполнения, без срока', 'Возраст заявки и дата Warehouse не прекращают контроль',
+        'Статус закрытия распорядки в источнике отсутствует; старое событие не объявляется её закрытием')
     add('Внешняя сеть', 'Причина не установлена', 'ReceivedAt измеряет общую доставку; истории доступности нет',
         'Инцидент сети/оборудования с временем и привязкой к подтверждённому проезду')
     add('Антенна / физическая метка', 'Причина не установлена',
@@ -240,31 +258,30 @@ def diagnosis_rows(row, checked, before, after, empty_tid, other_tid, late_docs,
 
 
 def short_scorecard(report):
-    """Metric, numerator, denominator, rate/status, concise scope."""
-    t = report['totals']
-    p = report.get('processing_coverage', {})
-    d = report.get('delivery', {})
-    one = report.get('one_c', {})
-    rows = [
-        ['Периметр целиком', t['perimeter'], t['total'], percent(t['perimeter'], t['total']), 'RFID КПП + адресный склад'],
-        ['RFID-блок: считывание меток 1С', t['detected'], t['tagged'],
-         percent(t['detected'], t['tagged']) if report.get('raw_checked') else 'Не проверено', 'Катушки с точным чтением / с меткой 1С к приёмке'],
-        ['Автоматическая обработка поступивших RFID', p.get('recognized', 0) if report.get('events_checked', True) else '—', p.get('received', 0),
-         percent(p.get('recognized', 0), p.get('received', 0)) if report.get('events_checked', True) else 'Не проверено',
-         'Распознано катушек / катушки с сырым чтением'],
-        ['Отказы внешней инфраструктуры', '—', '—', 'Не установлено', 'Нет истории инцидентов с привязкой к проездам'],
+    """Only software effectiveness is labelled the KPP KPI."""
+    t=report['totals'];p=report.get('processing_coverage',{});a=report.get('accountability',{})
+    d=report.get('delivery',{});com=report.get('communications',{})
+    checked=report.get('raw_checked') and report.get('events_checked',True)
+    rows=[
+        ['Периметр целиком',t['perimeter'],t['total'],percent(t['perimeter'],t['total']),'RFID КПП + адресный склад'],
+        ['RFID КПП: обработка доступных данных',p.get('recognized',0) if checked else '—',p.get('received',0),
+         percent(p.get('recognized',0),p.get('received',0)) if checked else 'Не проверено',
+         'Распознано / получены чтения и распорядка 1С'],
+        ['Распорядки 1С постфактум',a.get('late_transfers','Не проверено'),'—','Порядок событий',
+         'Распорядка после чтения либо складской записи'],
+        ['Нет распорядки 1С',a.get('no_instruction','Не проверено'),'—','Вне программного KPI',
+         'В доступном реестре нет задания на RFID-контроль'],
+        ['Заявка есть, исходное чтение не поступило',a.get('unresolved_no_input','Не проверено'),'—','Причина не установлена',
+         'Отдельный разбор канала чтения и фактического проезда'],
+        ['Входные данные есть, распознавание не подтверждено',a.get('processing_review','Не проверено') if checked else 'Не проверено','—','На проверку',
+         'Расхождение в обработке; не списано на внешние причины'],
+        ['Связь со считывателем',len([e for e in com.get('events',()) if e['kind']=='CONNECT_FAILED']) if com.get('checked') else '—',
+         '—','Доля отказа не измерена',
+         'Ошибки подключения по локальному журналу; история HA неполная' if com.get('checked') else 'История инцидентов связи не предоставлена'],
     ]
     if d.get('checked'):
-        rows.append([f'Задержки доставки Reader → SQL > {d["threshold_sec"]} с', d['late_rows'], d['timed_rows'],
-                     percent(d['late_rows'], d['timed_rows']), 'Строки; причина задержки не установлена'])
-    else:
-        rows.append(['Задержки доставки Reader → SQL', '—', '—', 'Не измерено', 'Нет пригодных временных меток'])
-    rows.extend([
-        ['1С: нет привязки к дате склада', t['without_rfid'], t['total'], percent(t['without_rfid'], t['total']),
-         'Учтены складом; исключены из знаменателя RFID'],
-        ['1С: дата привязки позже склада', one.get('later_binding', 'Не проверено'), '—', 'Факт дат', 'Подмножество катушек без привязки к приёмке'],
-        ['1С: задержка передачи / человеческая ошибка', '—', '—', 'Не установлено', 'Нет журнала обмена и результатов проверки'],
-    ])
+        rows.append([f'Доставка Reader → SQL: позже {d["threshold_sec"]} с',d['late_rows'],d['timed_rows'],
+                     percent(d['late_rows'],d['timed_rows']),'Задержка цепочки; причина отдельно не установлена'])
     return rows
 
 

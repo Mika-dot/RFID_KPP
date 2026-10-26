@@ -12,8 +12,8 @@ from html import escape
 import re
 
 MOSCOW = timezone(timedelta(hours=3))
-VERSION = "1.4"
-HEADERS = ("Дата", "Всего барабанов", "С RFID", "RFID считано", "RFID KPI", "Периметр целиком")
+VERSION = "1.5"
+HEADERS = ("Дата", "Учтено Периметром", "Входные данные КПП", "Распознано КПП", "RFID КПП KPI", "Без входного чтения (сверка)")
 
 
 def series_key(value):
@@ -77,6 +77,7 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
     registry = defaultdict(list)
     registrations = defaultdict(list)
     owners = defaultdict(set)
+    all_owners = defaultdict(set)
     for source in registry_rows:
         series, tag = series_key(source.get("SeriesNumber")), tag_key(source.get("Tag"))
         if not tag or not series:
@@ -84,11 +85,13 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
         dt = local_time(source.get("Dt"))
         registrations[series].append(dict(id=str(source.get('Id') or ''), dt=dt.isoformat(),
                                          tag=tag, document=str(source.get('Ids') or '')))
+        all_owners[tag].add(series)
         if dt < end:
             registry[series].append((dt, tag))
             owners[tag].add(series)
 
     by_warehouse, by_tag, processed_by_tag, observed_by_tag = (defaultdict(list) for _ in range(4))
+    processed_evidence=defaultdict(list)
     for source in event_rows:
         event = dict(source)
         if int(event.get("RfidReadCount") or 0) <= 0:
@@ -109,6 +112,8 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
             observed_by_tag[tag].append(str(event['EventId']))
             if str(event.get('IsReel', 1)).lower() in {'1', 'true'}:
                 processed_by_tag[tag].append(str(event['EventId']))
+                processed_evidence[tag].append(dict(id=str(event['EventId']),first=event['FirstSeen'].isoformat(),
+                                                    last=event['LastSeen'].isoformat()))
         if event.get("WarehouseId") is not None:
             by_warehouse[str(event["WarehouseId"])].append(event)
         else:
@@ -122,6 +127,7 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
         registered = {tag for dt, tag in registry.get(series, ()) if dt <= first["Dt"]}
         ambiguous = {tag for tag in registered if len(owners[tag]) > 1}
         eligible = registered - ambiguous
+        known_tags = {r['tag'] for r in registrations.get(series, ())}
         matched, event_ids = set(), set()
         for row in rows:
             # A saved WarehouseId wins, including accepted adaptive delays >24h.
@@ -136,9 +142,13 @@ def build_efficiency_report(warehouse_rows, registry_rows, event_rows, date_from
                     event_ids.add(str(event["EventId"]))
         details.append(dict(series=series, warehouse_dt=first["Dt"].isoformat(),
                             warehouse_ids=[str(row["Id"]) for row in rows],
-                            warehouse_receipts=[dict(id=str(row['Id']), dt=row['Dt'].isoformat()) for row in rows],
+                            warehouse_receipts=[dict(id=str(row['Id']), dt=row['Dt'].isoformat(),document=str(row.get('Ids') or '')) for row in rows],
                             registered_tags=sorted(registered), matched_tags=sorted(matched),
                             registrations=sorted(registrations.get(series, ()), key=lambda r: (r['dt'], r['id'])),
+                            known_ambiguous_tags=sorted(tag for tag in known_tags if len(all_owners[tag]) > 1),
+                            known_aggregator_tags=sorted(known_tags & processed_by_tag.keys()),
+                            known_aggregator_evidence={tag:processed_evidence[tag] for tag in known_tags if tag in processed_evidence},
+                            known_observed_event_ids=sorted({identity for tag in known_tags for identity in observed_by_tag.get(tag, ())}),
                             registration_dates=sorted({dt.isoformat() for dt, tag in registry.get(series, ()) if tag in registered and dt <= first['Dt']}),
                             event_ids=sorted(event_ids), ambiguous_tags=sorted(ambiguous),
                             aggregator_tags=sorted(eligible & processed_by_tag.keys()),
@@ -206,7 +216,15 @@ def add_raw_evidence(report, raw_rows):
                                    first_read=first.isoformat(), last_read=last.isoformat(),
                                    read_count=int(raw['ReadCount']),
                                    first_id=str(raw['FirstRawId']), last_id=str(raw['LastRawId'])))
+        # Keep later 1C instructions for chronology and software eligibility.
+        # Warehouse timing must not prevent proving a read/request sequence.
+        all_tags = set(row['registered_tags']) | {r['tag'] for r in row.get('registrations', ())}
+        all_proofs = [dict(tag=tag,first_read=local_time(raw['FirstRead']).isoformat(),
+                           last_read=local_time(raw['LastRead']).isoformat(),read_count=int(raw['ReadCount']),
+                           first_id=str(raw['FirstRawId']),last_id=str(raw['LastRawId']))
+                      for tag in sorted(all_tags-set(row.get('known_ambiguous_tags', ()))) for raw in by_tag.get(tag, ())]
         row.update(kpp_matched_tags=sorted(kpp_tags), raw_matched_tags=sorted(raw_tags),
+                   all_raw_evidence=all_proofs,
                    raw_evidence=proofs, kpp_detected=bool(kpp_tags), raw_detected=bool(raw_tags),
                    matched_tags=sorted(raw_tags), detected=bool(raw_tags),
                    unread_tags=sorted(set(row['registered_tags'])-raw_tags))
@@ -232,7 +250,8 @@ def add_raw_evidence(report, raw_rows):
                               matched_reads=sum(int(raw['ReadCount']) for tag in matched for raw in by_tag[tag]))
     report['processing_coverage'] = dict(received=sum(row['raw_detected'] for row in details),
         recognized=sum(bool(set(row['raw_matched_tags']) & set(row.get('aggregator_tags', ()))) for row in details))
-    return report
+    from common.efficiency_accountability import assess_accountability
+    return assess_accountability(report)
 
 
 def raw_summary_text(report):
@@ -244,17 +263,20 @@ def raw_summary_text(report):
     return (prefix+f'чтений меток отчётных барабанов — {s["matched_reads"]}. '
             f'Уникальных меток 1С — {s["registered_tags"]}, найдено в сырых чтениях — {s["read_tags"]}, '
             f'не подтверждено — {s["unread_tags"]}. '
-            'RFID KPI считается по барабанам: достаточно одной прочитанной зарегистрированной метки; повторы не увеличивают процент.')
+            'Это сверка источников по барабанам; она не является KPI программной обработки КПП.')
 
 
 def rfid_kpi(report):
-    return percent(report['totals']['detected'], report['totals']['tagged']) if report.get('raw_checked') else 'Не проверен'
+    p=report.get('processing_coverage',{})
+    return percent(p.get('recognized',0),p.get('received',0)) if report.get('raw_checked') and report.get('events_checked',True) else 'Не проверен'
 
 
 def executive_rows(report):
-    t = report['totals']
-    return [['Периметр целиком', f'{t["perimeter"]}/{t["total"]}', percent(t['perimeter'], t['total'])],
-            ['RFID-блок', f'{t["detected"]}/{t["tagged"]}' if report.get('raw_checked') else 'Ожидается проверка журнала Reader', rfid_kpi(report)]]
+    t=report['totals'];p=report.get('processing_coverage',{})
+    checked=report.get('raw_checked') and report.get('events_checked',True)
+    return [['Периметр целиком',f'{t["perimeter"]}/{t["total"]}',percent(t['perimeter'],t['total'])],
+            ['RFID КПП: обработка доступных данных',f'{p.get("recognized",0)}/{p.get("received",0)}' if checked else 'Не проверено',
+             percent(p.get('recognized',0),p.get('received',0)) if checked else 'Не проверен']]
 
 
 def executive_text(report):
@@ -266,18 +288,28 @@ def period_text(report):
 
 
 def summary_rows(report):
-    rows = [[date.fromisoformat(day["date"]).strftime("%d.%m"), day["total"], day["tagged"], day["detected"],
-             percent(day["detected"], day["tagged"]) if report.get('raw_checked') else 'Не проверен', f'{day["perimeter"]}/{day["total"]}'] for day in report["days"]]
-    t = report["totals"]
-    rows.append(["Итого", t["total"], t["tagged"], t["detected"], rfid_kpi(report),
-                 f'{t["perimeter"]}/{t["total"]} = {percent(t["perimeter"], t["total"])}'])
+    software={d['date']:d for d in report.get('software_days',())}
+    checked=report.get('raw_checked') and report.get('events_checked',True)
+    missing=defaultdict(int)
+    for row in report['details']:
+        missing[row['warehouse_dt'][:10]]+=int(row.get('control',{}).get('status')=='NO_INPUT')
+    rows=[]
+    for day in report['days']:
+        s=software.get(day['date'],dict(received=0,recognized=0))
+        rows.append([date.fromisoformat(day['date']).strftime('%d.%m'),day['perimeter'],s['received'],
+                     s['recognized'] if checked else 'Не проверено',percent(s['recognized'],s['received']) if checked else 'Не проверено',
+                     missing[day['date']]])
+    t=report['totals'];p=report.get('processing_coverage',{})
+    rows.append(['Итого',t['perimeter'],p.get('received',0),p.get('recognized',0) if checked else 'Не проверено',
+                 percent(p.get('recognized',0),p.get('received',0)) if checked else 'Не проверено',sum(missing.values())])
     return rows
 
 
 def effectiveness_rows(report):
     t = report["totals"]
+    p=report.get('processing_coverage',{})
     return [["1. Периметр целиком", t["total"], f'Периметр знает о {t["perimeter"]}', percent(t["perimeter"], t["total"])],
-            ["2. RFID-блок", t["tagged"], f'RFID считано у {t["detected"]}', rfid_kpi(report)]]
+            ["2. RFID КПП: обработка доступных данных",p.get('received',0),f'Распознано {p.get("recognized",0)}',rfid_kpi(report)]]
 
 
 def explanatory_text(report):
@@ -302,18 +334,22 @@ def exceptions_text(report, *, include_series=True):
 
 
 def methodology_text(report):
-    return ("Состав: уникальные серии адресного склада; повторные записи одной серии за период учтены один раз, "
-            "по дате первой приёмки. Серии с суффиксом МК/MK исключены. Источник Warehouse не содержит вида тары; "
-            "прочие серии относятся к барабанам по принятой номенклатуре учёта. "
-            "С RFID: полный Tag зарегистрирован в 1С не позже первой приёмки. RFID считано: хотя бы один такой Tag "
-            "совпадает с сырым чтением антенны в dbo.RFID_Tags за весь выбранный период от 00:00 первого дня "
-            "до 00:00 дня после последнего. Время чтения — RecordTime: штатный Reader сохраняет в нём время захвата, "
-            "в том числе при отложенной доставке; это не ReceivedAt. "
-            "Проверяется точный полный EPC+TID. Окно ±24 ч от приёмки, направление и наличие события Aggregator "
-            "не ограничивают KPI антенны; Aggregator показан только в сверке. "
-            "Метка, связанная с несколькими сериями, не доказывает обнаружение. Регистрация в 1С не гарантирует сохранность "
-            "физической метки. Периметр целиком включает прямые записи адресного склада. "
-            "Время — МСК. Источники читаются последовательно, без общей транзакционной точки снимка.")
+    return ('Периметр целиком: учёт уникальных серий складской выборки через RFID КПП и адресный склад. '
+            'RFID КПП KPI: распознанные катушки / катушки, для которых получено точное сырое чтение и к этому чтению '
+            'передана распорядка 1С с тем же полным EPC+TID. Это оценка обработки доступных данных, '
+            'не процент физических считываний всех складских катушек. '
+            'RfidTags.Dt означает момент передачи распорядки Периметру согласно подтверждённому владельцем правилу обмена. '
+            'Распорядка действует до исполнения без срока; возраст записи и дата Warehouse не прекращают контроль. '
+            'Явного статуса закрытия в реестре нет: старое связанное событие не объявляется закрытием заявки. '
+            'Warehouse — последующий этап и контекст последовательности, а не срок поступления распорядки. '
+            'Заявка после чтения и заявка после складской записи показываются с ID и временами источников. '
+            'Нет исходного чтения при наличии заявки — отдельный неоценённый случай, причина без доказательства не назначается. '
+            'Распознавание подтверждается физическим событием IsReel=1 с полной меткой; Warehouse-only не является чтением. '
+            'Серии учитываются один раз за период, МК/MK исключены, неоднозначные метки не доказывают обнаружение. '
+            'Дневной RFID KPI привязан к первому доступному чтению; общий учёт и позиции без чтения — к складской выборке. '
+            'RecordTime — время захвата записи Reader, не ReceivedAt; чтения после переподключения могут иметь приблизительное время. '
+            'Локальные ротации журнала Reader проверяются автоматически при доступности, но не заменяют полную историю HA. '
+            'Доставка Reader → SQL измеряет задержку цепочки, не причину сетевого отказа. Время — МСК; источники читаются последовательно.')
 
 
 def table_html(headers, rows):
@@ -323,34 +359,25 @@ def table_html(headers, rows):
 
 
 def email_parts(report):
-    subject = f'Отчёт по эффективности RFID КПП «Периметр» за {period_text(report)}'
-    t = report['totals']
-    intro = f'Итоги работы КПП «Периметр» за {period_text(report)}.'
-    if not report.get('raw_checked'):
-        conclusion = 'Исходный журнал антенны не проверен; окончательный RFID KPI не рассчитан.'
-    elif t['missed']:
-        conclusion = (f'Барабанов с метками 1С без подтверждённого считывания — {t["missed"]}. '
-                      'Физическая причина отсутствия чтений по данным SQL не установлена.')
-    else:
-        conclusion = ('Считывание подтверждено у всех барабанов с зарегистрированными метками.'
-                      if t['tagged'] else 'Барабанов с зарегистрированными метками в периоде нет; RFID KPI не рассчитывается.')
-    software = report.get('processing_coverage', {})
-    coverage = (f'Распознавание полученных RFID в Периметре: {software.get("recognized", 0)}/{software.get("received", 0)} '
-                f'— {percent(software.get("recognized", 0), software.get("received", 0))}.'
-                if report.get('events_checked', True) else 'Распознавание полученных RFID: события обработки не проверены.')
-    delivery=report.get('delivery', {})
-    transfer=(f'Доставка Reader → SQL не позже {delivery["threshold_sec"]} с: '
-              f'{percent(delivery["timed_rows"]-delivery["late_rows"],delivery["timed_rows"])}; '
-              f'задержанных строк — {delivery["late_rows"]}.' if delivery.get('checked') else '')
-    blocks = ['Добрый день, Павел Валерьевич!', intro, executive_text(report), coverage,
-              *([transfer] if transfer else []),
-              f'Без зарегистрированных RFID-меток в 1С — {t["without_rfid"]}; они учтены через адресный склад.',
-              conclusion, 'Распределение причин между коммуникациями, оборудованием и действиями сотрудников не подтверждено.',
-              'Подробная сверка и сведения о расхождениях — в Excel-отчёте.']
-    html = ''.join('<p>'+escape(text).replace('\n', '<br>')+'</p>' if i != 2 else
-                   table_html(['Показатель', 'Учтено / всего', 'Результат'], executive_rows(report))
-                   for i, text in enumerate(blocks))
-    return dict(subject=subject, text='\n\n'.join(blocks), html=html, blocks=blocks)
+    from common.efficiency_accountability import assess_accountability
+    if 'accountability' not in report:
+        report=assess_accountability(report)
+    a=report['accountability']
+    subject=f'Отчёт по работе КПП «Периметр» за {period_text(report)}'
+    blocks=['Добрый день, Павел Валерьевич!',f'Итоги за {period_text(report)}.',executive_text(report),
+            'RFID KPI оценивает обработку полученных чтений при наличии распорядки 1С.',
+            f'Вне этой оценки: нет распорядки 1С — {a["no_instruction"]}; '
+            f'исходное чтение при наличии заявки не поступило — {a["unresolved_no_input"]}. '
+            f'Распорядки постфактум — {a["late_transfers"]}.',
+            (f'Распознавание при доступных входных данных требует проверки у {a["processing_review"]} катушек.'
+             if report.get('events_checked',True) else 'События обработки не проверены.'),
+            'Причины отсутствия чтений распределяются по подтверждённым данным; неустановленные причины выделены отдельно.',
+            'Хронология заявок 1С, чтений, складских записей и журналов связи — в Excel.']
+    if not report['totals']['tagged'] and not report.get('processing_coverage',{}).get('received'):
+        blocks.insert(3,'RFID KPI не рассчитывается: доступных чтений с распорядкой нет.')
+    html=''.join(table_html(['Показатель','Результат / база','Эффективность'],executive_rows(report)) if i==2
+                 else '<p>'+escape(text).replace('\n','<br>')+'</p>' for i,text in enumerate(blocks))
+    return dict(subject=subject,text='\n\n'.join(blocks),html=html,blocks=blocks)
 
 
 def preview_html(report):
